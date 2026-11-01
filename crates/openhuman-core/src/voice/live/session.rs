@@ -37,6 +37,11 @@ pub(crate) const LIVE_AGENT_ID: &str = "orchestrator";
 pub(crate) const CONTEXT_MESSAGES: usize = 12;
 /// Characters kept per message in that summary.
 pub(crate) const CONTEXT_CHARS: usize = 600;
+/// The latest messages are kept nearly whole, so "summarize that" right after
+/// a long typed answer (a news roundup) sees all of it.
+pub(crate) const LATEST_MESSAGES: usize = 2;
+/// Characters kept per message among the [`LATEST_MESSAGES`].
+pub(crate) const LATEST_CONTEXT_CHARS: usize = 4000;
 
 const BASE_PROMPT: &str = include_str!("prompt.md");
 /// Workspace file that replaces [`BASE_PROMPT`] when present and not blank.
@@ -119,13 +124,16 @@ pub(crate) fn system_prompt(
         prompt.push_str(memory);
     }
 
-    let start = recent.len().saturating_sub(CONTEXT_MESSAGES);
-    let lines: Vec<String> = recent[start..]
+    let shown: Vec<_> = recent.iter().filter(|m| !m.content.trim().is_empty()).collect();
+    let start = shown.len().saturating_sub(CONTEXT_MESSAGES);
+    let latest_from = shown.len().saturating_sub(LATEST_MESSAGES);
+    let lines: Vec<String> = shown[start..]
         .iter()
-        .filter(|m| !m.content.trim().is_empty())
-        .map(|m| {
+        .enumerate()
+        .map(|(i, m)| {
             let who = if m.sender == "user" { "User" } else { "You" };
-            let text: String = m.content.trim().chars().take(CONTEXT_CHARS).collect();
+            let cap = if start + i >= latest_from { LATEST_CONTEXT_CHARS } else { CONTEXT_CHARS };
+            let text: String = m.content.trim().chars().take(cap).collect();
             format!("{who}: {text}")
         })
         .collect();

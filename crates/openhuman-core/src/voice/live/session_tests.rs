@@ -48,14 +48,16 @@ fn the_prompt_carries_voice_guidance_time_and_recent_messages() {
         .map(|i| message(if i % 2 == 0 { "user" } else { "agent" }, &format!("m{i}")))
         .collect();
     recent.push(message("user", "   "));
-    recent.push(message("agent", &"x".repeat(CONTEXT_CHARS + 50)));
+    recent.push(message("agent", &"o".repeat(CONTEXT_CHARS + 50)));
+    recent.push(message("agent", &"x".repeat(LATEST_CONTEXT_CHARS + 50)));
     let prompt = system_prompt(ws.path(), None, &recent, None);
     assert!(prompt.contains("The conversation so far"));
     assert!(!prompt.contains("m0\n"), "older messages are dropped");
     assert!(prompt.contains("User: m10"));
     assert!(prompt.contains("You: m19"));
-    let longest = prompt.lines().map(str::len).max().unwrap();
-    assert!(longest <= CONTEXT_CHARS + 10);
+    let line = |c: char| prompt.lines().find(|l| l.contains(c.to_string().repeat(50).as_str())).unwrap().len();
+    assert_eq!(line('o'), "You: ".len() + CONTEXT_CHARS + 50, "second-latest kept whole");
+    assert_eq!(line('x'), "You: ".len() + LATEST_CONTEXT_CHARS, "latest capped at the larger limit");
 }
 
 #[test]
