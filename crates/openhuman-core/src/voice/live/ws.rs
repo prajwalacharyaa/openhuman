@@ -20,6 +20,7 @@ use tinyagents_live::LiveAgentEvent;
 
 use super::error::LiveVoiceError;
 use super::persist::TranscriptPersister;
+use super::timing::{self, TimingEvent, VoiceTiming};
 use super::session::{self, LiveStartRequest};
 use super::types::{ClientFrame, ServerFrame, TranscriptRole};
 use crate::config::Config;
@@ -217,6 +218,8 @@ pub async fn handle_live_voice_ws(socket: WebSocket, config: Arc<Config>) {
         provider.clone(),
     )
     .with_memory_log(config.clone());
+    let timing_on = timing::enabled_from(std::env::var(timing::TIMING_ENV).ok().as_deref());
+    let mut timing = VoiceTiming::default();
 
     loop {
         tokio::select! {
@@ -229,7 +232,12 @@ pub async fn handle_live_voice_ws(socket: WebSocket, config: Arc<Config>) {
                     Some(Ok(message)) => message,
                 };
                 let result = match message {
-                    Message::Binary(pcm) => sender.send_audio(pcm).await,
+                    Message::Binary(pcm) => {
+                        if timing_on {
+                            timing.on_client_audio(&pcm, std::time::Instant::now());
+                        }
+                        sender.send_audio(pcm).await
+                    }
                     Message::Text(text) => match serde_json::from_str::<ClientFrame>(&text) {
                         Ok(ClientFrame::Text { text }) => {
                             persister.save(TranscriptRole::User, &text).await;
@@ -254,6 +262,25 @@ pub async fn handle_live_voice_ws(socket: WebSocket, config: Arc<Config>) {
             event = session.recv() => {
                 let Some(event) = event else { break };
                 let closing = matches!(event, LiveAgentEvent::Live(LiveEvent::Closed(_)));
+                if timing_on {
+                    let step = match &event {
+                        LiveAgentEvent::ToolStarted { call_id, .. } => {
+                            Some(TimingEvent::ToolStarted { call_id: call_id.as_str() })
+                        }
+                        LiveAgentEvent::ToolFinished { call_id, name, .. } => Some(
+                            TimingEvent::ToolFinished { call_id: call_id.as_str(), name: name.as_str() },
+                        ),
+                        LiveAgentEvent::Live(LiveEvent::InputTranscript { .. }) => {
+                            Some(TimingEvent::UserTranscript)
+                        }
+                        LiveAgentEvent::Live(LiveEvent::Audio(_)) => Some(TimingEvent::AgentAudio),
+                        LiveAgentEvent::Live(LiveEvent::Interrupted) => Some(TimingEvent::Interrupted),
+                        _ => None,
+                    };
+                    if let Some(record) = step.and_then(|s| timing.on_event(s, std::time::Instant::now())) {
+                        tracing::info!(session_id, ?record, "{LOG_PREFIX} timing");
+                    }
+                }
                 for outbound in map_event(event, &session_id, &provider, &thread_id) {
                     let sent = match outbound {
                         Outbound::Json(frame) => sink.send(json_message(&frame)).await,

@@ -10,6 +10,7 @@
 //! - [`ws`]: the `/ws/live-voice` WebSocket that carries audio and events
 //!   (`http-server` builds only).
 //! - [`persist`]: final transcripts are saved into the thread.
+//! - [`timing`]: optional per-turn timing records (`OPENHUMAN_VOICE_TIMING=1`).
 //! - [`ops`] / [`schemas`]: the `voice.live_*` RPCs (catalogue, settings,
 //!   provider test).
 //!
@@ -22,6 +23,8 @@ mod persist;
 mod providers;
 pub mod schemas;
 mod session;
+#[cfg(feature = "http-server")]
+mod timing;
 pub mod types;
 #[cfg(feature = "http-server")]
 pub mod ws;
