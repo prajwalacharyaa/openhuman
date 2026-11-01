@@ -272,6 +272,23 @@ fn current_datetime_line_is_stamped_in_the_users_zone() {
     assert!(!line.contains("Not/AZone"), "{line}");
 }
 
+/// In Nepal's zone the stamp also gives today's Bikram Sambat date, so neither
+/// typed nor voice turns have to guess or search the Nepali date.
+#[test]
+fn current_datetime_line_in_kathmandu_carries_the_nepali_date() {
+    let line = super::super::current_datetime_line(Some("Asia/Kathmandu"));
+    let today = chrono::Utc::now()
+        .with_timezone(&chrono_tz::Asia::Kathmandu)
+        .date_naive();
+    let bs = super::super::render_helpers::bikram_sambat::from_gregorian(today).unwrap();
+    assert!(
+        line.ends_with(&format!(", Nepali date (Bikram Sambat): {bs}")),
+        "{line}"
+    );
+    let line = super::super::current_datetime_line(Some("Pacific/Chatham"));
+    assert!(!line.contains("Bikram Sambat"), "{line}");
+}
+
 #[test]
 fn datetime_section_appends_resolve_time_rule_only_when_tool_present() {
     // With `resolve_time` in the agent's tool set, the time-discipline rule

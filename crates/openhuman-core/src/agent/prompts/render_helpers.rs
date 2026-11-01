@@ -11,7 +11,9 @@
 //!   and ambient-environment composer.
 //! - [`subagent`] — the narrow KV-cache-stable sub-agent prompt renderer.
 //! - [`workspace_files`] — workspace-file seeding and prompt injection.
+//! - [`bikram_sambat`] — Nepali (BS) date for the datetime stamp in Nepal's zone.
 
+pub mod bikram_sambat;
 mod section_renderers;
 mod subagent;
 mod workspace_files;

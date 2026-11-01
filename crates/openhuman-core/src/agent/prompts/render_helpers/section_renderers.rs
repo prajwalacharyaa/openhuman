@@ -67,6 +67,9 @@ pub fn render_datetime(ctx: &PromptContext<'_>) -> Result<String> {
 /// session. The static grounding *rule* that tells the model to read this
 /// line lives in [`DateTimeSection`] / [`render_datetime`].
 ///
+/// In Nepal's zone the stamp also carries the Bikram Sambat (Nepali) date
+/// ([`super::bikram_sambat`]).
+///
 /// `zone` is the user's IANA zone ([`crate::config::Config::time_zone`]);
 /// `None`, or a name chrono-tz does not know, stamps the device's.
 pub fn current_datetime_line(zone: Option<&str>) -> String {
@@ -87,12 +90,13 @@ pub fn current_datetime_line(zone: Option<&str>) -> String {
     if let Some(tz) = zone.and_then(|zone| zone.parse::<chrono_tz::Tz>().ok()) {
         let now = chrono::Utc::now().with_timezone(&tz);
         return format!(
-            "Current Date & Time: {} {} ({}, UTC{}), {}",
+            "Current Date & Time: {} {} ({}, UTC{}), {}{}",
             now.format("%Y-%m-%d %H:%M:%S"),
             tz.name(),
             now.format("%Z"),
             now.format("%:z"),
             now.format("%A"),
+            super::bikram_sambat::stamp_suffix(tz.name(), now.date_naive()),
         );
     }
 
@@ -104,12 +108,13 @@ pub fn current_datetime_line(zone: Option<&str>) -> String {
         Ok(iana) => {
             let now = chrono::Local::now();
             format!(
-                "Current Date & Time: {} {} ({}, UTC{}), {}",
+                "Current Date & Time: {} {} ({}, UTC{}), {}{}",
                 now.format("%Y-%m-%d %H:%M:%S"),
                 iana,
                 now.format("%Z"),
                 now.format("%:z"),
                 now.format("%A"),
+                super::bikram_sambat::stamp_suffix(&iana, now.date_naive()),
             )
         }
         Err(_) => {
