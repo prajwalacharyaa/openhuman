@@ -18,6 +18,8 @@
 //! provider's wire format.
 
 mod error;
+#[cfg(feature = "http-server")]
+mod handoff;
 pub mod ops;
 mod persist;
 mod providers;
