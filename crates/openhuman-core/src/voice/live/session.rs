@@ -6,7 +6,14 @@
 //! connects the provider and executes the calls. Tool calls run inside a
 //! `voice` external-channel origin and an approval chat context for the
 //! thread, so approval prompts reach the user's open conversation.
+//!
+//! The prompt gives the voice the same Tiny a typed turn gets: the workspace
+//! persona and role files, the date stamp (with the Nepali date in Nepal's
+//! zone), and a memory pack recalled when the session starts. The speaking
+//! guidance comes from the workspace's `VOICE.md` when it has one, else the
+//! built-in `prompt.md`.
 
+use std::path::Path;
 use std::sync::Arc;
 
 use tinyagents_harness::context::RunConfig;
@@ -14,6 +21,7 @@ use tinyagents_live::{LiveAgent, LiveAgentOptions, LiveAgentSession, TaskScope};
 
 use super::error::LiveVoiceError;
 use super::providers;
+use crate::agent::prompts::{current_datetime_line, inject_workspace_file};
 use crate::agent::session_host::OpenHumanSessionHost;
 use crate::agent::tinyagents::host::OpenHumanRunContext;
 use crate::agent::tinyagents::live_harness::{assemble_live_tool_harness, LIVE_MAX_TOOL_CALLS};
@@ -31,6 +39,14 @@ pub(crate) const CONTEXT_MESSAGES: usize = 12;
 pub(crate) const CONTEXT_CHARS: usize = 600;
 
 const BASE_PROMPT: &str = include_str!("prompt.md");
+/// Workspace file that replaces [`BASE_PROMPT`] when present and not blank.
+pub(crate) const VOICE_PROMPT_FILE: &str = "VOICE.md";
+/// Workspace files a typed orchestrator turn carries, in the same order.
+pub(crate) const PERSONA_FILES: [&str; 3] = ["SOUL.md", "IDENTITY.md", "ROLE.md"];
+/// What the opening memory recall is ranked around when the thread has no
+/// user message yet.
+const DEFAULT_RECALL_FOCUS: &str =
+    "who the user is, their preferences, routines, schedule and ongoing plans";
 
 /// What the client asked for.
 #[derive(Debug, Clone)]
@@ -66,14 +82,43 @@ pub(crate) fn resolve_provider(
     }
 }
 
-/// The system prompt: the voice guidance plus the thread's recent messages,
-/// so a spoken follow-up knows what was just typed.
-pub(crate) fn system_prompt(recent: &[ConversationMessage]) -> String {
-    let mut prompt = BASE_PROMPT.trim().to_string();
-    prompt.push_str(&format!(
-        "\n\nThe user's local date and time now: {}.",
-        chrono::Local::now().format("%A, %B %-d, %Y, %-I:%M %p")
-    ));
+/// The system prompt: the speaking guidance, the persona files, the date
+/// stamp, the opening memory pack and the thread's recent messages, so a
+/// spoken turn knows what a typed one would and what was just typed.
+pub(crate) fn system_prompt(
+    workspace_dir: &Path,
+    zone: Option<&str>,
+    recent: &[ConversationMessage],
+    memory: Option<&str>,
+) -> String {
+    let custom = std::fs::read_to_string(workspace_dir.join(VOICE_PROMPT_FILE)).ok();
+    let guidance = custom
+        .as_deref()
+        .map(str::trim)
+        .filter(|text| !text.is_empty())
+        .unwrap_or(BASE_PROMPT.trim());
+    let mut prompt = guidance.to_string();
+
+    let mut persona = String::new();
+    for file in PERSONA_FILES {
+        inject_workspace_file(&mut persona, workspace_dir, file);
+    }
+    if !persona.trim().is_empty() {
+        prompt.push_str(
+            "\n\nWho you are and how you work (the same as in typed chats; when speaking, \
+             the speaking guidance above decides the format):\n\n",
+        );
+        prompt.push_str(persona.trim_end());
+    }
+
+    prompt.push_str("\n\n");
+    prompt.push_str(&current_datetime_line(zone));
+
+    if let Some(memory) = memory.map(str::trim).filter(|text| !text.is_empty()) {
+        prompt.push_str("\n\n");
+        prompt.push_str(memory);
+    }
+
     let start = recent.len().saturating_sub(CONTEXT_MESSAGES);
     let lines: Vec<String> = recent[start..]
         .iter()
@@ -89,6 +134,17 @@ pub(crate) fn system_prompt(recent: &[ConversationMessage]) -> String {
         prompt.push_str(&lines.join("\n"));
     }
     prompt
+}
+
+/// What the opening recall is ranked around: the thread's last user message,
+/// else [`DEFAULT_RECALL_FOCUS`].
+pub(crate) fn recall_focus(recent: &[ConversationMessage]) -> String {
+    recent
+        .iter()
+        .rev()
+        .find(|m| m.sender == "user" && !m.content.trim().is_empty())
+        .map(|m| m.content.trim().chars().take(CONTEXT_CHARS).collect())
+        .unwrap_or_else(|| DEFAULT_RECALL_FOCUS.to_string())
 }
 
 /// Makes sure the session's thread exists, creating a voice thread when the
@@ -150,12 +206,22 @@ pub(crate) async fn start(
         );
         Vec::new()
     });
-    let mut live = providers::live_config(
+    let identity = crate::memory::scope::resolve_current(&config);
+    let pack = crate::memory::lifecycle::hooks::session_start(
         &config,
-        &provider,
-        &system_prompt(&recent),
-        request.input_sample_rate,
+        &identity,
+        &thread_id,
+        Some(recall_focus(&recent)),
+    )
+    .await;
+    let zone = config.time_zone();
+    let prompt = system_prompt(
+        &config.workspace_dir,
+        Some(zone.as_str()),
+        &recent,
+        pack.as_ref().map(|pack| pack.injection()).as_deref(),
     );
+    let mut live = providers::live_config(&config, &provider, &prompt, request.input_sample_rate);
     // Hosted Gemini fixes its tools when the ticket is minted, so they must be
     // in the configuration before `prepare`.
     live.tools = tinyagents_live::tool_declarations(&harness, false);

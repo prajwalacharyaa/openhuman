@@ -352,6 +352,76 @@ fn refusal_of(outcomes: &[Result<ContextPack, MemoryError>]) -> Option<MemoryErr
     })
 }
 
+/// Shortest wait for [`session_start`]: a live session can afford a little
+/// longer than a typed turn's pre-turn budget before the user starts talking.
+const SESSION_START_MIN_TIMEOUT: Duration = Duration::from_secs(3);
+
+/// The pack a session that has no user turn yet opens with (a live voice
+/// session): what memory holds for `thread_id`, ranked around `focus`.
+/// Nothing is logged. `None` when memory or recall is off, nothing relevant
+/// is stored, or the engine doesn't answer within the pre-turn budget
+/// (at least [`SESSION_START_MIN_TIMEOUT`]); the session starts either way.
+pub async fn session_start(
+    config: &Config,
+    identity: &ResolvedIdentity,
+    thread_id: &str,
+    focus: Option<String>,
+) -> Option<TurnPack> {
+    if !identity.recall {
+        return None;
+    }
+    let bound = match engine::resolve(config).engine() {
+        Ok(bound) => bound,
+        Err(error) => {
+            tracing::debug!(%error, "[memory:hooks] session_start skipped: memory off");
+            return None;
+        }
+    };
+    let memory = match agent_memory_on(bound.engine, config, identity) {
+        Ok(memory) => memory,
+        Err(error) => {
+            tracing::warn!(%error, "[memory:hooks] session_start skipped: no agent memory");
+            return None;
+        }
+    };
+    let timeout = Duration::from_millis(config.memory.recall.pre_turn_timeout_ms.max(1))
+        .max(SESSION_START_MIN_TIMEOUT);
+    let started = std::time::Instant::now();
+    let session = SessionStart {
+        thread_id: Some(thread_id.to_string()),
+        focus,
+    };
+    let task = tokio::spawn(async move { memory.start_session(session).await });
+    let pack = match tokio::time::timeout(timeout, task).await {
+        Ok(Ok(Ok(pack))) => TurnPack::from_packs([pack]),
+        Ok(Ok(Err(error))) => {
+            tracing::warn!(%error, "[memory:hooks] session_start recall failed");
+            None
+        }
+        Ok(Err(error)) => {
+            tracing::warn!(%error, "[memory:hooks] session_start task failed");
+            None
+        }
+        Err(_) => {
+            tracing::warn!(
+                thread_id,
+                timeout_ms = timeout.as_millis() as u64,
+                "[memory:hooks] session_start timed out; the session starts without a pack"
+            );
+            None
+        }
+    };
+    tracing::debug!(
+        thread_id,
+        agent_id = %identity.agent_id,
+        injected = pack.is_some(),
+        tokens = pack.as_ref().map_or(0, |pack| pack.tokens),
+        elapsed_ms = started.elapsed().as_millis() as u64,
+        "[memory:hooks] session_start"
+    );
+    pack
+}
+
 /// A tool call the reply made, with a one-line result.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ToolCallSummary {
