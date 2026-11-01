@@ -69,6 +69,32 @@ object Mochi {
         }
     }
 
+    /** "RAM 68%" for the screen headers; asked only while a screen is open. Blocking. */
+    fun ramLabel(c: Context): String {
+        val req = Request.Builder().url("${ringUrl(c)}/stats").header("Authorization", "Bearer ${token(c)}").build()
+        http.newCall(req).execute().use { r -> return "RAM ${JSONObject(r.body?.string() ?: "{}").getInt("ram")}%" }
+    }
+
+    /**
+     * Keeps [label] showing the server's RAM, every 10 s, while the screen is open: call the returned
+     * function's start in onResume and stop in onPause.
+     */
+    fun ramWatcher(c: Context, label: android.widget.TextView): Pair<() -> Unit, () -> Unit> {
+        val main = android.os.Handler(android.os.Looper.getMainLooper())
+        val tick = object : Runnable {
+            override fun run() {
+                Thread {
+                    val text = runCatching { ramLabel(c) }.getOrDefault("")
+                    main.post { label.text = text }
+                }.start()
+                main.postDelayed(this, 10_000)
+            }
+        }
+        val start: () -> Unit = { main.post(tick) }
+        val stop: () -> Unit = { main.removeCallbacks(tick) }
+        return Pair(start, stop)
+    }
+
     /** Tell mochi-ring how a call ended (answered / declined / missed) so it stops ringing. */
     fun callDone(c: Context, callId: String, result: String) {
         val req = Request.Builder().url("${ringUrl(c)}/calls/$callId/done")

@@ -27,6 +27,8 @@ class MainActivity : Activity() {
     private lateinit var state: TextView
     private lateinit var setup: LinearLayout
     private lateinit var fixes: LinearLayout
+    private lateinit var ram: TextView
+    private lateinit var ramWatch: Pair<() -> Unit, () -> Unit>
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -40,6 +42,12 @@ class MainActivity : Activity() {
         super.onResume()
         RingService.start(this)
         refresh()
+        if (Mochi.configured(this)) ramWatch.first()
+    }
+
+    override fun onPause() {
+        ramWatch.second()
+        super.onPause()
     }
 
     private fun refresh() {
@@ -98,7 +106,13 @@ class MainActivity : Activity() {
             setPadding(pad, pad * 2, pad, pad)
             setBackgroundColor(Color.parseColor("#F6F5F2"))
         }
-        root.addView(TextView(this).apply { text = "Mochi"; textSize = 30f; setTextColor(Color.parseColor("#1D1D1F")) })
+        val header = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+        header.addView(TextView(this).apply { text = "Mochi"; textSize = 30f; setTextColor(Color.parseColor("#1D1D1F")) },
+            LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+        ram = TextView(this).apply { textSize = 14f; setTextColor(Color.parseColor("#6B6B70")) }
+        header.addView(ram)
+        root.addView(header)
+        ramWatch = Mochi.ramWatcher(this, ram)
         state = TextView(this).apply { textSize = 15f; setPadding(0, 8, 0, 8); setTextColor(Color.parseColor("#55555C")) }
         root.addView(state)
 

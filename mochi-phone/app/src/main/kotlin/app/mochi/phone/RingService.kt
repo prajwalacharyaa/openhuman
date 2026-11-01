@@ -94,6 +94,7 @@ class RingService : Service() {
     companion object {
         /** Whether the ring connection is up, for the main screen. */
         @Volatile var connected = false
+
         private const val RING_FOR_MS = 45_000L
         private var ringing: String? = null
 

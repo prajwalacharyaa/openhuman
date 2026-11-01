@@ -64,5 +64,5 @@ Plain Android APIs plus OkHttp; no other libraries.
 | `CallActivity.kt` | incoming-call and in-call screen |
 | `ChatActivity.kt` | typed chat in the current conversation (re-reads it every 3 s) |
 | `ConversationsActivity.kt` | past conversations: chat or call in one |
-| `MainActivity.kt` | setup, Call / Chat / Conversations, permission shortcuts |
+| `MainActivity.kt` | setup, Call / Chat / Conversations, permission shortcuts, server RAM in the header (asked only while open) |
 | `Receivers.kt` | Decline button, start after reboot |

@@ -28,6 +28,8 @@ class ChatActivity : Activity() {
     private lateinit var status: TextView
     private lateinit var input: EditText
     private lateinit var send: Button
+    private lateinit var ram: TextView
+    private lateinit var ramWatch: Pair<() -> Unit, () -> Unit>
     private val main = Handler(Looper.getMainLooper())
     private var thread: String? = null
     private var shown = ""          // id of the last message drawn, to redraw only on change
@@ -50,10 +52,12 @@ class ChatActivity : Activity() {
     override fun onResume() {
         super.onResume()
         main.post(refresh)
+        ramWatch.first()
     }
 
     override fun onPause() {
         main.removeCallbacks(refresh)
+        ramWatch.second()
         super.onPause()
     }
 
@@ -152,6 +156,9 @@ class ChatActivity : Activity() {
         header.addView(TextView(this).apply {
             text = "Mochi"; textSize = 24f; setTextColor(Color.parseColor("#1D1D1F"))
         }, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+        ram = TextView(this).apply { textSize = 13f; setTextColor(Color.parseColor("#6B6B70")); setPadding(0, 0, 16, 0) }
+        header.addView(ram)
+        ramWatch = Mochi.ramWatcher(this, ram)
         header.addView(Button(this).apply {
             text = "New"; isAllCaps = false
             setOnClickListener { startNew() }
