@@ -56,11 +56,14 @@ jobs:
         env:
           MOCHI_KEYSTORE_PASSWORD: ${{ secrets.MOCHI_KEYSTORE_PASSWORD }}
         run: |
+          # on failure, put Gradle's error summary in a public annotation (job logs need a login to read)
+          fail() { grep -E -A12 "What went wrong|^e: |error:" build.log | head -60 | sed ':a;N;$!ba;s/%/%25/g;s/\n/%0A/g' \
+                     | sed 's/^/::error title=Gradle::/'; exit 1; }
           if [ "$RELEASE" = true ]; then
-            gradle -p mochi-phone --no-daemon assembleRelease
+            gradle -p mochi-phone --no-daemon assembleRelease > build.log 2>&1 || fail
             cp mochi-phone/app/build/outputs/apk/release/app-release.apk "mochi-$MOCHI_VERSION_NAME.apk"
           else
-            gradle -p mochi-phone --no-daemon assembleDebug
+            gradle -p mochi-phone --no-daemon assembleDebug > build.log 2>&1 || fail
             cp mochi-phone/app/build/outputs/apk/debug/app-debug.apk mochi-dev.apk
           fi
           rm -f "$RUNNER_TEMP/mochi.p12"
