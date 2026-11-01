@@ -1,0 +1,94 @@
+# Mochi phone: the Android app that lets Mochi call December (mochi-phone/, see its README).
+#
+#   - every push touching mochi-phone/: a debug build, to check it compiles
+#   - a tag like phone-v1: a signed release APK + SHA256SUMS on a GitHub release
+#
+# Release signing needs two repository secrets (Settings > Secrets and variables > Actions):
+#   MOCHI_KEYSTORE_B64       base64 of the PKCS#12 signing key (the server keeps the original, see README)
+#   MOCHI_KEYSTORE_PASSWORD  its password
+# Android only installs an update signed with the same key, so the key never changes.
+name: Mochi phone
+
+on:
+  push:
+    branches: [tiny]
+    tags: ["phone-v*"]
+    paths: ["mochi-phone/**", ".github/workflows/mochi-phone.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mochi-phone-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build APK
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      RELEASE: ${{ github.ref_type == 'tag' }}
+      MOCHI_VERSION_NAME: ${{ github.ref_type == 'tag' && github.ref_name || 'dev' }}
+      MOCHI_VERSION_CODE: ${{ github.run_number }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+          sparse-checkout: mochi-phone
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.11.1"
+      - name: Signing key
+        if: env.RELEASE == 'true'
+        env:
+          KEY_B64: ${{ secrets.MOCHI_KEYSTORE_B64 }}
+        run: |
+          [ -n "$KEY_B64" ] || { echo "::error::MOCHI_KEYSTORE_B64 secret is missing (mochi-phone/README.md)"; exit 1; }
+          echo "$KEY_B64" | base64 -d > "$RUNNER_TEMP/mochi.p12"
+          echo "MOCHI_KEYSTORE=$RUNNER_TEMP/mochi.p12" >> "$GITHUB_ENV"
+      - name: Build
+        env:
+          MOCHI_KEYSTORE_PASSWORD: ${{ secrets.MOCHI_KEYSTORE_PASSWORD }}
+        run: |
+          if [ "$RELEASE" = true ]; then
+            gradle -p mochi-phone --no-daemon assembleRelease
+            cp mochi-phone/app/build/outputs/apk/release/app-release.apk "mochi-$MOCHI_VERSION_NAME.apk"
+          else
+            gradle -p mochi-phone --no-daemon assembleDebug
+            cp mochi-phone/app/build/outputs/apk/debug/app-debug.apk mochi-dev.apk
+          fi
+          rm -f "$RUNNER_TEMP/mochi.p12"
+          sha256sum mochi-*.apk > SHA256SUMS
+      - uses: actions/upload-artifact@v7
+        with:
+          name: mochi-phone
+          path: |
+            mochi-*.apk
+            SHA256SUMS
+
+  release:
+    name: Publish GitHub release
+    if: github.ref_type == 'tag'
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v7
+        with:
+          name: mochi-phone
+      - name: Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # --latest=false: the desktop app's updater reads this fork's latest release, which must stay a Tiny build
+          gh release create "${{ github.ref_name }}" --repo "${{ github.repository }}" --target "${{ github.sha }}" --latest=false \
+            --title "Mochi phone ${{ github.ref_name }}" \
+            --notes "Android app for Mochi's calls. Install the APK on your phone (allow installs from your browser). Check it against SHA256SUMS." \
+            mochi-*.apk SHA256SUMS
