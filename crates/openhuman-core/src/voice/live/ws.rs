@@ -215,7 +215,8 @@ pub async fn handle_live_voice_ws(socket: WebSocket, config: Arc<Config>) {
         thread_id.clone(),
         session_id.clone(),
         provider.clone(),
-    );
+    )
+    .with_memory_log(config.clone());
 
     loop {
         tokio::select! {
@@ -275,6 +276,7 @@ pub async fn handle_live_voice_ws(socket: WebSocket, config: Arc<Config>) {
     }
     tracing::info!(session_id, provider = %provider, "{LOG_PREFIX} session ended");
     let _ = sink.close().await;
+    persister.finish().await;
 }
 
 #[cfg(test)]

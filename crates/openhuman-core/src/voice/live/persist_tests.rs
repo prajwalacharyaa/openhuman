@@ -61,3 +61,47 @@ async fn a_missing_thread_is_logged_not_fatal() {
     // No thread created: the store refuses, the call still returns.
     p.save(TranscriptRole::User, "hello").await;
 }
+
+#[test]
+fn voice_turns_pair_each_user_utterance_with_the_speech_after_it() {
+    use TranscriptRole::{Agent, User};
+    let mut turns = VoiceTurns::default();
+    assert!(turns.push(Agent, "hi, I'm Tiny").is_empty(), "a greeting before the user is not logged");
+    assert_eq!(
+        turns.push(User, " remember I have EOD 5 to 8 "),
+        vec![MemoryEntry::User { index: 0, text: "remember I have EOD 5 to 8".into() }]
+    );
+    assert!(turns.push(Agent, "Got it.").is_empty());
+    assert!(turns.push(Agent, "Saved.").is_empty());
+    assert!(turns.push(Agent, "  ").is_empty());
+    assert_eq!(
+        turns.push(User, "what about Monday"),
+        vec![
+            MemoryEntry::Reply { index: 1, text: "Got it. Saved.".into() },
+            MemoryEntry::User { index: 2, text: "what about Monday".into() },
+        ]
+    );
+    assert_eq!(
+        turns.flush(),
+        vec![],
+        "a turn the agent never answered logs no reply"
+    );
+    assert!(turns.flush().is_empty(), "flushing twice is a no-op");
+    assert_eq!(
+        turns.push(User, "and Tuesday"),
+        vec![MemoryEntry::User { index: 4, text: "and Tuesday".into() }]
+    );
+    turns.push(Agent, "EOD again.");
+    assert_eq!(
+        turns.flush(),
+        vec![MemoryEntry::Reply { index: 5, text: "EOD again.".into() }]
+    );
+}
+
+#[tokio::test]
+async fn a_persister_without_memory_log_finishes_quietly() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut p = persister(dir.path());
+    p.save(TranscriptRole::User, "hello").await;
+    p.finish().await;
+}
