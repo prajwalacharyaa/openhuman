@@ -12,7 +12,7 @@
 //!    global `ApprovalGate`),
 //! 3. the CLI/RPC-only scope gate,
 //! 4. the session's `ToolPolicyMiddleware` (deny / require-approval rules),
-//! 5. credential scrubbing of every tool result,
+//! 5. credential scrubbing of every tool result, then the per-result byte cap,
 //! 6. malformed-argument recovery,
 //! 7. bare packed-tool routing and embedder tool hooks.
 //!
@@ -114,6 +114,23 @@ pub(crate) fn assemble_live_tool_harness(
         )));
     }
     harness.push_tool_middleware(Arc::new(middleware::credential_scrub_middleware()));
+    // The typed turn's per-result byte cap (without its summary model or
+    // artifact store): a live provider takes each result whole, and one big
+    // result (a recursive `ls` of a project) ends its session.
+    harness.push_middleware(Arc::new(middleware::ToolOutputMiddleware {
+        budget_bytes: crate::agent::context::DEFAULT_TOOL_RESULT_BUDGET_BYTES,
+        payload_summarizer: None,
+        artifact_store: None,
+        tokenjuice_compaction_enabled: false,
+        tokenjuice_compression: crate::inference::tokenjuice::AgentTokenjuiceCompression::Off,
+        runtime_config: None,
+        tool_policies: harness.tools().policies(),
+        artifact_reads: Default::default(),
+        focus_by_call: Default::default(),
+        summary_focus_tools: Default::default(),
+        raw_fetches: Default::default(),
+        file_reads: Default::default(),
+    }));
     harness.push_middleware(Arc::new(ArgRecoveryMiddleware::new(tool_sets.clone())));
     let registered_tools = harness.tools().names();
     harness.push_middleware(Arc::new(middleware::PackedToolRouteMiddleware::new(
