@@ -96,9 +96,10 @@ class MainActivity : Activity() {
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(pad, pad * 2, pad, pad)
+            setBackgroundColor(Color.parseColor("#F6F5F2"))
         }
-        root.addView(TextView(this).apply { text = "Mochi"; textSize = 30f })
-        state = TextView(this).apply { textSize = 15f; setPadding(0, 8, 0, 8) }
+        root.addView(TextView(this).apply { text = "Mochi"; textSize = 30f; setTextColor(Color.parseColor("#1D1D1F")) })
+        state = TextView(this).apply { textSize = 15f; setPadding(0, 8, 0, 8); setTextColor(Color.parseColor("#55555C")) }
         root.addView(state)
 
         val host = EditText(this).apply {
@@ -132,9 +133,16 @@ class MainActivity : Activity() {
                 startActivity(Intent(this, CallActivity::class.java).putExtra(CallActivity.EXTRA_ANSWER, true))
             }
         }, wide())
+        root.addView(button("Chat with Mochi", "#3B6FD8") {
+            if (Mochi.configured(this)) startActivity(Intent(this, ChatActivity::class.java))
+        }, wide())
+        root.addView(button("Conversations", "#55555C") {
+            if (Mochi.configured(this)) startActivity(Intent(this, ConversationsActivity::class.java))
+        }, wide())
         root.addView(button("New conversation", "#55555C") {
-            Mochi.setThread(this, null)
-            state.text = "The next call starts a new conversation."
+            if (Mochi.configured(this)) {
+                startActivity(Intent(this, ChatActivity::class.java).putExtra(ChatActivity.EXTRA_NEW, true))
+            }
         }, wide())
         fixes = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         root.addView(fixes)
@@ -147,6 +155,6 @@ class MainActivity : Activity() {
             gravity = Gravity.CENTER
             setPadding(0, pad, 0, 0)
         })
-        setContentView(ScrollView(this).apply { addView(root) })
+        setContentView(ScrollView(this).apply { setBackgroundColor(Color.parseColor("#F6F5F2")); addView(root) })
     }
 }

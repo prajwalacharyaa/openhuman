@@ -9,6 +9,7 @@ import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
+import org.json.JSONArray
 import org.json.JSONObject
 import java.time.Instant
 import java.util.UUID
@@ -26,10 +27,12 @@ object Mochi {
     const val CHANNEL_CALLS = "calls"
     const val CHANNEL_ONGOING = "ongoing"
     const val CHANNEL_LISTENING = "listening"
+    const val CHANNEL_NOTICES = "notices"
     const val NOTIFY_LISTENING = 1
     const val NOTIFY_RING = 2
     const val NOTIFY_ONGOING = 3
     const val NOTIFY_MISSED = 4
+    const val NOTIFY_NOTICE_BASE = 100
     private const val CLIENT_ID = "mochi-phone"
     private val JSON = "application/json".toMediaType()
 
@@ -74,18 +77,47 @@ object Mochi {
         http.newCall(req).execute().close()
     }
 
-    /**
-     * After a call Mochi started: post a typed message into the call's thread so the text brain picks
-     * the task back up. The core adds what was said on the call to that turn (voice recap).
-     */
-    fun continueAfterCall(c: Context, threadId: String) {
-        val text = "We just talked about this on the phone. Continue with what I decided on the call."
+    /** The `data` of a core RPC envelope (or the result itself). */
+    private fun data(result: JSONObject): JSONObject = result.optJSONObject("data") ?: result
+
+    /** Start a new conversation; returns its thread id. */
+    fun newThread(c: Context): String = data(rpc(c, "openhuman.threads_create_new", JSONObject())).getString("id")
+
+    /** The conversation's messages, oldest first. */
+    fun messages(c: Context, threadId: String): JSONArray =
+        data(rpc(c, "openhuman.threads_messages_list", JSONObject().put("thread_id", threadId)))
+            .optJSONArray("messages") ?: JSONArray()
+
+    /** Send a typed message, exactly like the desktop chat: Claude answers it in the thread. */
+    fun send(c: Context, threadId: String, text: String) {
         val message = JSONObject().put("id", "phone-" + UUID.randomUUID()).put("content", text)
             .put("type", "text").put("extraMetadata", JSONObject()).put("sender", "user")
             .put("createdAt", Instant.now().toString())
         rpc(c, "openhuman.threads_message_append", JSONObject().put("thread_id", threadId).put("message", message))
         rpc(c, "openhuman.channel_web_chat",
             JSONObject().put("client_id", CLIENT_ID).put("thread_id", threadId).put("message", text))
+    }
+
+    /**
+     * After a call Mochi started: post a typed message into the call's thread so the text brain picks
+     * the task back up (the core adds what was said on the call). Skipped when Mochi already handed the
+     * decisions to Claude during the call (`mochi-ask`), so Claude doesn't run twice.
+     */
+    fun continueAfterCall(c: Context, threadId: String, callStartedAt: Instant) {
+        val all = messages(c, threadId)
+        val handedOff = (0 until all.length()).map { all.getJSONObject(it) }.any {
+            it.optString("id").startsWith("voice-ask-") &&
+                runCatching { Instant.parse(it.optString("createdAt")) >= callStartedAt }.getOrDefault(false)
+        }
+        if (!handedOff) send(c, threadId, "We just talked about this on the phone. Continue with what I decided on the call.")
+    }
+
+    /** Whether this notice id was shown before (remembers the last 100). */
+    fun firstSeen(c: Context, id: String): Boolean {
+        val seen = (prefs(c).getString("notices", "") ?: "").split(',').filter { it.isNotEmpty() }
+        if (id in seen) return false
+        prefs(c).edit().putString("notices", (seen + id).takeLast(100).joinToString(",")).apply()
+        return true
     }
 
     fun createChannels(c: Context) {
@@ -99,6 +131,7 @@ object Mochi {
             ring,
             NotificationChannel(CHANNEL_ONGOING, "Call in progress", NotificationManager.IMPORTANCE_LOW),
             NotificationChannel(CHANNEL_LISTENING, "Waiting for Mochi's calls", NotificationManager.IMPORTANCE_MIN),
+            NotificationChannel(CHANNEL_NOTICES, "Updates and reminders", NotificationManager.IMPORTANCE_HIGH),
         ))
     }
 }

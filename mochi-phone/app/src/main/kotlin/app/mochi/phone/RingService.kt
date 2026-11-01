@@ -74,6 +74,10 @@ class RingService : Service() {
                                 val call = JSONObject(line.removePrefix("data: "))
                                 main.post { ring(this, call) }
                             }
+                            line.startsWith("data: ") && event == "notice" -> {
+                                val notice = JSONObject(line.removePrefix("data: "))
+                                if (Mochi.firstSeen(this, notice.getString("id"))) main.post { showNotice(this, notice) }
+                            }
                             line.isEmpty() -> event = ""
                         }
                     }
@@ -120,6 +124,23 @@ class RingService : Service() {
             n.flags = n.flags or Notification.FLAG_INSISTENT // keep ringing until answered
             c.getSystemService(NotificationManager::class.java).notify(Mochi.NOTIFY_RING, n)
             Handler(Looper.getMainLooper()).postDelayed({ if (ringing == id) missed(c, call) }, RING_FOR_MS)
+        }
+
+        private var notices = 0
+
+        /** A notification from Mochi: a reminder, or what happened with a task. Tapping opens the chat. */
+        fun showNotice(c: Context, notice: JSONObject) {
+            val open = PendingIntent.getActivity(c, 7, Intent(c, ChatActivity::class.java), PendingIntent.FLAG_IMMUTABLE)
+            val body = notice.optString("body")
+            val n = Notification.Builder(c, Mochi.CHANNEL_NOTICES)
+                .setSmallIcon(R.drawable.ic_mochi)
+                .setContentTitle(notice.optString("title"))
+                .setContentText(body)
+                .setStyle(Notification.BigTextStyle().bigText(body))
+                .setContentIntent(open)
+                .setAutoCancel(true)
+                .build()
+            c.getSystemService(NotificationManager::class.java).notify(Mochi.NOTIFY_NOTICE_BASE + notices++ % 50, n)
         }
 
         /** Stop ringing (answered or declined). */

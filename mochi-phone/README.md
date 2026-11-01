@@ -6,6 +6,10 @@ A small Android app (Android 12 or newer) for Mochi, December's assistant on the
   call, with a full-screen ring on the lock screen and Answer/Decline. Answering opens a live voice call
   in the chat where Mochi was working, so it already knows what it's asking about. After you hang up,
   the chat continues with what you decided.
+- **Chat and history.** "Chat with Mochi" is a typed chat (answered by Claude, like the desktop app) in the
+  current conversation; "Conversations" lists past ones to chat or call in; "New conversation" starts one.
+- **Notifications.** Reminders you set ("remind me at 5…") and Mochi's updates ("done: PR #29 opened") arrive
+  as normal notifications; tapping one opens the chat.
 - **You call Mochi.** "Call Mochi" starts a live voice call any time. It's the same voice as the desktop
   app (Gemini Live through OpenHuman), and you can talk over Mochi to interrupt it. "New conversation"
   starts fresh; otherwise calls continue the last one.
@@ -54,9 +58,11 @@ Plain Android APIs plus OkHttp; no other libraries.
 | File | What |
 |---|---|
 | `Mochi.kt` | settings, server calls, notification channels |
-| `RingService.kt` | keeps the connection to `mochi-ring` open, rings, handles missed calls |
+| `RingService.kt` | keeps the connection to `mochi-ring` open, rings, handles missed calls, shows notices |
 | `Call.kt` | one live voice call: WebSocket + mic (16 kHz PCM16, echo cancellation) + speaker |
 | `CallService.kt` | holds the microphone while a call runs, so the call keeps going with the screen off |
 | `CallActivity.kt` | incoming-call and in-call screen |
-| `MainActivity.kt` | setup, Call Mochi, permission shortcuts |
+| `ChatActivity.kt` | typed chat in the current conversation (re-reads it every 3 s) |
+| `ConversationsActivity.kt` | past conversations: chat or call in one |
+| `MainActivity.kt` | setup, Call / Chat / Conversations, permission shortcuts |
 | `Receivers.kt` | Decline button, start after reboot |

@@ -55,6 +55,7 @@ object Call {
     private var ws: WebSocket? = null
     private var call: JSONObject? = null // set when Mochi called December
     private var threadId: String? = null
+    private var startedAt: java.time.Instant = java.time.Instant.now()
     @Volatile private var answered = false
     @Volatile private var flushPlayback = false
     private val playback = LinkedBlockingQueue<ByteArray>()
@@ -67,6 +68,7 @@ object Call {
         answered = false
         muted = false
         call = mochiCall
+        startedAt = java.time.Instant.now()
         threadId = mochiCall?.optString("thread_id")?.takeIf { it.isNotEmpty() } ?: Mochi.thread(app)
         playback.clear()
         val am = app.getSystemService(AudioManager::class.java)
@@ -87,10 +89,11 @@ object Call {
         am.mode = AudioManager.MODE_NORMAL
         val ended = call
         val thread = threadId
+        val since = startedAt
         if (ended != null) {
             Thread {
                 runCatching { Mochi.callDone(app, ended.getString("id"), if (answered) "answered" else "missed") }
-                if (answered && thread != null) runCatching { Mochi.continueAfterCall(app, thread) }
+                if (answered && thread != null) runCatching { Mochi.continueAfterCall(app, thread, since) }
             }.start()
         }
         app.stopService(Intent(app, CallService::class.java))
