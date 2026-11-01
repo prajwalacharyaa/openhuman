@@ -4,7 +4,7 @@
 # Upstream's release pipeline (release-production.yml / build-desktop.yml) needs TinyHumans' signing keys,
 # Sentry and GitHub App secrets, so it can't run on this fork. This workflow builds the same Tauri app
 # without any of that:
-#   - test:    the unit tests our patches touch (voice, memory hooks, datetime stamp)
+#   - test:    the unit tests our patches touch (voice, voice recap, memory hooks)
 #   - build:   Linux .deb (also what the xarvis-core server runs headless) + Windows NSIS installer.
 #              macOS is kept below but switched off.
 #   - release: on a tag like v0.64.15-tiny.1, publishes a GitHub release with the installers and
@@ -65,10 +65,10 @@ jobs:
             ~/.cargo/git
           key: tiny-test-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
           restore-keys: tiny-test-${{ runner.os }}-
-      - name: cargo test (voice, memory hooks, datetime stamp)
+      - name: cargo test (voice, voice recap, memory hooks)
         run: >
           cargo test --manifest-path Cargo.toml -p openhuman --lib --
-          voice::live voice_recap memory::lifecycle bikram_sambat current_datetime_line
+          voice::live voice_recap memory::lifecycle
 
   build:
     name: Build ${{ matrix.settings.name }}

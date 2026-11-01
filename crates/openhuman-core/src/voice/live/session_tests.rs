@@ -88,12 +88,12 @@ fn a_workspace_voice_file_replaces_the_built_in_guidance() {
 }
 
 #[test]
-fn the_prompt_carries_the_memory_pack_and_nepali_date() {
+fn the_prompt_carries_the_memory_pack_and_the_users_zone() {
     let ws = tempfile::tempdir().unwrap();
     let pack = "<memory-context>\nThe user has EOD Monday to Saturday.\n</memory-context>";
     let prompt = system_prompt(ws.path(), Some("Asia/Kathmandu"), &[], Some(pack));
     assert!(prompt.contains("The user has EOD Monday to Saturday."));
-    assert!(prompt.contains("Nepali date (Bikram Sambat)"));
+    assert!(prompt.contains(" Asia/Kathmandu ("), "{prompt}");
     let prompt = system_prompt(ws.path(), None, &[], Some("   "));
     assert!(!prompt.contains("memory-context"));
 }

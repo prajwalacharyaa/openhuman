@@ -7,9 +7,9 @@
 //! `voice` external-channel origin and an approval chat context for the
 //! thread, so approval prompts reach the user's open conversation.
 //!
-//! The prompt gives the voice the same Tiny a typed turn gets: the workspace
-//! persona and role files, the date stamp (with the Nepali date in Nepal's
-//! zone), and a memory pack recalled when the session starts. The speaking
+//! The prompt gives the voice what a typed turn gets: the workspace persona
+//! and role files, the same date stamp in the user's zone, and a memory pack
+//! recalled when the session starts. The speaking
 //! guidance comes from the workspace's `VOICE.md` when it has one, else the
 //! built-in `prompt.md`.
 
