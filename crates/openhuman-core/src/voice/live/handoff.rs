@@ -1,18 +1,20 @@
 //! Catches the live model saying it handed work to Claude without doing it.
 //!
 //! Voice hands work it can't do (GitHub projects, code, server files) to
-//! Claude with `spawn_async_subagent`. A realtime model sometimes only *says*
+//! Claude by running `mochi-ask` with its shell tool (the server's command
+//! that posts the request into the typed chat). A realtime model sometimes only *says*
 //! "Claude is on it" and never makes the call, so the user waits for an answer
 //! that will never come. This tracks each turn: when the model's words claim a
 //! handoff and the turn completes with no handoff call, it returns a short
 //! correction for the caller to send to the model, once per turn.
 
-/// Tools that actually hand work to Claude.
-const HANDOFF_TOOLS: &[&str] = &["spawn_async_subagent"];
+/// Tools a handoff runs through. The event carries no arguments, so any shell
+/// call in a turn that claims a handoff counts as the `mochi-ask` call.
+const HANDOFF_TOOLS: &[&str] = &["shell", "spawn_async_subagent"];
 
 /// Sent to the live model when it claimed a handoff it didn't make.
 pub(crate) const NUDGE: &str = "(Server check, not December speaking: you said Claude is handling this, \
-but you did not call spawn_async_subagent, so nothing was sent to Claude. Call spawn_async_subagent now \
+but you did not run mochi-ask, so nothing was sent to Claude. Run mochi-ask now with your shell tool, \
 with December's full request and the context it needs, then confirm in one short sentence. If you already \
 handed this same request to Claude earlier in this call, don't call it again; just say Claude is still working.)";
 

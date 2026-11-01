@@ -23,7 +23,7 @@ fn stays_quiet_when_the_handoff_happened() {
     let mut check = HandoffCheck::default();
     check.on_event(HandoffEvent::UserSaid);
     check.on_event(HandoffEvent::AgentSaid("I'll ask Claude to check that."));
-    check.on_event(HandoffEvent::ToolStarted("spawn_async_subagent"));
+    check.on_event(HandoffEvent::ToolStarted("shell"));
     assert_eq!(check.on_event(HandoffEvent::TurnComplete), None);
 
     // A later turn that only talks about Claude's earlier work starts clean.
