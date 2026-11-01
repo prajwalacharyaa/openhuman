@@ -158,6 +158,9 @@ class MainActivity : Activity() {
                 startActivity(Intent(this, ChatActivity::class.java).putExtra(ChatActivity.EXTRA_NEW, true))
             }
         }, wide())
+        root.addView(button("Approvals", "#B4472C") {
+            if (Mochi.configured(this)) startActivity(Intent(this, ApprovalsActivity::class.java))
+        }, wide())
         fixes = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         root.addView(fixes)
         root.addView(button("Change server or token", "#55555C") {

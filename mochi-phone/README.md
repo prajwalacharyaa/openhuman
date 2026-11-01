@@ -8,6 +8,8 @@ A small Android app (Android 12 or newer) for Mochi, December's assistant on the
   the chat continues with what you decided.
 - **Chat and history.** "Chat with Mochi" is a typed chat (answered by Claude, like the desktop app) in the
   current conversation; "Conversations" lists past ones to chat or call in; "New conversation" starts one.
+- **Approvals.** Mochi's browser requests (Allow / Deny / answer with a message) and calls you missed or
+  declined that still need a decision (Call back / answer by typing / Dismiss) wait here until dealt with.
 - **Notifications.** Reminders you set ("remind me at 5…") and Mochi's updates ("done: PR #29 opened") arrive
   as normal notifications; tapping one opens the chat.
 - **You call Mochi.** "Call Mochi" starts a live voice call any time. It's the same voice as the desktop
@@ -71,5 +73,6 @@ Plain Android APIs plus OkHttp; no other libraries.
 | `CallActivity.kt` | incoming-call and in-call screen |
 | `ChatActivity.kt` | typed chat in the current conversation (re-reads it every 3 s) |
 | `ConversationsActivity.kt` | past conversations: chat or call in one |
+| `ApprovalsActivity.kt` | browser requests and missed/declined calls waiting for December |
 | `MainActivity.kt` | setup, Call / Chat / Conversations, permission shortcuts, server RAM in the header (asked only while open) |
 | `Receivers.kt` | Decline button, start after reboot |

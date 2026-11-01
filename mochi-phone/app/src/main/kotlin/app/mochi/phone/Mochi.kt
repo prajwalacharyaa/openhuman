@@ -95,6 +95,33 @@ object Mochi {
         return Pair(start, stop)
     }
 
+    /** What waits for December (mochi-ring GET /approvals), newest first. Blocking. */
+    fun approvals(c: Context): List<JSONObject> {
+        val req = Request.Builder().url("${ringUrl(c)}/approvals").header("Authorization", "Bearer ${token(c)}").build()
+        http.newCall(req).execute().use { r ->
+            val items = JSONObject(r.body?.string() ?: "{}").optJSONArray("items") ?: JSONArray()
+            return (0 until items.length()).map { items.getJSONObject(it) }
+        }
+    }
+
+    /**
+     * Allow or deny a browser request on its approval page. That page trusts only requests that come through
+     * Tailscale, so no token is sent (or needed): the tap is proven to come from December's tailnet.
+     */
+    fun decideBrowse(c: Context, approveUrl: String, allow: Boolean) {
+        val req = Request.Builder().url("$approveUrl/${if (allow) "allow" else "deny"}")
+            .post(ByteArray(0).toRequestBody(null)).build()
+        http.newCall(req).execute().use { r -> if (!r.isSuccessful) throw IllegalStateException("HTTP ${r.code}") }
+    }
+
+    /** A missed or declined call was dealt with some other way: drop it from Approvals. */
+    fun dismissCall(c: Context, callId: String) {
+        val req = Request.Builder().url("${ringUrl(c)}/calls/$callId/dismiss")
+            .header("Authorization", "Bearer ${token(c)}")
+            .post(JSONObject().toString().toRequestBody(JSON)).build()
+        http.newCall(req).execute().close()
+    }
+
     /** Tell mochi-ring how a call ended (answered / declined / missed) so it stops ringing. */
     fun callDone(c: Context, callId: String, result: String) {
         val req = Request.Builder().url("${ringUrl(c)}/calls/$callId/done")

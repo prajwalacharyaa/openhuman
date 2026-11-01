@@ -37,6 +37,10 @@
             android:turnScreenOn="true" />
 
         <activity
+            android:name=".ApprovalsActivity"
+            android:exported="false" />
+
+        <activity
             android:name=".ConversationsActivity"
             android:exported="false" />
 

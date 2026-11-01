@@ -131,12 +131,11 @@ class RingService : Service() {
 
         /**
          * A notification from Mochi: a reminder, what happened with a task, or a request to use the browser.
-         * Tapping opens its link (the browser approval page) when it has one, else the chat.
+         * Tapping opens the Approvals screen for a request, else the chat.
          */
         fun showNotice(c: Context, notice: JSONObject) {
-            val url = notice.optString("url")
-            val target = if (url.startsWith("https://")) Intent(Intent.ACTION_VIEW, android.net.Uri.parse(url))
-                         else Intent(c, ChatActivity::class.java)
+            // a notice with a link is something to approve: open the Approvals screen; anything else, the chat
+            val target = Intent(c, if (notice.has("url")) ApprovalsActivity::class.java else ChatActivity::class.java)
             val open = PendingIntent.getActivity(c, 7 + notices % 50, target,
                 PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
             val body = notice.optString("body")
