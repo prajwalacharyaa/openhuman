@@ -43,6 +43,16 @@ pub(crate) const LATEST_MESSAGES: usize = 2;
 /// Characters kept per message among the [`LATEST_MESSAGES`].
 pub(crate) const LATEST_CONTEXT_CHARS: usize = 4000;
 
+/// Other chats from the last [`OTHER_WINDOW_HOURS`] carried into a call, so
+/// "what did Claude find about X earlier?" works across conversations without
+/// a memory search. Read from the thread store: no model call.
+pub(crate) const OTHER_THREADS: usize = 3;
+/// Messages kept from each of those chats (the latest ones).
+pub(crate) const OTHER_THREAD_MESSAGES: usize = 4;
+/// Characters kept per message from those chats.
+pub(crate) const OTHER_CHARS: usize = 300;
+const OTHER_WINDOW_HOURS: i64 = 48;
+
 const BASE_PROMPT: &str = include_str!("prompt.md");
 /// Workspace file that replaces [`BASE_PROMPT`] when present and not blank.
 pub(crate) const VOICE_PROMPT_FILE: &str = "VOICE.md";
@@ -95,6 +105,7 @@ pub(crate) fn system_prompt(
     zone: Option<&str>,
     recent: &[ConversationMessage],
     memory: Option<&str>,
+    others: Option<&str>,
 ) -> String {
     let custom = std::fs::read_to_string(workspace_dir.join(VOICE_PROMPT_FILE)).ok();
     let guidance = custom
@@ -124,6 +135,11 @@ pub(crate) fn system_prompt(
         prompt.push_str(memory);
     }
 
+    if let Some(others) = others {
+        prompt.push_str("\n\n");
+        prompt.push_str(others);
+    }
+
     let shown: Vec<_> = recent.iter().filter(|m| !m.content.trim().is_empty()).collect();
     let start = shown.len().saturating_sub(CONTEXT_MESSAGES);
     let latest_from = shown.len().saturating_sub(LATEST_MESSAGES);
@@ -142,6 +158,72 @@ pub(crate) fn system_prompt(
         prompt.push_str(&lines.join("\n"));
     }
     prompt
+}
+
+/// One other recent conversation: its title, when it was last active, and
+/// its messages.
+pub(crate) struct OtherConversation {
+    pub(crate) title: String,
+    pub(crate) last_message_at: String,
+    pub(crate) messages: Vec<ConversationMessage>,
+}
+
+/// The prompt block listing [`OtherConversation`]s, most recent first.
+pub(crate) fn other_conversations_block(others: &[OtherConversation]) -> Option<String> {
+    let parts: Vec<String> = others
+        .iter()
+        .filter_map(|other| {
+            let shown: Vec<_> = other.messages.iter().filter(|m| !m.content.trim().is_empty()).collect();
+            let lines: Vec<String> = shown[shown.len().saturating_sub(OTHER_THREAD_MESSAGES)..]
+                .iter()
+                .map(|m| {
+                    let who = if m.sender == "user" { "User" } else { "You" };
+                    let text: String = m.content.trim().chars().take(OTHER_CHARS).collect();
+                    format!("{who}: {text}")
+                })
+                .collect();
+            (!lines.is_empty()).then(|| {
+                format!("- {} (last message {}):\n{}", other.title, other.last_message_at, lines.join("\n"))
+            })
+        })
+        .collect();
+    (!parts.is_empty()).then(|| {
+        format!(
+            "Your other recent conversations with the user (most recent first). Use them when the user \
+             refers to something from before; search memory for anything older:\n{}",
+            parts.join("\n")
+        )
+    })
+}
+
+/// The user's other chats active in the last [`OTHER_WINDOW_HOURS`], newest
+/// first, without worker threads.
+async fn other_conversations(config: &Config, thread_id: &str) -> Vec<OtherConversation> {
+    let Ok(mut threads) = crate::threads::store::blocking::list_threads(config.workspace_dir.clone()).await
+    else {
+        return Vec::new();
+    };
+    let cutoff = chrono::Utc::now() - chrono::Duration::hours(OTHER_WINDOW_HOURS);
+    threads.retain(|t| {
+        t.id != thread_id
+            && t.parent_thread_id.is_none()
+            && chrono::DateTime::parse_from_rfc3339(&t.last_message_at)
+                .is_ok_and(|at| at.with_timezone(&chrono::Utc) >= cutoff)
+    });
+    threads.sort_by(|a, b| b.last_message_at.cmp(&a.last_message_at));
+    let mut others = Vec::new();
+    for thread in threads.into_iter().take(OTHER_THREADS) {
+        if let Ok(messages) =
+            crate::threads::store::blocking::get_messages(config.workspace_dir.clone(), thread.id.clone()).await
+        {
+            others.push(OtherConversation {
+                title: thread.title,
+                last_message_at: thread.last_message_at,
+                messages,
+            });
+        }
+    }
+    others
 }
 
 /// What the opening recall is ranked around: the thread's last user message,
@@ -214,12 +296,20 @@ pub(crate) async fn start(
         );
         Vec::new()
     });
+    let others = other_conversations(&config, &thread_id).await;
+    // A new call has nothing of its own to rank the recall around: use what was
+    // last asked in the most recent other chat instead of a generic focus.
+    let focus_from = if recent.iter().any(|m| m.sender == "user") {
+        recent.as_slice()
+    } else {
+        others.first().map_or(recent.as_slice(), |other| other.messages.as_slice())
+    };
     let identity = crate::memory::scope::resolve_current(&config);
     let pack = crate::memory::lifecycle::hooks::session_start(
         &config,
         &identity,
         &thread_id,
-        Some(recall_focus(&recent)),
+        Some(recall_focus(focus_from)),
     )
     .await;
     let zone = config.time_zone();
@@ -228,6 +318,7 @@ pub(crate) async fn start(
         Some(zone.as_str()),
         &recent,
         pack.as_ref().map(|pack| pack.injection()).as_deref(),
+        other_conversations_block(&others).as_deref(),
     );
     let mut live = providers::live_config(&config, &provider, &prompt, request.input_sample_rate);
     // Hosted Gemini fixes its tools when the ticket is minted, so they must be
