@@ -68,7 +68,7 @@ jobs:
       - name: cargo test (voice, memory hooks, datetime stamp)
         run: >
           cargo test --manifest-path Cargo.toml -p openhuman --lib --
-          voice::live memory::lifecycle bikram_sambat current_datetime_line
+          voice::live voice_recap memory::lifecycle bikram_sambat current_datetime_line
 
   build:
     name: Build ${{ matrix.settings.name }}
