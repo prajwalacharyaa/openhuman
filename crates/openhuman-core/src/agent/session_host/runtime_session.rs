@@ -9,6 +9,7 @@
 mod attachment_input;
 mod memory_ingest;
 mod permanent;
+mod voice_recap;
 #[path = "runtime_session_turn.rs"]
 mod turn;
 
@@ -598,6 +599,13 @@ impl OpenHumanTurnPrelude {
                 &self.workspace_dir,
                 &turn_fleet,
             )
+        {
+            context.push_str(&block);
+        }
+        // What was said by voice in this thread since the last typed exchange
+        // (voice turns are saved to the thread, not to this transcript).
+        if let Some(block) =
+            voice_recap::recap_block(&self.workspace_dir, self.thread_id.as_deref()).await
         {
             context.push_str(&block);
         }
