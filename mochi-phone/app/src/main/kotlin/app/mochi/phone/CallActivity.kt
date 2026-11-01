@@ -173,7 +173,7 @@ class CallActivity : Activity(), Call.Listener {
         }
         root.addView(incoming)
         root.addView(controls)
-        setContentView(root)
+        Ui.edgeToEdge(this, root, pad)
     }
 
     private fun decline() {

@@ -37,25 +37,16 @@ class ApprovalsActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        val pad = (resources.displayMetrics.density * 16).toInt()
-        val root = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(pad, pad, pad, pad)
-            setBackgroundColor(Color.parseColor("#F6F5F2"))
-        }
-        root.addView(TextView(this).apply {
-            text = "Approvals"; textSize = 24f; setTextColor(Color.parseColor("#1D1D1F"))
-        })
-        status = TextView(this).apply { textSize = 13f; setTextColor(Color.parseColor("#6B6B70")); text = "Loading…" }
-        root.addView(status)
+        val screen = Ui.screen(this, "Approvals", back = true)
+        status = Ui.text(this, "Loading…", 13f, Ui.MUTED)
+        screen.root.addView(status)
         list = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        root.addView(ScrollView(this).apply { addView(list) },
-            LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f))
-        setContentView(root)
+        screen.root.addView(ScrollView(this).apply { addView(list) }, Ui.fill())
     }
 
     override fun onResume() {
         super.onResume()
+        RingService.clearApprovalNotice(this) // looking at them now
         main.post(refresh)
     }
 

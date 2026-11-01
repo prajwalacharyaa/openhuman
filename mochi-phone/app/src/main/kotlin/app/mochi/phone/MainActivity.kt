@@ -4,24 +4,21 @@ import android.Manifest
 import android.app.Activity
 import android.app.NotificationManager
 import android.content.Intent
-import android.graphics.Color
-import android.graphics.drawable.GradientDrawable
+import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.PowerManager
 import android.provider.Settings
 import android.text.InputType
-import android.view.Gravity
-import android.view.View
-import android.widget.Button
 import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 
 /**
- * Setup (server address + Mochi's token), "Call Mochi", and the permissions a ringing phone needs.
+ * Home: Call / Chat with Mochi, Approvals, past conversations, setup (server address + Mochi's token) and the
+ * permissions a ringing phone needs.
  */
 class MainActivity : Activity() {
     private lateinit var state: TextView
@@ -33,7 +30,7 @@ class MainActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         buildUi()
-        if (checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+        if (checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
             requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS, Manifest.permission.RECORD_AUDIO), 1)
         }
     }
@@ -51,12 +48,8 @@ class MainActivity : Activity() {
     }
 
     private fun refresh() {
-        setup.visibility = if (Mochi.configured(this)) View.GONE else View.VISIBLE
-        state.text = when {
-            !Mochi.configured(this) -> "Enter your server and Mochi's token to start."
-            RingService.connected -> "Connected. Mochi can call you."
-            else -> "Not connected to Mochi yet. Is Tailscale on?"
-        }
+        Ui.gone(setup, Mochi.configured(this))
+        showState()
         fixes.removeAllViews()
         val nm = getSystemService(NotificationManager::class.java)
         val power = getSystemService(PowerManager::class.java)
@@ -72,64 +65,51 @@ class MainActivity : Activity() {
             fix("Let Mochi run in the background (so calls arrive)",
                 Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:$packageName")))
         }
-        state.postDelayed({ if (!isFinishing) refreshState() }, 2_000)
+        state.postDelayed({ if (!isFinishing) showState() }, 2_000) // the ring connection takes a moment
     }
 
-    private fun refreshState() {
-        if (Mochi.configured(this)) {
-            state.text = if (RingService.connected) "Connected. Mochi can call you."
-                         else "Not connected to Mochi yet. Is Tailscale on?"
+    private fun showState() {
+        state.text = when {
+            !Mochi.configured(this) -> "Enter your server and Mochi's token to start."
+            RingService.connected -> "● Connected. Mochi can call you."
+            else -> "○ Not connected to Mochi yet. Is Tailscale on?"
         }
     }
 
     private fun fix(label: String, intent: Intent) {
-        fixes.addView(button(label, "#55555C") { startActivity(intent) }, wide())
+        fixes.addView(Ui.button(this, label, Ui.GREY) { startActivity(intent) }, Ui.matchWidth(this, 8))
     }
 
-    private fun wide() = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT,
-        LinearLayout.LayoutParams.WRAP_CONTENT).apply { topMargin = 24 }
-
-    private fun button(label: String, color: String, onClick: () -> Unit) = Button(this).apply {
-        text = label
-        isAllCaps = false
-        textSize = 16f
-        setTextColor(Color.WHITE)
-        setPadding(24, 32, 24, 32)
-        background = GradientDrawable().apply { cornerRadius = 48f; setColor(Color.parseColor(color)) }
-        setOnClickListener { onClick() }
+    private fun open(target: Class<*>, extra: String? = null) {
+        if (!Mochi.configured(this)) return
+        startActivity(Intent(this, target).apply { if (extra != null) putExtra(extra, true) })
     }
 
     private fun buildUi() {
-        val pad = (resources.displayMetrics.density * 16).toInt()
-        val root = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(pad, pad * 2, pad, pad)
-            setBackgroundColor(Color.parseColor("#F6F5F2"))
-        }
-        val header = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
-        header.addView(TextView(this).apply { text = "Mochi"; textSize = 30f; setTextColor(Color.parseColor("#1D1D1F")) },
-            LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
-        ram = TextView(this).apply { textSize = 14f; setTextColor(Color.parseColor("#6B6B70")) }
-        header.addView(ram)
-        root.addView(header)
+        val screen = Ui.screen(this, "Mochi", back = false)
+        ram = Ui.text(this, size = 13f, color = Ui.MUTED)
+        screen.right.addView(ram)
         ramWatch = Mochi.ramWatcher(this, ram)
-        state = TextView(this).apply { textSize = 15f; setPadding(0, 8, 0, 8); setTextColor(Color.parseColor("#55555C")) }
-        root.addView(state)
+
+        val body = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        state = Ui.text(this, size = 14f, color = Ui.MUTED)
+        body.addView(state)
 
         val host = EditText(this).apply {
             hint = "Server, e.g. xarvis-core.tailnet.ts.net"
             setText(Mochi.host(this@MainActivity))
             inputType = InputType.TYPE_TEXT_VARIATION_URI
+            setTextColor(Ui.TEXT)
         }
         val token = EditText(this).apply {
             hint = "Mochi's token"
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
+            setTextColor(Ui.TEXT)
         }
-        setup = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
+        setup = Ui.card(this).apply {
             addView(host)
             addView(token)
-            addView(button("Save", "#3B6FD8") {
+            addView(Ui.button(this@MainActivity, "Save", Ui.BLUE) {
                 val h = host.text.toString().trim().removePrefix("https://").substringBefore('/').substringBefore(':')
                 val t = token.text.toString().trim()
                 if (h.isNotEmpty() && t.isNotEmpty()) {
@@ -138,40 +118,34 @@ class MainActivity : Activity() {
                     RingService.start(this@MainActivity)
                     refresh()
                 }
-            }, wide())
+            }, Ui.matchWidth(this@MainActivity, 8))
         }
-        root.addView(setup)
+        body.addView(setup)
 
-        root.addView(button("Call Mochi", "#2E9D5B") {
+        // the two things done most, side by side
+        val main = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        main.addView(Ui.button(this, "Call Mochi", Ui.GREEN) {
             if (Mochi.configured(this)) {
                 startActivity(Intent(this, CallActivity::class.java).putExtra(CallActivity.EXTRA_ANSWER, true))
             }
-        }, wide())
-        root.addView(button("Chat with Mochi", "#3B6FD8") {
-            if (Mochi.configured(this)) startActivity(Intent(this, ChatActivity::class.java))
-        }, wide())
-        root.addView(button("Conversations", "#55555C") {
-            if (Mochi.configured(this)) startActivity(Intent(this, ConversationsActivity::class.java))
-        }, wide())
-        root.addView(button("New conversation", "#55555C") {
-            if (Mochi.configured(this)) {
-                startActivity(Intent(this, ChatActivity::class.java).putExtra(ChatActivity.EXTRA_NEW, true))
-            }
-        }, wide())
-        root.addView(button("Approvals", "#B4472C") {
-            if (Mochi.configured(this)) startActivity(Intent(this, ApprovalsActivity::class.java))
-        }, wide())
+        }, LinearLayout.LayoutParams(0, Ui.dp(this, 64), 1f).apply { marginEnd = Ui.dp(this@MainActivity, 6) })
+        main.addView(Ui.button(this, "Chat", Ui.BLUE) { open(ChatActivity::class.java) },
+            LinearLayout.LayoutParams(0, Ui.dp(this, 64), 1f).apply { marginStart = Ui.dp(this@MainActivity, 6) })
+        body.addView(main, Ui.matchWidth(this, 16))
+
+        body.addView(Ui.button(this, "Approvals", Ui.RED) { open(ApprovalsActivity::class.java) }, Ui.matchWidth(this))
+        body.addView(Ui.button(this, "Conversations", Ui.GREY) { open(ConversationsActivity::class.java) }, Ui.matchWidth(this))
+        body.addView(Ui.button(this, "New conversation", Ui.GREY) { open(ChatActivity::class.java, ChatActivity.EXTRA_NEW) },
+            Ui.matchWidth(this))
+
         fixes = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        root.addView(fixes)
-        root.addView(button("Change server or token", "#55555C") {
-            setup.visibility = View.VISIBLE
-        }, wide())
-        root.addView(TextView(this).apply {
-            text = "Calls go over Tailscale only: keep the Tailscale app connected."
-            textSize = 13f
-            gravity = Gravity.CENTER
-            setPadding(0, pad, 0, 0)
+        body.addView(fixes, Ui.matchWidth(this, 8))
+        body.addView(Ui.text(this, "Change server or token", 14f, Ui.MUTED).apply {
+            setPadding(0, Ui.dp(this@MainActivity, 20), 0, 0)
+            setOnClickListener { Ui.gone(setup, false) }
         })
-        setContentView(ScrollView(this).apply { setBackgroundColor(Color.parseColor("#F6F5F2")); addView(root) })
+        body.addView(Ui.text(this, "Calls and chat go over Tailscale only: keep the Tailscale app connected.", 12f, Ui.MUTED)
+            .apply { setPadding(0, Ui.dp(this@MainActivity, 8), 0, 0) })
+        screen.root.addView(ScrollView(this).apply { addView(body) }, Ui.fill())
     }
 }

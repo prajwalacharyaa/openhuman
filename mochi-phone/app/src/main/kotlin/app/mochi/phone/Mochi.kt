@@ -31,7 +31,7 @@ object Mochi {
     const val NOTIFY_LISTENING = 1
     const val NOTIFY_RING = 2
     const val NOTIFY_ONGOING = 3
-    const val NOTIFY_MISSED = 4
+    const val NOTIFY_APPROVALS = 5
     const val NOTIFY_NOTICE_BASE = 100
     private const val CLIENT_ID = "mochi-phone"
     private val JSON = "application/json".toMediaType()

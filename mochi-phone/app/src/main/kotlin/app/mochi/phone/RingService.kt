@@ -134,9 +134,8 @@ class RingService : Service() {
          * Tapping opens the Approvals screen for a request, else the chat.
          */
         fun showNotice(c: Context, notice: JSONObject) {
-            // a notice with a link is something to approve: open the Approvals screen; anything else, the chat
-            val target = Intent(c, if (notice.has("url")) ApprovalsActivity::class.java else ChatActivity::class.java)
-            val open = PendingIntent.getActivity(c, 7 + notices % 50, target,
+            if (notice.has("url")) return approvalNotice(c, notice.optString("body"))
+            val open = PendingIntent.getActivity(c, 7 + notices % 50, Intent(c, ChatActivity::class.java),
                 PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
             val body = notice.optString("body")
             val n = Notification.Builder(c, Mochi.CHANNEL_NOTICES)
@@ -150,6 +149,33 @@ class RingService : Service() {
             c.getSystemService(NotificationManager::class.java).notify(Mochi.NOTIFY_NOTICE_BASE + notices++ % 50, n)
         }
 
+        private var waiting = 0
+
+        /**
+         * One notification for everything waiting on December (browser requests, missed calls): it counts them
+         * and opens the Approvals screen, which clears it.
+         */
+        fun approvalNotice(c: Context, latest: String) {
+            waiting++
+            val open = PendingIntent.getActivity(c, 6, Intent(c, ApprovalsActivity::class.java),
+                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
+            val n = Notification.Builder(c, Mochi.CHANNEL_NOTICES)
+                .setSmallIcon(R.drawable.ic_mochi)
+                .setContentTitle(if (waiting == 1) "Mochi needs you" else "Mochi needs you: $waiting things waiting")
+                .setContentText(latest)
+                .setStyle(Notification.BigTextStyle().bigText(latest))
+                .setNumber(waiting)
+                .setContentIntent(open)
+                .setAutoCancel(true)
+                .build()
+            c.getSystemService(NotificationManager::class.java).notify(Mochi.NOTIFY_APPROVALS, n)
+        }
+
+        fun clearApprovalNotice(c: Context) {
+            waiting = 0
+            c.getSystemService(NotificationManager::class.java).cancel(Mochi.NOTIFY_APPROVALS)
+        }
+
         /** Stop ringing (answered or declined). */
         fun stopRinging(c: Context) {
             ringing = null
@@ -158,19 +184,7 @@ class RingService : Service() {
 
         private fun missed(c: Context, call: JSONObject) {
             stopRinging(c)
-            val open = PendingIntent.getActivity(c, 4,
-                Intent(c, CallActivity::class.java).putExtra(CallActivity.EXTRA_CALL, call.toString())
-                    .putExtra(CallActivity.EXTRA_ANSWER, true),
-                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
-            val n = Notification.Builder(c, Mochi.CHANNEL_ONGOING)
-                .setSmallIcon(R.drawable.ic_mochi)
-                .setContentTitle("Missed call from Mochi: tap to call back")
-                .setContentText(call.optString("question"))
-                .setStyle(Notification.BigTextStyle().bigText(call.optString("question")))
-                .setContentIntent(open)
-                .setAutoCancel(true)
-                .build()
-            c.getSystemService(NotificationManager::class.java).notify(Mochi.NOTIFY_MISSED, n)
+            approvalNotice(c, "Missed call: " + call.optString("question"))
             Thread { runCatching { Mochi.callDone(c, call.getString("id"), "missed") } }.start()
         }
     }

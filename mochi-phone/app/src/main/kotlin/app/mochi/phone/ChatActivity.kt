@@ -2,14 +2,13 @@ package app.mochi.phone
 
 import android.app.Activity
 import android.graphics.Color
+import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.text.InputType
 import android.view.Gravity
-import android.view.View
-import android.view.WindowManager
 import android.widget.Button
 import android.widget.EditText
 import android.widget.LinearLayout
@@ -20,7 +19,7 @@ import org.json.JSONObject
 /**
  * Typed chat with Mochi, the same conversation the calls use (and the desktop app shows). A message goes
  * to Claude like a desktop chat; the screen re-reads the conversation every few seconds, so replies and
- * anything said on a call show up on their own.
+ * anything said on a call show up on their own. The newest message stays in view, keyboard open or not.
  */
 class ChatActivity : Activity() {
     private lateinit var lines: LinearLayout
@@ -32,7 +31,7 @@ class ChatActivity : Activity() {
     private lateinit var ramWatch: Pair<() -> Unit, () -> Unit>
     private val main = Handler(Looper.getMainLooper())
     private var thread: String? = null
-    private var shown = ""          // id of the last message drawn, to redraw only on change
+    private var shown = ""          // what's drawn (last id + count + waiting), to redraw only on change
     private var waitingSince = 0L   // when we sent a message and haven't seen a reply yet
     private val refresh = object : Runnable {
         override fun run() {
@@ -43,7 +42,6 @@ class ChatActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        window.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
         buildUi()
         thread = Mochi.thread(this)
         if (intent.getBooleanExtra(EXTRA_NEW, false) || thread == null) startNew()
@@ -78,15 +76,18 @@ class ChatActivity : Activity() {
             val messages = (0 until all.length()).map { all.getJSONObject(it) }.filter(::visible)
             val last = messages.lastOrNull()
             if (waitingSince > 0 && last != null && last.optString("sender") != "user") waitingSince = 0
-            status.text = if (waitingSince > 0) "Mochi is thinking…" else ""
-            val key = last?.optString("id") + messages.size
+            if (status.text.startsWith("Can't reach")) status.text = ""
+            val key = "${last?.optString("id")}/${messages.size}/${waitingSince > 0}"
             if (key == shown) return@background
             shown = key
             lines.removeAllViews()
             messages.forEach(::bubble)
-            scroll.post { scroll.fullScroll(View.FOCUS_DOWN) }
+            if (waitingSince > 0) thinking()
+            toBottom()
         }
     }
+
+    private fun toBottom() = scroll.post { scroll.scrollTo(0, lines.height) }
 
     /** Hides the server's notes to the voice model; everything December and Mochi said is shown. */
     private fun visible(m: JSONObject): Boolean {
@@ -98,21 +99,33 @@ class ChatActivity : Activity() {
         val user = m.optString("sender") == "user"
         val voice = m.optJSONObject("extraMetadata")?.optString("source") == "voice"
         val text = m.optString("content").trim().replace(VOICE_ASK_NOTE, "")
-        val view = TextView(this).apply {
+        add(TextView(this).apply {
             this.text = if (voice) "🎙 $text" else text
             textSize = 16f
             setTextIsSelectable(true)
-            setPadding(28, 18, 28, 18)
-            setTextColor(if (user) Color.WHITE else Color.parseColor("#1D1D1F"))
+            setTextColor(if (user) Color.WHITE else Ui.TEXT)
             background = GradientDrawable().apply {
-                cornerRadius = 36f
-                setColor(Color.parseColor(if (user) "#3B6FD8" else "#ECEAE4"))
+                cornerRadius = Ui.dp(this@ChatActivity, 18).toFloat()
+                setColor(if (user) Color.parseColor(Ui.BLUE) else Ui.CARD)
             }
-        }
+        }, user)
+    }
+
+    private fun thinking() = add(TextView(this).apply {
+        text = "Mochi is thinking…"
+        textSize = 15f
+        setTypeface(typeface, Typeface.ITALIC)
+        setTextColor(Ui.MUTED)
+        background = GradientDrawable().apply { cornerRadius = Ui.dp(this@ChatActivity, 18).toFloat(); setColor(Ui.CARD) }
+    }, false)
+
+    private fun add(view: TextView, user: Boolean) {
+        val d = Ui.dp(this, 1)
+        view.setPadding(14 * d, 10 * d, 14 * d, 10 * d)
         val lp = LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT)
         lp.gravity = if (user) Gravity.END else Gravity.START
-        lp.topMargin = 14
-        if (user) lp.marginStart = 80 else lp.marginEnd = 80
+        lp.topMargin = 8 * d
+        if (user) lp.marginStart = 48 * d else lp.marginEnd = 48 * d
         lines.addView(view, lp)
     }
 
@@ -123,7 +136,6 @@ class ChatActivity : Activity() {
         input.setText("")
         send.isEnabled = false
         waitingSince = System.currentTimeMillis()
-        status.text = "Mochi is thinking…"
         background({ Mochi.send(this, id, text) }) {
             send.isEnabled = true
             load()
@@ -146,47 +158,40 @@ class ChatActivity : Activity() {
     }
 
     private fun buildUi() {
-        val pad = (resources.displayMetrics.density * 12).toInt()
-        val root = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(pad, pad, pad, pad)
-            setBackgroundColor(Color.parseColor("#F6F5F2"))
-        }
-        val header = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
-        header.addView(TextView(this).apply {
-            text = "Mochi"; textSize = 24f; setTextColor(Color.parseColor("#1D1D1F"))
-        }, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
-        ram = TextView(this).apply { textSize = 13f; setTextColor(Color.parseColor("#6B6B70")); setPadding(0, 0, 16, 0) }
-        header.addView(ram)
+        val screen = Ui.screen(this, "Chat", back = true)
+        ram = Ui.text(this, size = 13f, color = Ui.MUTED).apply { setPadding(0, 0, Ui.dp(this@ChatActivity, 12), 0) }
+        screen.right.addView(ram)
         ramWatch = Mochi.ramWatcher(this, ram)
-        header.addView(Button(this).apply {
-            text = "New"; isAllCaps = false
-            setOnClickListener { startNew() }
-        })
-        root.addView(header)
-        status = TextView(this).apply { textSize = 13f; setTextColor(Color.parseColor("#6B6B70")) }
-        root.addView(status)
-        lines = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        scroll = ScrollView(this).apply { addView(lines) }
-        root.addView(scroll, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f))
-        val bar = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+        screen.right.addView(Ui.button(this, "New", Ui.GREY) { startNew() })
+        status = Ui.text(this, size = 13f, color = Ui.MUTED)
+        screen.root.addView(status)
+        lines = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(0, 0, 0, Ui.dp(this@ChatActivity, 8)) }
+        scroll = ScrollView(this).apply {
+            addView(lines)
+            isVerticalFadingEdgeEnabled = true
+            // the keyboard opening shrinks the list: keep the newest message in view
+            addOnLayoutChangeListener { _, _, _, _, bottom, _, _, _, oldBottom -> if (bottom < oldBottom) toBottom() }
+        }
+        screen.root.addView(scroll, Ui.fill())
+        val bar = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(Ui.dp(this@ChatActivity, 12), Ui.dp(this@ChatActivity, 4), Ui.dp(this@ChatActivity, 6), Ui.dp(this@ChatActivity, 4))
+            background = GradientDrawable().apply { cornerRadius = Ui.dp(this@ChatActivity, 24).toFloat(); setColor(Ui.CARD) }
+        }
         input = EditText(this).apply {
             hint = "Message Mochi"
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_MULTI_LINE or
                 InputType.TYPE_TEXT_FLAG_CAP_SENTENCES
             maxLines = 5
-            setTextColor(Color.parseColor("#1D1D1F"))
+            background = null
+            setTextColor(Ui.TEXT)
+            setOnFocusChangeListener { _, focused -> if (focused) toBottom() }
         }
         bar.addView(input, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
-        send = Button(this).apply {
-            text = "Send"; isAllCaps = false
-            setTextColor(Color.WHITE)
-            background = GradientDrawable().apply { cornerRadius = 48f; setColor(Color.parseColor("#3B6FD8")) }
-            setOnClickListener { sendTyped() }
-        }
+        send = Ui.button(this, "Send", Ui.BLUE) { sendTyped() }
         bar.addView(send)
-        root.addView(bar)
-        setContentView(root)
+        screen.root.addView(bar, Ui.matchWidth(this, 8))
     }
 
     companion object {
