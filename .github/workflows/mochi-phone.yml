@@ -4,7 +4,7 @@
 #   - a tag like phone-v1: a signed release APK + SHA256SUMS on a GitHub release
 #
 # Release signing needs two repository secrets (Settings > Secrets and variables > Actions):
-#   MOCHI_KEYSTORE_B64       base64 of the PKCS#12 signing key (the server keeps the original, see README)
+#   MOCHI_KEYSTORE_B64       base64 of the PKCS#12 signing key (line breaks are fine) (the server keeps the original, see README)
 #   MOCHI_KEYSTORE_PASSWORD  its password
 # Android only installs an update signed with the same key, so the key never changes.
 name: Mochi phone
@@ -57,11 +57,10 @@ jobs:
         env:
           MOCHI_KEYSTORE_PASSWORD: ${{ secrets.MOCHI_KEYSTORE_PASSWORD }}
         run: |
-          # what Java sees in the key file (no secrets): size, password length, aliases
-          echo "::notice title=Signing key::$(stat -c %s "$MOCHI_KEYSTORE") bytes, password ${#MOCHI_KEYSTORE_PASSWORD} chars"
-          keytool -list -storetype pkcs12 -keystore "$MOCHI_KEYSTORE" -storepass:env MOCHI_KEYSTORE_PASSWORD > keytool.log 2>&1 \
-            || true
-          echo "::notice title=keytool::$(sed ':a;N;$!ba;s/%/%25/g;s/\n/%0A/g' keytool.log)"
+          keytool -list -storetype pkcs12 -keystore "$MOCHI_KEYSTORE" -storepass:env MOCHI_KEYSTORE_PASSWORD -alias mochi \
+            >/dev/null 2>&1 || { echo "::error title=Signing key::Can't read the key ($(stat -c %s "$MOCHI_KEYSTORE") bytes, \
+          password ${#MOCHI_KEYSTORE_PASSWORD} chars). Re-paste MOCHI_KEYSTORE_B64 (usually copied incompletely) \
+          or MOCHI_KEYSTORE_PASSWORD: see mochi-phone/README.md"; exit 1; }
       - name: Build
         env:
           MOCHI_KEYSTORE_PASSWORD: ${{ secrets.MOCHI_KEYSTORE_PASSWORD }}

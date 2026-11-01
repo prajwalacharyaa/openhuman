@@ -40,7 +40,7 @@ Release signing needs two repository secrets, made from the key on the server (`
 root-only, included in the encrypted daily backup):
 
 ```sh
-sudo base64 -w0 /etc/mochi-phone/signing.p12   # -> secret MOCHI_KEYSTORE_B64
+sudo base64 /etc/mochi-phone/signing.p12       # -> secret MOCHI_KEYSTORE_B64 (all 61 lines)
 sudo cat /etc/mochi-phone/signing-password      # -> secret MOCHI_KEYSTORE_PASSWORD
 ```
 
