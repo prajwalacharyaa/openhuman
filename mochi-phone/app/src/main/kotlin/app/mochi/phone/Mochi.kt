@@ -38,7 +38,7 @@ object Mochi {
 
     val http: OkHttpClient = OkHttpClient.Builder()
         .connectTimeout(15, TimeUnit.SECONDS)
-        .readTimeout(60, TimeUnit.SECONDS) // mochi-ring pings every 25 s
+        .readTimeout(120, TimeUnit.SECONDS) // mochi-ring pings every 50 s; silence past this = dropped connection
         .pingInterval(20, TimeUnit.SECONDS) // keeps the voice WebSocket alive through Tailscale
         .build()
 

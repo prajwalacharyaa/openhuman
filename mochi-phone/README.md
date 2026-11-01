@@ -25,6 +25,13 @@ Both use Mochi's token (the OpenHuman core token). The app keeps it in its priva
 The server side (`mochi-ring`, `mochi-call`) and when Mochi decides to call are in the private
 `tiny-setup` repo, README section "Mochi phone".
 
+## Battery
+
+In the background the app keeps one quiet connection to `mochi-ring` (a keep-alive every 50 s), so calls and
+notifications arrive. Everything else (chat refresh, the RAM label, the conversation list) runs only while a
+Mochi screen is open, and the microphone only during a call. If the connection drops it reconnects within
+about 2 minutes; a call made meanwhile still rings (it waits 30 minutes), and notices wait a day.
+
 ## Install
 
 1. Install Tailscale on the phone and sign in to the same tailnet. Keep it connected.
