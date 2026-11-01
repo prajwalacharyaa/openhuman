@@ -19,7 +19,7 @@ use tinyagents_live::tinyliveagents::{CloseReason, LiveEvent};
 use tinyagents_live::LiveAgentEvent;
 
 use super::error::LiveVoiceError;
-use super::handoff::{HandoffCheck, HandoffEvent};
+use super::handoff::{claude_reply_note, HandoffCheck, HandoffEvent};
 use super::persist::TranscriptPersister;
 use super::timing::{self, TimingEvent, VoiceTiming};
 use super::session::{self, LiveStartRequest};
@@ -222,6 +222,8 @@ pub async fn handle_live_voice_ws(socket: WebSocket, config: Arc<Config>) {
     let timing_on = timing::enabled_from(std::env::var(timing::TIMING_ENV).ok().as_deref());
     let mut timing = VoiceTiming::default();
     let mut handoff = HandoffCheck::default();
+    // Claude's answers to `mochi-ask` requests arrive as web-chat events.
+    let mut chat_events = crate::web_chat::subscribe_web_channel_events();
 
     loop {
         tokio::select! {
@@ -259,6 +261,19 @@ pub async fn handle_live_voice_ws(socket: WebSocket, config: Arc<Config>) {
                 };
                 if result.is_err() {
                     tracing::debug!(session_id, "{LOG_PREFIX} provider session already closed");
+                }
+            }
+            chat = chat_events.recv() => {
+                match chat {
+                    Ok(chat) => {
+                        if let Some(note) = claude_reply_note(&chat, &thread_id) {
+                            tracing::info!(session_id, "{LOG_PREFIX} Claude's answer arrived: passing it to the call");
+                            let _ = sender.send_text(note).await;
+                        }
+                    }
+                    // Lagged: a burst of other chats' events went past. The bus is a
+                    // process-wide static, so it never closes.
+                    Err(_) => {}
                 }
             }
             event = session.recv() => {

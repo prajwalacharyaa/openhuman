@@ -7,6 +7,12 @@
 //! that will never come. This tracks each turn: when the model's words claim a
 //! handoff and the turn completes with no handoff call, it returns a short
 //! correction for the caller to send to the model, once per turn.
+//!
+//! It also brings Claude's answer back: when the typed-chat turn `mochi-ask`
+//! started for this call's thread finishes, [`claude_reply_note`] is the note
+//! that makes the live model say the answer without being asked.
+
+use crate::web_chat::WebChannelEvent;
 
 /// Tools a handoff runs through. The event carries no arguments, so any shell
 /// call in a turn that claims a handoff counts as the `mochi-ask` call.
@@ -17,6 +23,40 @@ pub(crate) const NUDGE: &str = "(Server check, not December speaking: you said C
 but you did not run mochi-ask, so nothing was sent to Claude. Run mochi-ask now with your shell tool, \
 with December's full request and the context it needs, then confirm in one short sentence. If you already \
 handed this same request to Claude earlier in this call, don't call it again; just say Claude is still working.)";
+
+/// The web-chat `client_id` `mochi-ask` (tiny-setup) sends its requests as.
+const ASK_CLIENT: &str = "mochi-ask";
+
+/// Most of Claude's answer passed into the call; the rest stays in the chat.
+const MAX_ANSWER_CHARS: usize = 3000;
+
+/// The note that makes the live model tell December how a `mochi-ask`
+/// request for this thread ended; `None` for every other chat event.
+pub(crate) fn claude_reply_note(event: &WebChannelEvent, thread_id: &str) -> Option<String> {
+    if event.client_id != ASK_CLIENT || event.thread_id != thread_id {
+        return None;
+    }
+    match event.event.as_str() {
+        "chat_done" => {
+            let answer = event.full_response.as_deref().unwrap_or_default().trim();
+            if answer.is_empty() {
+                return None;
+            }
+            let answer: String = answer.chars().take(MAX_ANSWER_CHARS).collect();
+            Some(format!(
+                "(Server note, not December speaking: Claude finished the request you handed it. \
+                 Tell December the answer now, briefly and in spoken style, without waiting to be asked. \
+                 The full answer is in the chat.)\n\n{answer}"
+            ))
+        }
+        "chat_error" => Some(format!(
+            "(Server note, not December speaking: Claude couldn't finish the request you handed it{}. \
+             Tell December briefly.)",
+            event.message.as_deref().map(|m| format!(": {m}")).unwrap_or_default()
+        )),
+        _ => None,
+    }
+}
 
 /// What the handoff check needs to know about a session event.
 pub(crate) enum HandoffEvent<'a> {
