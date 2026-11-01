@@ -103,3 +103,17 @@ async fn byok_providers_need_a_stored_key() {
         .unwrap();
     assert_eq!(err.code, "invalid_request");
 }
+
+#[test]
+fn gemini_setup_override_accepts_only_a_json_object() {
+    let raw = r#"{"realtimeInputConfig":{"automaticActivityDetection":{"prefixPaddingMs":350}}}"#;
+    let setup = gemini_setup_override(Some(raw)).unwrap();
+    assert_eq!(
+        setup["realtimeInputConfig"]["automaticActivityDetection"]["prefixPaddingMs"],
+        350
+    );
+    assert!(gemini_setup_override(None).is_none());
+    assert!(gemini_setup_override(Some("  ")).is_none());
+    assert!(gemini_setup_override(Some("[1,2]")).is_none(), "not an object");
+    assert!(gemini_setup_override(Some("{broken")).is_none(), "invalid JSON");
+}

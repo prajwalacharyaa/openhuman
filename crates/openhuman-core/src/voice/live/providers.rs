@@ -128,6 +128,25 @@ pub(crate) fn provider_infos(config: &Config) -> Vec<LiveProviderInfo> {
         .collect()
 }
 
+/// Environment variable with a JSON object merged into the Gemini Live setup
+/// (`provider_options.setup`, see `tinyliveagents::gemini::setup`), for setup
+/// fields OpenHuman doesn't model, e.g. speech-detection sensitivity:
+/// `{"realtimeInputConfig":{"automaticActivityDetection":{"startOfSpeechSensitivity":"START_SENSITIVITY_LOW"}}}`.
+pub(crate) const GEMINI_SETUP_ENV: &str = "OPENHUMAN_GEMINI_LIVE_SETUP";
+
+/// The setup override from [`GEMINI_SETUP_ENV`]: a JSON object, else `None`
+/// (a value that isn't one is logged and ignored, so the session still starts).
+pub(crate) fn gemini_setup_override(raw: Option<&str>) -> Option<Value> {
+    let raw = raw.map(str::trim).filter(|raw| !raw.is_empty())?;
+    match serde_json::from_str::<Value>(raw) {
+        Ok(value @ Value::Object(_)) => Some(value),
+        _ => {
+            tracing::warn!("[voice-live] ignoring {GEMINI_SETUP_ENV}: not a JSON object");
+            None
+        }
+    }
+}
+
 /// The session configuration for `provider`, from the user's settings.
 pub(crate) fn live_config(
     config: &Config,
@@ -147,6 +166,11 @@ pub(crate) fn live_config(
             // Keep long conversations inside the context window.
             live.provider_options =
                 json!({ "context_window_compression": { "slidingWindow": {} } });
+            if let Some(setup) =
+                gemini_setup_override(std::env::var(GEMINI_SETUP_ENV).ok().as_deref())
+            {
+                live.provider_options["setup"] = setup;
+            }
         }
         LIVE_PROVIDER_SARVAM => {
             live.system_instruction = Some(system_instruction.to_string());
