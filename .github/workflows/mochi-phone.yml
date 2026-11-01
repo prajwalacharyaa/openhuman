@@ -52,6 +52,16 @@ jobs:
           [ -n "$KEY_B64" ] || { echo "::error::MOCHI_KEYSTORE_B64 secret is missing (mochi-phone/README.md)"; exit 1; }
           echo "$KEY_B64" | base64 -d > "$RUNNER_TEMP/mochi.p12"
           echo "MOCHI_KEYSTORE=$RUNNER_TEMP/mochi.p12" >> "$GITHUB_ENV"
+      - name: Check signing key
+        if: env.RELEASE == 'true'
+        env:
+          MOCHI_KEYSTORE_PASSWORD: ${{ secrets.MOCHI_KEYSTORE_PASSWORD }}
+        run: |
+          # what Java sees in the key file (no secrets): size, password length, aliases
+          echo "::notice title=Signing key::$(stat -c %s "$MOCHI_KEYSTORE") bytes, password ${#MOCHI_KEYSTORE_PASSWORD} chars"
+          keytool -list -storetype pkcs12 -keystore "$MOCHI_KEYSTORE" -storepass:env MOCHI_KEYSTORE_PASSWORD > keytool.log 2>&1 \
+            || true
+          echo "::notice title=keytool::$(sed ':a;N;$!ba;s/%/%25/g;s/\n/%0A/g' keytool.log)"
       - name: Build
         env:
           MOCHI_KEYSTORE_PASSWORD: ${{ secrets.MOCHI_KEYSTORE_PASSWORD }}
