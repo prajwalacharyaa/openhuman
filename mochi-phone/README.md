@@ -65,7 +65,7 @@ Plain Android APIs plus OkHttp; no other libraries.
 | File | What |
 |---|---|
 | `Mochi.kt` | settings, server calls, notification channels |
-| `RingService.kt` | keeps the connection to `mochi-ring` open, rings, handles missed calls, shows notices |
+| `RingService.kt` | keeps the connection to `mochi-ring` open, rings, handles missed calls, shows notices (a browser request opens its approval page) |
 | `Call.kt` | one live voice call: WebSocket + mic (16 kHz PCM16, echo cancellation) + speaker |
 | `CallService.kt` | holds the microphone while a call runs, so the call keeps going with the screen off |
 | `CallActivity.kt` | incoming-call and in-call screen |
