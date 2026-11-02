@@ -38,6 +38,8 @@ object Ui {
      * the keyboard, then show it.
      */
     fun edgeToEdge(activity: Activity, root: View, pad: Int = dp(activity, 16)) {
+        // the content first: the window's insets controller only exists once its decor view is built
+        activity.setContentView(root)
         val window = activity.window
         window.setDecorFitsSystemWindows(false)
         window.insetsController?.setSystemBarsAppearance(
@@ -50,7 +52,6 @@ object Ui {
             v.setPadding(pad + bars.left, dp(activity, 8) + bars.top, pad + bars.right, dp(activity, 8) + bars.bottom)
             insets
         }
-        activity.setContentView(root)
         root.requestApplyInsets()
     }
 
