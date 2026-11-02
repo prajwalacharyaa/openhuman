@@ -69,10 +69,11 @@ pub(crate) enum HandoffEvent<'a> {
 }
 
 /// Whether the model's words claim Claude is (or will be) doing the work.
-/// A question ("Shall I ask Claude?") is not a claim.
+/// A question ("Shall I ask Claude?") is not a claim, and neither is a status update about work handed off
+/// earlier ("Claude is still working on it").
 pub(crate) fn claims_handoff(text: &str) -> bool {
     let text = text.trim().to_lowercase();
-    if text.ends_with('?') || !(text.contains("claude") || text.contains("क्लाउड")) {
+    if text.ends_with('?') || text.contains("still") || !(text.contains("claude") || text.contains("क्लाउड")) {
         return false;
     }
     const MARKERS: &[&str] = &[
@@ -87,6 +88,8 @@ pub(crate) fn claims_handoff(text: &str) -> bool {
 pub(crate) struct HandoffCheck {
     claimed: bool,
     handed_off: bool,
+    /// Already nudged since December last spoke: the model's answer to a nudge must not draw another one.
+    nudged: bool,
 }
 
 impl HandoffCheck {
@@ -96,11 +99,12 @@ impl HandoffCheck {
             HandoffEvent::UserSaid => *self = Self::default(),
             HandoffEvent::AgentSaid(text) => self.claimed |= claims_handoff(text),
             HandoffEvent::ToolStarted(name) => self.handed_off |= HANDOFF_TOOLS.contains(&name),
-            HandoffEvent::TurnComplete if self.claimed && !self.handed_off => {
+            HandoffEvent::TurnComplete if self.claimed && !self.handed_off && !self.nudged => {
                 self.claimed = false;
+                self.nudged = true;
                 return Some(NUDGE);
             }
-            HandoffEvent::TurnComplete => {}
+            HandoffEvent::TurnComplete => self.claimed = false,
         }
         None
     }

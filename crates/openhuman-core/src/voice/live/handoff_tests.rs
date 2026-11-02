@@ -6,6 +6,7 @@ fn recognises_claims_but_not_questions() {
     assert!(claims_handoff("I'll ask Claude to look into that."));
     assert!(claims_handoff("I've asked Claude, it will get back to you."));
     assert!(!claims_handoff("That needs Claude. Shall I ask Claude?"));
+    assert!(!claims_handoff("Claude is still working on opening the website for you."));
     assert!(!claims_handoff("Today is Kartik 16, 2083."));
 }
 
@@ -16,6 +17,15 @@ fn nudges_once_when_the_handoff_call_is_missing() {
     check.on_event(HandoffEvent::AgentSaid("Sure, Claude is on it."));
     assert_eq!(check.on_event(HandoffEvent::TurnComplete), Some(NUDGE));
     assert_eq!(check.on_event(HandoffEvent::TurnComplete), None, "once per claim");
+
+    // the model answers the nudge with another claim and no call: no second nudge (that looped before)
+    check.on_event(HandoffEvent::AgentSaid("I've sent that to Claude, it will handle it."));
+    assert_eq!(check.on_event(HandoffEvent::TurnComplete), None, "once until December speaks again");
+
+    // December speaks again: the check is armed again
+    check.on_event(HandoffEvent::UserSaid);
+    check.on_event(HandoffEvent::AgentSaid("Claude will do it."));
+    assert_eq!(check.on_event(HandoffEvent::TurnComplete), Some(NUDGE));
 }
 
 #[test]
