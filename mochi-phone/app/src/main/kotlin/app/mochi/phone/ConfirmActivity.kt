@@ -60,7 +60,7 @@ class ConfirmActivity : Activity() {
             PhoneActions.answered("opened the dialer with $name's number (tap the call button)")
         }
     } catch (e: Exception) {
-        PhoneActions.failed("couldn't start the call: ${e.message}")
+        PhoneActions.failed("couldn't start the call: ${PhoneActions.hideNumbers(e.message ?: "")}")
     }
 
     private fun sms(number: String, name: String, text: String) = try {
@@ -73,7 +73,7 @@ class ConfirmActivity : Activity() {
             PhoneActions.answered("opened Messages with the text for $name (tap send)")
         }
     } catch (e: Exception) {
-        PhoneActions.failed("couldn't send it: ${e.message}")
+        PhoneActions.failed("couldn't send it: ${PhoneActions.hideNumbers(e.message ?: "")}")
     }
 
     /** Once only (a double tap does nothing), and only while Mochi is still waiting: after a timeout, nothing. */

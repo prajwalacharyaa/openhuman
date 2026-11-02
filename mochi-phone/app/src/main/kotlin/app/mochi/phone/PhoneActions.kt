@@ -39,7 +39,7 @@ object PhoneActions {
     } catch (e: SecurityException) {
         fail("permission is off on the phone (turn it on under Phone abilities in the Mochi app)")
     } catch (e: Exception) {
-        fail(e.message ?: e.javaClass.simpleName)
+        fail(hideNumbers(e.message ?: e.javaClass.simpleName))
     }
 
     private fun ok(result: Any) = JSONObject().put("ok", true).put("result", result)
@@ -73,19 +73,23 @@ object PhoneActions {
         val out = JSONArray()
         if (query.isBlank()) return out
         val cols = arrayOf(ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME, ContactsContract.CommonDataKinds.Phone.NUMBER,
-            ContactsContract.CommonDataKinds.Phone.TYPE, ContactsContract.CommonDataKinds.Phone.LABEL)
+            ContactsContract.CommonDataKinds.Phone.TYPE, ContactsContract.CommonDataKinds.Phone.LABEL,
+            ContactsContract.CommonDataKinds.Phone.CONTACT_ID)
+        // stable order, so "mobile 2" means the same number next time
         c.contentResolver.query(ContactsContract.CommonDataKinds.Phone.CONTENT_URI, cols,
             "${ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME} LIKE ?", arrayOf("%$query%"),
-            "${ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME} ASC")?.use { cur ->
-            val byName = LinkedHashMap<String, LinkedHashMap<String, String>>() // name -> number -> label
-            while (cur.moveToNext() && byName.size <= limit) {
-                val name = cur.getString(0) ?: continue
+            "${ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME} ASC, ${ContactsContract.CommonDataKinds.Phone._ID} ASC")?.use { cur ->
+            // contact id -> (name, number -> label); two people with the same name stay apart
+            val byContact = LinkedHashMap<Long, Pair<String, LinkedHashMap<String, String>>>()
+            while (cur.moveToNext() && byContact.size <= limit) {
+                // a contact saved without a name has its number as its name: never send that
+                val name = cur.getString(0)?.let(::hideNumbers)?.takeIf { "[number hidden]" !in it } ?: continue
                 val number = cur.getString(1)?.filter { it.isDigit() || it == '+' }?.takeIf { it.isNotEmpty() } ?: continue
-                val label = ContactsContract.CommonDataKinds.Phone.getTypeLabel(c.resources, cur.getInt(2), cur.getString(3))
-                    .toString().lowercase()
-                byName.getOrPut(name) { LinkedHashMap() }.putIfAbsent(number, label)
+                val label = hideNumbers(ContactsContract.CommonDataKinds.Phone.getTypeLabel(c.resources, cur.getInt(2),
+                    cur.getString(3)).toString().lowercase())
+                byContact.getOrPut(cur.getLong(4)) { name to LinkedHashMap() }.second.putIfAbsent(number, label)
             }
-            byName.entries.take(limit).forEach { (name, numbers) ->
+            byContact.values.take(limit).forEach { (name, numbers) ->
                 val list = JSONArray()
                 val seen = HashMap<String, Int>()
                 numbers.forEach { (number, label) ->
@@ -116,7 +120,7 @@ object PhoneActions {
                     CallLog.Calls.REJECTED_TYPE -> "declined"
                     else -> "other"
                 }
-                val name = cur.getString(0)?.takeIf { it.isNotBlank() }
+                val name = cur.getString(0)?.takeIf { it.isNotBlank() }?.let(::hideNumbers)
                     ?: nameFor(c, cur.getString(1) ?: "") ?: "unknown number"
                 out.put(JSONObject().put("name", name).put("type", type).put("time", Instant.ofEpochMilli(cur.getLong(3)).toString())
                     .put("seconds", cur.getLong(4)))
@@ -152,7 +156,7 @@ object PhoneActions {
     private fun nameFor(c: Context, number: String): String? = runCatching {
         val uri = android.net.Uri.withAppendedPath(ContactsContract.PhoneLookup.CONTENT_FILTER_URI, android.net.Uri.encode(number))
         c.contentResolver.query(uri, arrayOf(ContactsContract.PhoneLookup.DISPLAY_NAME), null, null, null)?.use {
-            if (it.moveToFirst()) it.getString(0) else null
+            if (it.moveToFirst()) it.getString(0)?.let(::hideNumbers)?.takeIf { n -> "[number hidden]" !in n } else null
         }
     }.getOrNull()
 
@@ -214,11 +218,12 @@ object PhoneActions {
         if (said.count(Char::isDigit) >= 6) return confirmAndDo(c, "call", said, "") // a dictated number: tap to confirm
         val key = said.lowercase()
         val last = prefs(c).getString(key, null)?.let { runCatching { JSONObject(it) }.getOrNull() }
-        val found = contacts(c, said, 6)
+        val found = contacts(c, said, 50) // wide: the exact name mustn't be cut off by "Abhiram", "Bikram"…
         if (found.length() == 0) return fail("no contact matches \"$said\"")
 
-        val people = (0 until found.length()).map { found.getJSONObject(it) }
-        val exact = people.filter { it.getString("name").equals(said, ignoreCase = true) }
+        val all = (0 until found.length()).map { found.getJSONObject(it) }
+        val exact = all.filter { it.getString("name").equals(said, ignoreCase = true) }
+        val people = exact.ifEmpty { all.take(6) }
         val person = exact.singleOrNull() ?: people.singleOrNull()
             ?: people.firstOrNull { it.getString("name") == last?.optString("name") }
             ?: return choose("Found ${people.size} contacts. Ask December which one (spell a name if asked), then call again " +
@@ -227,36 +232,52 @@ object PhoneActions {
 
         val numbers = person.getJSONArray("numbers").let { a -> (0 until a.length()).map { a.getJSONObject(it) } }
         val wanted = args.optString("number").trim().lowercase()
-        val number = numbers.singleOrNull()
-            ?: numbers.firstOrNull { wanted.isNotEmpty() && it.getString("label").startsWith(wanted) }
-            ?: numbers.firstOrNull { last != null && last.optString("name") == name && it.getString("label") == last.optString("label") }
-            ?: return choose("$name has ${numbers.size} numbers. Ask December which, then call again with --number.",
-                numbers = numbers.map { it.getString("label") }, name = name)
+        val askNumber = { choose("$name has ${numbers.size} numbers. Ask December which, then call again with --number.",
+            numbers = numbers.map { it.getString("label") }, name = name) }
+        val number = if (wanted.isNotEmpty()) {
+            // what December said must pick exactly one ("mobile" when there are "mobile 1" and "mobile 2" doesn't)
+            numbers.filter { it.getString("label") == wanted }.singleOrNull()
+                ?: numbers.filter { it.getString("label").startsWith(wanted) }.singleOrNull()
+                ?: return askNumber()
+        } else {
+            numbers.singleOrNull()
+                ?: numbers.firstOrNull { last != null && last.optString("name") == name && it.getString("label") == last.optString("label") }
+                ?: return askNumber()
+        }
 
         val sims = sims(c)
-        val sim = when {
+        val askSim = { choose("Ask December which SIM to call $name from, then call again with --sim.",
+            sims = sims.map { "SIM ${it.slot} (${it.name})" }, name = name) }
+        val sim: Sim? = when {
             sims.size <= 1 -> sims.firstOrNull()
             args.optInt("sim", 0) > 0 -> sims.firstOrNull { it.slot == args.optInt("sim") }
                 ?: return fail("there's no SIM ${args.optInt("sim")}")
+            // the SIM chosen last time for this person; if it's gone, ask again
             last != null && last.optString("name") == name && last.optInt("sim", 0) > 0 ->
-                sims.firstOrNull { it.slot == last.optInt("sim") }
-            else -> return choose("Ask December which SIM to call $name from, then call again with --sim.",
-                sims = sims.map { "SIM ${it.slot} (${it.name})" }, name = name)
+                sims.firstOrNull { it.slot == last.optInt("sim") } ?: return askSim()
+            else -> return askSim()
         }
 
-        prefs(c).edit().putString(key, JSONObject().put("name", name).put("label", number.getString("label"))
-            .put("sim", sim?.slot ?: 0).toString()).apply()
+        val remember = { prefs(c).edit().putString(key, JSONObject().put("name", name)
+            .put("label", number.getString("label")).put("sim", sim?.slot ?: 0).toString()).apply() }
         val how = "$name (${number.getString("label")})" + (sim?.let { " from SIM ${it.slot}, ${it.name}" } ?: "")
-        if (!Call.active) return confirmAndDo(c, "call", name, "", number.getString("number"), sim?.slot ?: 0)
+        if (!Call.active) {
+            val result = confirmAndDo(c, "call", name, "", number.getString("number"), sim?.slot ?: 0)
+            if (result.optBoolean("ok")) remember() // only a call December confirmed is remembered
+            return result
+        }
         if (c.checkSelfPermission(Manifest.permission.CALL_PHONE) != PackageManager.PERMISSION_GRANTED) {
             return fail("the Place calls permission is off (Phone abilities in the Mochi app)")
         }
-        // December asked by voice on this phone: call now, and end the Mochi call a moment later for the real one
-        val intent = Intent(Intent.ACTION_CALL, android.net.Uri.parse("tel:" + number.getString("number")))
-            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        sim?.handle?.let { intent.putExtra(android.telecom.TelecomManager.EXTRA_PHONE_ACCOUNT_HANDLE, it) }
-        c.startActivity(intent)
-        android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({ if (Call.active) Call.end() }, 1_500)
+        // December asked by voice on this phone: end the Mochi call first (it holds the audio), then let Telecom
+        // place the call; that isn't an activity launch, so Android can't silently block it from the background
+        android.os.Handler(android.os.Looper.getMainLooper()).post { if (Call.active) Call.end() }
+        Thread.sleep(400)
+        val extras = android.os.Bundle()
+        sim?.handle?.let { extras.putParcelable(android.telecom.TelecomManager.EXTRA_PHONE_ACCOUNT_HANDLE, it) }
+        c.getSystemService(android.telecom.TelecomManager::class.java)
+            .placeCall(android.net.Uri.fromParts("tel", number.getString("number"), null), extras)
+        remember()
         return ok("calling $how")
     }
 
