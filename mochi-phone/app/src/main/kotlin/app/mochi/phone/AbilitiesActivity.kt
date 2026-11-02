@@ -40,13 +40,15 @@ class AbilitiesActivity : Activity() {
     private fun draw() {
         body.removeAllViews()
         section("Contacts, calls and texts",
-            "Mochi can find a contact, say who called, read your latest texts, and call or text someone. A call or " +
-                "text only happens after you tap Confirm on the phone.",
+            "Mochi can find a contact, say who called, read your latest texts, and call or text someone. On a Mochi " +
+                "call, Mochi calls when you say so (it asks which contact, number and SIM, and remembers); otherwise, and " +
+                "for every text, you tap Confirm. Numbers never leave the phone.",
             listOf(
                 Triple("Contacts", granted(Manifest.permission.READ_CONTACTS)) { ask(Manifest.permission.READ_CONTACTS) },
                 Triple("Call history", granted(Manifest.permission.READ_CALL_LOG)) { ask(Manifest.permission.READ_CALL_LOG) },
                 Triple("Read texts", granted(Manifest.permission.READ_SMS)) { ask(Manifest.permission.READ_SMS) },
                 Triple("Place calls", granted(Manifest.permission.CALL_PHONE)) { ask(Manifest.permission.CALL_PHONE) },
+                Triple("Choose the SIM", granted(Manifest.permission.READ_PHONE_STATE)) { ask(Manifest.permission.READ_PHONE_STATE) },
                 Triple("Send texts", granted(Manifest.permission.SEND_SMS)) { ask(Manifest.permission.SEND_SMS) },
             ))
         section("Message notifications",
