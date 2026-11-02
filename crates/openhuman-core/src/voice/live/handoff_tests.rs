@@ -12,35 +12,43 @@ fn recognises_claims_but_not_questions() {
 
 #[test]
 fn nudges_once_when_the_handoff_call_is_missing() {
+    let t0 = std::time::Instant::now();
     let mut check = HandoffCheck::default();
-    check.on_event(HandoffEvent::UserSaid);
-    check.on_event(HandoffEvent::AgentSaid("Sure, Claude is on it."));
-    assert_eq!(check.on_event(HandoffEvent::TurnComplete), Some(NUDGE));
-    assert_eq!(check.on_event(HandoffEvent::TurnComplete), None, "once per claim");
+    check.on_event(HandoffEvent::UserSaid, t0);
+    check.on_event(HandoffEvent::AgentSaid("Sure, Claude is on it."), t0);
+    assert_eq!(check.on_event(HandoffEvent::TurnComplete, t0), Some(NUDGE));
+    assert_eq!(check.on_event(HandoffEvent::TurnComplete, t0), None, "once per claim");
 
     // the model answers the nudge with another claim and no call: no second nudge (that looped before)
-    check.on_event(HandoffEvent::AgentSaid("I've sent that to Claude, it will handle it."));
-    assert_eq!(check.on_event(HandoffEvent::TurnComplete), None, "once until December speaks again");
+    check.on_event(HandoffEvent::AgentSaid("I've sent that to Claude, it will handle it."), t0);
+    assert_eq!(check.on_event(HandoffEvent::TurnComplete, t0), None, "once until December speaks again");
 
     // December speaks again: the check is armed again
-    check.on_event(HandoffEvent::UserSaid);
-    check.on_event(HandoffEvent::AgentSaid("Claude will do it."));
-    assert_eq!(check.on_event(HandoffEvent::TurnComplete), Some(NUDGE));
+    check.on_event(HandoffEvent::UserSaid, t0);
+    check.on_event(HandoffEvent::AgentSaid("Claude will do it."), t0);
+    assert_eq!(check.on_event(HandoffEvent::TurnComplete, t0), Some(NUDGE));
 }
 
 #[test]
 fn stays_quiet_when_the_handoff_happened() {
+    let t0 = std::time::Instant::now();
+    let later = |s: u64| t0 + std::time::Duration::from_secs(s);
     let mut check = HandoffCheck::default();
-    check.on_event(HandoffEvent::UserSaid);
-    check.on_event(HandoffEvent::AgentSaid("I'll ask Claude to check that."));
-    check.on_event(HandoffEvent::ToolStarted("shell"));
-    assert_eq!(check.on_event(HandoffEvent::TurnComplete), None);
+    check.on_event(HandoffEvent::UserSaid, t0);
+    check.on_event(HandoffEvent::AgentSaid("I'll ask Claude to check that."), t0);
+    check.on_event(HandoffEvent::ToolStarted("shell"), t0);
+    assert_eq!(check.on_event(HandoffEvent::TurnComplete, t0), None);
 
-    // A later turn that only talks about Claude's earlier work starts clean.
-    check.on_event(HandoffEvent::UserSaid);
-    check.on_event(HandoffEvent::ToolStarted("web_search_tool"));
-    check.on_event(HandoffEvent::AgentSaid("Nothing new yet."));
-    assert_eq!(check.on_event(HandoffEvent::TurnComplete), None);
+    // Gemini finalised December's words only after it started the tool: still covered (this nudged before)
+    check.on_event(HandoffEvent::ToolStarted("shell"), later(10));
+    check.on_event(HandoffEvent::UserSaid, later(11));
+    check.on_event(HandoffEvent::AgentSaid("I've asked Claude to check the traffic."), later(12));
+    assert_eq!(check.on_event(HandoffEvent::TurnComplete, later(13)), None);
+
+    // long after any handoff, a bare claim is caught again
+    check.on_event(HandoffEvent::UserSaid, later(300));
+    check.on_event(HandoffEvent::AgentSaid("Claude will handle it."), later(301));
+    assert_eq!(check.on_event(HandoffEvent::TurnComplete, later(302)), Some(NUDGE));
 }
 
 #[test]

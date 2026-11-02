@@ -33,6 +33,7 @@ object PhoneActions {
             "notifications.recent" -> ok(MochiNotifications.recent(args.optInt("limit", 5), args.optString("app")))
             "call.place" -> confirmAndDo(c, "call", args.optString("to"), "")
             "sms.send" -> confirmAndDo(c, "sms", args.optString("to"), args.optString("text"))
+            "open" -> open(c, args.optString("url"))
             else -> fail("unknown action $action")
         }
     } catch (e: SecurityException) {
@@ -123,6 +124,28 @@ object PhoneActions {
             if (it.moveToFirst()) it.getString(0) else null
         }
     }.getOrNull()
+
+    /**
+     * Open a link on the phone (directions in Google Maps, a page, a video). During a Mochi call the app is on
+     * screen and may open it straight away; otherwise a notification December taps (Android doesn't let a
+     * background app open screens by itself).
+     */
+    private fun open(c: Context, url: String): JSONObject {
+        if (!url.startsWith("https://")) return fail("only https links")
+        val view = Intent(Intent.ACTION_VIEW, android.net.Uri.parse(url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        if (Call.active && runCatching { c.startActivity(view) }.isSuccess) return ok("opened on the phone")
+        val tap = PendingIntent.getActivity(c, url.hashCode(), view, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
+        val maps = url.startsWith("https://www.google.com/maps")
+        val n = Notification.Builder(c, Mochi.CHANNEL_NOTICES)
+            .setSmallIcon(R.drawable.ic_mochi)
+            .setContentTitle(if (maps) "Directions from Mochi: tap to open Maps" else "Link from Mochi: tap to open")
+            .setContentText(android.net.Uri.parse(url).getQueryParameter("destination") ?: url)
+            .setContentIntent(tap)
+            .setAutoCancel(true)
+            .build()
+        c.getSystemService(NotificationManager::class.java).notify(url.hashCode(), n)
+        return ok("sent to the phone as a notification: December taps it to open")
+    }
 
     // ---- outward actions: only after December taps Confirm on the phone ----
 

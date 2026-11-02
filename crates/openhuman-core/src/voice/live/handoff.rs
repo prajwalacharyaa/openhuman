@@ -12,6 +12,8 @@
 //! started for this call's thread finishes, [`claude_reply_note`] is the note
 //! that makes the live model say the answer without being asked.
 
+use std::time::{Duration, Instant};
+
 use crate::web_chat::WebChannelEvent;
 
 /// Tools a handoff runs through. The event carries no arguments, so any shell
@@ -87,24 +89,40 @@ pub(crate) fn claims_handoff(text: &str) -> bool {
 #[derive(Debug, Default)]
 pub(crate) struct HandoffCheck {
     claimed: bool,
-    handed_off: bool,
+    /// When a handoff tool last started. Claims soon after it are about that handoff. Kept across the user's
+    /// next words on purpose: Gemini often finalises the transcript of what December said only after it has
+    /// already started the tool, so "December spoke" can arrive after the handoff it led to.
+    last_handoff: Option<Instant>,
     /// Already nudged since December last spoke: the model's answer to a nudge must not draw another one.
     nudged: bool,
 }
 
+/// How long after a handoff the model may talk about it without a new one.
+const HANDOFF_COVERS: Duration = Duration::from_secs(90);
+
 impl HandoffCheck {
     /// Returns [`NUDGE`] when a turn ends with a claimed but missing handoff.
-    pub(crate) fn on_event(&mut self, event: HandoffEvent<'_>) -> Option<&'static str> {
+    pub(crate) fn on_event(&mut self, event: HandoffEvent<'_>, now: Instant) -> Option<&'static str> {
         match event {
-            HandoffEvent::UserSaid => *self = Self::default(),
-            HandoffEvent::AgentSaid(text) => self.claimed |= claims_handoff(text),
-            HandoffEvent::ToolStarted(name) => self.handed_off |= HANDOFF_TOOLS.contains(&name),
-            HandoffEvent::TurnComplete if self.claimed && !self.handed_off && !self.nudged => {
+            HandoffEvent::UserSaid => {
                 self.claimed = false;
-                self.nudged = true;
-                return Some(NUDGE);
+                self.nudged = false;
             }
-            HandoffEvent::TurnComplete => self.claimed = false,
+            HandoffEvent::AgentSaid(text) => self.claimed |= claims_handoff(text),
+            HandoffEvent::ToolStarted(name) => {
+                if HANDOFF_TOOLS.contains(&name) {
+                    self.last_handoff = Some(now);
+                }
+            }
+            HandoffEvent::TurnComplete => {
+                let covered = self.last_handoff.is_some_and(|at| now.duration_since(at) < HANDOFF_COVERS);
+                let nudge = self.claimed && !covered && !self.nudged;
+                self.claimed = false;
+                if nudge {
+                    self.nudged = true;
+                    return Some(NUDGE);
+                }
+            }
         }
         None
     }

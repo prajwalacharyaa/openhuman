@@ -309,7 +309,7 @@ pub async fn handle_live_voice_ws(socket: WebSocket, config: Arc<Config>) {
                     LiveAgentEvent::Live(LiveEvent::TurnComplete { .. }) => Some(HandoffEvent::TurnComplete),
                     _ => None,
                 };
-                if let Some(nudge) = handoff_step.and_then(|step| handoff.on_event(step)) {
+                if let Some(nudge) = handoff_step.and_then(|step| handoff.on_event(step, std::time::Instant::now())) {
                     tracing::info!(session_id, "{LOG_PREFIX} said Claude is on it without a handoff call: nudging");
                     let _ = sender.send_text(nudge.to_string()).await;
                 }
