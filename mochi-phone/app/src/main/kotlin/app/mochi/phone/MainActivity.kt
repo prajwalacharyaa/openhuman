@@ -39,6 +39,7 @@ class MainActivity : Activity() {
     override fun onResume() {
         super.onResume()
         RingService.start(this)
+        WakeService.start(this) // listening for "Mochi" again after a reboot, if it's on
         refresh()
         if (Mochi.configured(this)) ramWatch.first()
     }
@@ -143,6 +144,7 @@ class MainActivity : Activity() {
         body.addView(Ui.button(this, "Conversations", Ui.GREY) { open(ConversationsActivity::class.java) }, Ui.matchWidth(this))
         body.addView(Ui.button(this, "New conversation", Ui.GREY) { open(ChatActivity::class.java, ChatActivity.EXTRA_NEW) },
             Ui.matchWidth(this))
+        body.addView(Ui.button(this, "Phone abilities", Ui.GREY) { open(AbilitiesActivity::class.java) }, Ui.matchWidth(this))
 
         fixes = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         body.addView(fixes, Ui.matchWidth(this, 8))

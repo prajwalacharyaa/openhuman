@@ -1,0 +1,187 @@
+package app.mochi.phone
+
+import android.Manifest
+import android.app.Notification
+import android.app.NotificationManager
+import android.app.PendingIntent
+import android.content.Context
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.provider.CallLog
+import android.provider.ContactsContract
+import android.provider.Telephony
+import org.json.JSONArray
+import org.json.JSONObject
+import java.time.Instant
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+
+/**
+ * What Mochi can ask of the phone (mochi-ring "phone" events). Reading answers right away with only what was
+ * asked; placing a call or sending an SMS waits for December to tap Confirm on the phone ([ConfirmActivity]).
+ * Every answer is {"ok": true, "result": …} or {"ok": false, "error": "…"}. Runs on a background thread.
+ */
+object PhoneActions {
+    private const val CONFIRM_WAIT_S = 50L
+
+    fun handle(c: Context, action: String, args: JSONObject): JSONObject = try {
+        when (action) {
+            "contacts.search" -> ok(contacts(c, args.optString("query"), 5))
+            "calls.recent" -> ok(calls(c, args.optInt("limit", 5)))
+            "sms.recent" -> ok(sms(c, args.optInt("limit", 3), args.optString("from")))
+            "notifications.recent" -> ok(MochiNotifications.recent(args.optInt("limit", 5), args.optString("app")))
+            "call.place" -> confirmAndDo(c, "call", args.optString("to"), "")
+            "sms.send" -> confirmAndDo(c, "sms", args.optString("to"), args.optString("text"))
+            else -> fail("unknown action $action")
+        }
+    } catch (e: SecurityException) {
+        fail("permission is off on the phone (turn it on under Phone abilities in the Mochi app)")
+    } catch (e: Exception) {
+        fail(e.message ?: e.javaClass.simpleName)
+    }
+
+    private fun ok(result: Any) = JSONObject().put("ok", true).put("result", result)
+    private fun fail(error: String) = JSONObject().put("ok", false).put("error", error)
+
+    private fun need(c: Context, permission: String, what: String) {
+        if (c.checkSelfPermission(permission) != PackageManager.PERMISSION_GRANTED) {
+            throw SecurityException("$what permission is off")
+        }
+    }
+
+    /** Contacts whose name contains `query`, with their numbers. */
+    fun contacts(c: Context, query: String, limit: Int): JSONArray {
+        need(c, Manifest.permission.READ_CONTACTS, "Contacts")
+        val out = JSONArray()
+        if (query.isBlank()) return out
+        val cols = arrayOf(ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME, ContactsContract.CommonDataKinds.Phone.NUMBER)
+        c.contentResolver.query(ContactsContract.CommonDataKinds.Phone.CONTENT_URI, cols,
+            "${ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME} LIKE ?", arrayOf("%$query%"),
+            "${ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME} ASC")?.use { cur ->
+            val byName = LinkedHashMap<String, MutableSet<String>>()
+            while (cur.moveToNext() && byName.size <= limit) {
+                val name = cur.getString(0) ?: continue
+                val number = cur.getString(1)?.filter { it.isDigit() || it == '+' } ?: continue
+                byName.getOrPut(name) { linkedSetOf() }.add(number)
+            }
+            byName.entries.take(limit).forEach { (name, numbers) ->
+                out.put(JSONObject().put("name", name).put("numbers", JSONArray(numbers.toList())))
+            }
+        }
+        return out
+    }
+
+    /** The last calls: who, which way, when, how long. */
+    private fun calls(c: Context, limit: Int): JSONArray {
+        need(c, Manifest.permission.READ_CALL_LOG, "Call log")
+        val out = JSONArray()
+        val cols = arrayOf(CallLog.Calls.CACHED_NAME, CallLog.Calls.NUMBER, CallLog.Calls.TYPE, CallLog.Calls.DATE,
+            CallLog.Calls.DURATION)
+        c.contentResolver.query(CallLog.Calls.CONTENT_URI, cols, null, null, "${CallLog.Calls.DATE} DESC")?.use { cur ->
+            while (cur.moveToNext() && out.length() < limit.coerceIn(1, 20)) {
+                val type = when (cur.getInt(2)) {
+                    CallLog.Calls.INCOMING_TYPE -> "received"
+                    CallLog.Calls.OUTGOING_TYPE -> "made"
+                    CallLog.Calls.MISSED_TYPE -> "missed"
+                    CallLog.Calls.REJECTED_TYPE -> "declined"
+                    else -> "other"
+                }
+                out.put(JSONObject().put("name", cur.getString(0) ?: "").put("number", cur.getString(1) ?: "")
+                    .put("type", type).put("time", Instant.ofEpochMilli(cur.getLong(3)).toString())
+                    .put("seconds", cur.getLong(4)))
+            }
+        }
+        return out
+    }
+
+    /** The last text messages received, optionally from one contact (name or number). */
+    private fun sms(c: Context, limit: Int, from: String): JSONArray {
+        need(c, Manifest.permission.READ_SMS, "SMS")
+        val numbers = if (from.isBlank()) emptySet() else
+            (runCatching { contacts(c, from, 3) }.getOrNull()?.let { list ->
+                (0 until list.length()).flatMap { i ->
+                    val n = list.getJSONObject(i).getJSONArray("numbers"); (0 until n.length()).map { n.getString(it) } }
+            } ?: emptyList()).map { it.takeLast(9) }.toSet() + from.filter(Char::isDigit).takeLast(9)
+        val out = JSONArray()
+        val cols = arrayOf(Telephony.Sms.ADDRESS, Telephony.Sms.BODY, Telephony.Sms.DATE)
+        c.contentResolver.query(Telephony.Sms.Inbox.CONTENT_URI, cols, null, null, "${Telephony.Sms.DATE} DESC")?.use { cur ->
+            while (cur.moveToNext() && out.length() < limit.coerceIn(1, 10)) {
+                val address = cur.getString(0) ?: ""
+                if (numbers.isNotEmpty() && numbers.none { it.isNotEmpty() && address.filter(Char::isDigit).endsWith(it) }) continue
+                out.put(JSONObject().put("from", nameFor(c, address) ?: address)
+                    .put("text", (cur.getString(1) ?: "").take(500))
+                    .put("time", Instant.ofEpochMilli(cur.getLong(2)).toString()))
+            }
+        }
+        return out
+    }
+
+    private fun nameFor(c: Context, number: String): String? = runCatching {
+        val uri = android.net.Uri.withAppendedPath(ContactsContract.PhoneLookup.CONTENT_FILTER_URI, android.net.Uri.encode(number))
+        c.contentResolver.query(uri, arrayOf(ContactsContract.PhoneLookup.DISPLAY_NAME), null, null, null)?.use {
+            if (it.moveToFirst()) it.getString(0) else null
+        }
+    }.getOrNull()
+
+    // ---- outward actions: only after December taps Confirm on the phone ----
+
+    private class Pending(val latch: CountDownLatch = CountDownLatch(1)) {
+        @Volatile var answer: JSONObject? = null
+    }
+
+    private val pending = ConcurrentHashMap<String, Pending>()
+
+    /** Resolve "Mom" or a number, show the confirm screen, wait for December's tap. */
+    private fun confirmAndDo(c: Context, kind: String, to: String, text: String): JSONObject {
+        if (to.isBlank()) return fail("who to ${if (kind == "call") "call" else "text"}?")
+        if (kind == "sms" && text.isBlank()) return fail("the message is empty")
+        val (name, number) = resolve(c, to) ?: return fail("no contact or number matches \"$to\"")
+        val id = java.util.UUID.randomUUID().toString()
+        val p = Pending()
+        pending[id] = p
+        try {
+            val intent = Intent(c, ConfirmActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                .putExtra(ConfirmActivity.EXTRA_ID, id).putExtra(ConfirmActivity.EXTRA_KIND, kind)
+                .putExtra(ConfirmActivity.EXTRA_NAME, name).putExtra(ConfirmActivity.EXTRA_NUMBER, number)
+                .putExtra(ConfirmActivity.EXTRA_TEXT, text)
+            // A full-screen notification is how a background app may bring up a screen (like an incoming call)
+            val open = PendingIntent.getActivity(c, 9, intent, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
+            val n = Notification.Builder(c, Mochi.CHANNEL_NOTICES)
+                .setSmallIcon(R.drawable.ic_mochi)
+                .setContentTitle(if (kind == "call") "Call $name?" else "Text $name?")
+                .setContentText(if (kind == "call") number else text)
+                .setFullScreenIntent(open, true)
+                .setContentIntent(open)
+                .setCategory(Notification.CATEGORY_CALL)
+                .setAutoCancel(true)
+                .build()
+            c.getSystemService(NotificationManager::class.java).notify(Mochi.NOTIFY_CONFIRM, n)
+            if (!p.latch.await(CONFIRM_WAIT_S, TimeUnit.SECONDS)) {
+                c.getSystemService(NotificationManager::class.java).cancel(Mochi.NOTIFY_CONFIRM)
+                return fail("December didn't confirm on the phone in time")
+            }
+            return p.answer ?: fail("not done")
+        } finally {
+            pending.remove(id)
+        }
+    }
+
+    /** ConfirmActivity reports what happened (done, cancelled, failed). */
+    fun answer(id: String, result: JSONObject) {
+        pending[id]?.let { it.answer = result; it.latch.countDown() }
+    }
+
+    fun answered(text: String) = ok(text)
+    fun failed(text: String) = fail(text)
+
+    /** A contact name ("Mom") or a number, as (name, number). */
+    private fun resolve(c: Context, to: String): Pair<String, String>? {
+        val digits = to.filter { it.isDigit() || it == '+' }
+        if (digits.count(Char::isDigit) >= 6 && digits.length >= to.trim().length - 3) return to.trim() to digits
+        val found = contacts(c, to.trim(), 3)
+        if (found.length() == 0) return null
+        val first = found.getJSONObject(0)
+        return first.getString("name") to first.getJSONArray("numbers").getString(0)
+    }
+}

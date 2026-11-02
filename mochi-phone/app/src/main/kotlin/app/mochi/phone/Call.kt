@@ -58,6 +58,8 @@ object Call {
     private var startedAt: java.time.Instant = java.time.Instant.now()
     @Volatile private var answered = false
     @Volatile private var flushPlayback = false
+    /** December said "stop" / "be quiet": Mochi's audio is dropped until December speaks again. */
+    @Volatile private var quiet = false
     private val playback = LinkedBlockingQueue<ByteArray>()
 
     /** Start a call. `mochiCall` is the ring event when answering Mochi; null when December calls. */
@@ -76,6 +78,7 @@ object Call {
         active = true
         answered = false
         muted = false
+        quiet = false
         call = mochiCall
         startedAt = java.time.Instant.now()
         threadId = mochiCall?.optString("thread_id")?.takeIf { it.isNotEmpty() } ?: Mochi.thread(app)
@@ -106,6 +109,7 @@ object Call {
             }.start()
         }
         app.stopService(Intent(app, CallService::class.java))
+        WakeService.resume(app) // listen for "Mochi" again, if that's on
         main.post { listener?.onEnded() }
     }
 
@@ -155,7 +159,17 @@ object Call {
                     val role = f.optString("role")
                     val line = f.optString("text")
                     val final = f.optBoolean("final")
-                    main.post { listener?.onTranscript(role, line, final) }
+                    if (role == "user" && final) {
+                        quiet = isStop(line)
+                        if (quiet) {
+                            // say nothing at all until December speaks again: cut Mochi off and drop its reply
+                            webSocket.send("""{"type":"interrupt"}""")
+                            playback.clear()
+                            flushPlayback = true
+                            status("Quiet. Say something when you want Mochi again.")
+                        }
+                    }
+                    if (role == "user" || !quiet) main.post { listener?.onTranscript(role, line, final) }
                 }
                 "tool_started" -> status("Checking (${f.optString("name")})…")
                 "tool_finished", "turn_complete" -> status("Listening")
@@ -166,7 +180,7 @@ object Call {
         }
 
         override fun onMessage(webSocket: WebSocket, bytes: ByteString) {
-            if (webSocket === ws) playback.offer(bytes.toByteArray())
+            if (webSocket === ws && !quiet) playback.offer(bytes.toByteArray())
         }
 
         override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
@@ -184,6 +198,17 @@ object Call {
             if (webSocket === ws) end()
         }
     }
+
+    /** "Stop", "be quiet", "silent", "shut up", "चुप"… said on its own (a short phrase, not a sentence). */
+    private fun isStop(said: String): Boolean {
+        val words = said.lowercase().replace(Regex("[^\\p{L}\\p{M}\\s]"), " ").trim().split(Regex("\\s+")).filter { it.isNotEmpty() }
+        if (words.isEmpty() || words.size > 4) return false
+        val phrase = words.joinToString(" ")
+        return STOP.any { phrase == it || phrase == "mochi $it" || phrase == "$it mochi" || phrase == "$it please" }
+    }
+
+    private val STOP = setOf("stop", "stop it", "stop talking", "silent", "be silent", "silence", "quiet", "be quiet",
+        "shut up", "hush", "pause", "enough", "chup", "chup lag", "chup basa", "चुप", "चुप लाग", "चुप बस", "रोक")
 
     private fun startAudio(socket: WebSocket, outRate: Int) {
         Thread({ record(socket) }, "mochi-mic").start()

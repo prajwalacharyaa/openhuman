@@ -86,6 +86,15 @@ class RingService : Service() {
                                 val call = runCatching { JSONObject(line.removePrefix("data: ")) }.getOrNull()
                                 if (call != null && call.optString("id").isNotEmpty()) main.post { ring(this, call) }
                             }
+                            line.startsWith("data: ") && event == "phone" -> {
+                                val job = runCatching { JSONObject(line.removePrefix("data: ")) }.getOrNull()
+                                val id = job?.optString("id").orEmpty()
+                                if (job != null && id.isNotEmpty()) Thread {
+                                    val result = PhoneActions.handle(this, job.optString("action"),
+                                        job.optJSONObject("args") ?: JSONObject())
+                                    runCatching { Mochi.phoneResult(this, id, result) }
+                                }.start()
+                            }
                             line.startsWith("data: ") && event == "notice" -> {
                                 val notice = runCatching { JSONObject(line.removePrefix("data: ")) }.getOrNull()
                                 val id = notice?.optString("id").orEmpty()

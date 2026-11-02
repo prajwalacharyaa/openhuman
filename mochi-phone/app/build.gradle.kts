@@ -48,4 +48,6 @@ android {
 
 dependencies {
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
+    // the "Mochi" wake word, on the phone only (Picovoice Porcupine; needs December's free access key)
+    implementation("ai.picovoice:porcupine-android:4.0.2")
 }

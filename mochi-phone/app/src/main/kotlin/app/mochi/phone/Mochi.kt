@@ -32,6 +32,9 @@ object Mochi {
     const val NOTIFY_RING = 2
     const val NOTIFY_ONGOING = 3
     const val NOTIFY_APPROVALS = 5
+    const val NOTIFY_CONFIRM = 6
+    const val NOTIFY_WAKE = 7
+    const val NOTIFY_WAKE_PROMPT = 8
     const val NOTIFY_NOTICE_BASE = 100
     private const val CLIENT_ID = "mochi-phone"
     private val JSON = "application/json".toMediaType()
@@ -55,6 +58,12 @@ object Mochi {
 
     /** The conversation "Call Mochi" continues; null starts a new one. */
     fun thread(c: Context): String? = prefs(c).getString("thread", null)
+
+    /** "Mochi" wake word: on/off, and the Picovoice access key it needs (the keyword file is in filesDir). */
+    fun wakeEnabled(c: Context) = prefs(c).getBoolean("wake", false)
+    fun setWakeEnabled(c: Context, on: Boolean) = prefs(c).edit().putBoolean("wake", on).apply()
+    fun wakeKey(c: Context): String = prefs(c).getString("wake_key", "") ?: ""
+    fun setWakeKey(c: Context, key: String) = prefs(c).edit().putString("wake_key", key).apply()
     fun setThread(c: Context, id: String?) = prefs(c).edit().putString("thread", id).apply()
 
     fun voiceUrl(c: Context) = "wss://${host(c)}:8446/ws/live-voice"
@@ -131,6 +140,14 @@ object Mochi {
     }
 
     /** Tell mochi-ring how a call ended (answered / declined / missed) so it stops ringing. */
+    /** The phone's answer to a mochi-ring "phone" request. */
+    fun phoneResult(c: Context, jobId: String, result: JSONObject) {
+        val req = Request.Builder().url("${ringUrl(c)}/phone/$jobId/result")
+            .header("Authorization", "Bearer ${token(c)}")
+            .post(result.toString().toRequestBody(JSON)).build()
+        quick.newCall(req).execute().close()
+    }
+
     fun callDone(c: Context, callId: String, result: String) {
         val req = Request.Builder().url("${ringUrl(c)}/calls/$callId/done")
             .header("Authorization", "Bearer ${token(c)}")
