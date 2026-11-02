@@ -27,7 +27,7 @@ object PhoneActions {
 
     fun handle(c: Context, action: String, args: JSONObject): JSONObject = try {
         when (action) {
-            "contacts.search" -> ok(contacts(c, args.optString("query"), 5))
+            "contacts.search" -> ok(namesOnly(contacts(c, args.optString("query"), 5)))
             "calls.recent" -> ok(calls(c, args.optInt("limit", 5)))
             "sms.recent" -> ok(sms(c, args.optInt("limit", 3), args.optString("from")))
             "notifications.recent" -> ok(MochiNotifications.recent(args.optInt("limit", 5), args.optString("app")))
@@ -43,6 +43,21 @@ object PhoneActions {
     }
 
     private fun ok(result: Any) = JSONObject().put("ok", true).put("result", result)
+
+    /** Phone numbers never leave the phone (December's privacy rule): numbers are only used here, on the phone. */
+    private val NUMBER = Regex("""\+?\d[\d\s().-]{5,}\d""")
+    fun hideNumbers(text: String) = NUMBER.replace(text) { if (it.value.count(Char::isDigit) >= 7) "[number hidden]" else it.value }
+
+    /** Contacts as Mochi sees them: names, and how many numbers each has (never the numbers). */
+    private fun namesOnly(found: JSONArray): JSONArray {
+        val out = JSONArray()
+        for (i in 0 until found.length()) {
+            val contact = found.getJSONObject(i)
+            out.put(JSONObject().put("name", contact.getString("name"))
+                .put("phone_numbers_saved", contact.getJSONArray("numbers").length()))
+        }
+        return out
+    }
     private fun fail(error: String) = JSONObject().put("ok", false).put("error", error)
 
     private fun need(c: Context, permission: String, what: String) {
@@ -51,7 +66,7 @@ object PhoneActions {
         }
     }
 
-    /** Contacts whose name contains `query`, with their numbers. */
+    /** Contacts whose name contains `query`, with their numbers (for use on the phone only; see [namesOnly]). */
     fun contacts(c: Context, query: String, limit: Int): JSONArray {
         need(c, Manifest.permission.READ_CONTACTS, "Contacts")
         val out = JSONArray()
@@ -88,8 +103,9 @@ object PhoneActions {
                     CallLog.Calls.REJECTED_TYPE -> "declined"
                     else -> "other"
                 }
-                out.put(JSONObject().put("name", cur.getString(0) ?: "").put("number", cur.getString(1) ?: "")
-                    .put("type", type).put("time", Instant.ofEpochMilli(cur.getLong(3)).toString())
+                val name = cur.getString(0)?.takeIf { it.isNotBlank() }
+                    ?: nameFor(c, cur.getString(1) ?: "") ?: "unknown number"
+                out.put(JSONObject().put("name", name).put("type", type).put("time", Instant.ofEpochMilli(cur.getLong(3)).toString())
                     .put("seconds", cur.getLong(4)))
             }
         }
@@ -110,8 +126,10 @@ object PhoneActions {
             while (cur.moveToNext() && out.length() < limit.coerceIn(1, 10)) {
                 val address = cur.getString(0) ?: ""
                 if (numbers.isNotEmpty() && numbers.none { it.isNotEmpty() && address.filter(Char::isDigit).endsWith(it) }) continue
-                out.put(JSONObject().put("from", nameFor(c, address) ?: address)
-                    .put("text", (cur.getString(1) ?: "").take(500))
+                // the sender's name, or what the sender calls itself (a bank, "NTC"), never a phone number
+                val sender = nameFor(c, address) ?: if (address.count(Char::isDigit) >= 7) "unknown number" else address
+                out.put(JSONObject().put("from", sender)
+                    .put("text", hideNumbers((cur.getString(1) ?: "").take(500)))
                     .put("time", Instant.ofEpochMilli(cur.getLong(2)).toString()))
             }
         }
@@ -214,7 +232,9 @@ object PhoneActions {
     /** A contact name ("Mom") or a number, as (name, number). */
     private fun resolve(c: Context, to: String): Pair<String, String>? {
         val digits = to.filter { it.isDigit() || it == '+' }
-        if (digits.count(Char::isDigit) >= 6 && digits.length >= to.trim().length - 3) return to.trim() to digits
+        if (digits.count(Char::isDigit) >= 6 && digits.length >= to.trim().length - 3) {
+            return (nameFor(c, digits) ?: "that number") to digits // the name shown back to Mochi, never the number
+        }
         val found = contacts(c, to.trim(), 3)
         if (found.length() == 0) return null
         val first = found.getJSONObject(0)

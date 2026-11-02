@@ -67,35 +67,51 @@ fn voice_turns_pair_each_user_utterance_with_the_speech_after_it() {
     use TranscriptRole::{Agent, User};
     let mut turns = VoiceTurns::default();
     assert!(turns.push(Agent, "hi, I'm Tiny").is_empty(), "a greeting before the user is not logged");
-    assert_eq!(
-        turns.push(User, " remember I have EOD 5 to 8 "),
-        vec![MemoryEntry::User { index: 0, text: "remember I have EOD 5 to 8".into() }]
-    );
+    assert!(turns.push(User, " remember I have EOD 5 to 8 ").is_empty(), "released when the exchange ends");
     assert!(turns.push(Agent, "Got it.").is_empty());
     assert!(turns.push(Agent, "Saved.").is_empty());
     assert!(turns.push(Agent, "  ").is_empty());
     assert_eq!(
         turns.push(User, "what about Monday"),
         vec![
+            MemoryEntry::User { index: 0, text: "remember I have EOD 5 to 8".into() },
             MemoryEntry::Reply { index: 1, text: "Got it. Saved.".into() },
-            MemoryEntry::User { index: 2, text: "what about Monday".into() },
         ]
     );
     assert_eq!(
         turns.flush(),
-        vec![],
+        vec![MemoryEntry::User { index: 2, text: "what about Monday".into() }],
         "a turn the agent never answered logs no reply"
     );
     assert!(turns.flush().is_empty(), "flushing twice is a no-op");
-    assert_eq!(
-        turns.push(User, "and Tuesday"),
-        vec![MemoryEntry::User { index: 4, text: "and Tuesday".into() }]
-    );
+    turns.push(User, "and Tuesday");
     turns.push(Agent, "EOD again.");
     assert_eq!(
         turns.flush(),
-        vec![MemoryEntry::Reply { index: 5, text: "EOD again.".into() }]
+        vec![
+            MemoryEntry::User { index: 4, text: "and Tuesday".into() },
+            MemoryEntry::Reply { index: 5, text: "EOD again.".into() },
+        ]
     );
+}
+
+#[test]
+fn an_exchange_that_read_the_phone_stays_out_of_memory() {
+    use TranscriptRole::{Agent, User};
+    let mut turns = VoiceTurns::default();
+    // usual order: the words, then the phone is read, then the reply
+    turns.push(User, "who called me");
+    turns.mark_private();
+    turns.push(Agent, "Mom called at nine.");
+    assert!(turns.push(User, "thanks").is_empty(), "the phone exchange is dropped");
+    turns.push(Agent, "Anytime.");
+    assert_eq!(turns.flush().len(), 2, "the next exchange is logged again");
+
+    // Gemini finalised the words after starting the tool: the mark carries to that exchange
+    turns.mark_private();
+    turns.push(User, "read my last message");
+    turns.push(Agent, "Sita says she's late.");
+    assert!(turns.flush().is_empty());
 }
 
 #[tokio::test]
@@ -104,4 +120,11 @@ async fn a_persister_without_memory_log_finishes_quietly() {
     let mut p = persister(dir.path());
     p.save(TranscriptRole::User, "hello").await;
     p.finish().await;
+}
+
+#[test]
+fn spots_phone_reads() {
+    assert!(reads_phone("shell", &serde_json::json!({"command": "mochi-phone calls 3"})));
+    assert!(!reads_phone("shell", &serde_json::json!({"command": "cat server-status.md"})));
+    assert!(!reads_phone("web_search_tool", &serde_json::json!({"query": "mochi-phone"})));
 }

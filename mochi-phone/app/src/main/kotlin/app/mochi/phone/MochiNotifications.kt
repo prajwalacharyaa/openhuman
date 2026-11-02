@@ -43,7 +43,8 @@ class MochiNotifications : NotificationListenerService() {
                 recent.filter { app.isBlank() || it.app.contains(app, ignoreCase = true) }
                     .take(limit.coerceIn(1, 20))
                     .forEach {
-                        out.put(JSONObject().put("app", it.app).put("from", it.title).put("text", it.text)
+                        out.put(JSONObject().put("app", it.app).put("from", PhoneActions.hideNumbers(it.title))
+                            .put("text", PhoneActions.hideNumbers(it.text))
                             .put("time", Instant.ofEpochMilli(it.time).toString()))
                     }
             }

@@ -558,3 +558,11 @@ async fn a_date_hint_asks_the_model_in_the_users_zone_and_never_costs_the_pack()
         );
     }
 }
+
+#[test]
+fn a_recent_phone_read_keeps_replies_out_of_memory() {
+    let ws = tempfile::tempdir().unwrap();
+    assert!(!phone_read_recently(ws.path()), "no marker, no phone read");
+    std::fs::write(ws.path().join(PHONE_READ_MARKER), b"").unwrap();
+    assert!(phone_read_recently(ws.path()), "just touched");
+}

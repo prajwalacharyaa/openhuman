@@ -35,14 +35,20 @@ pub(crate) enum MemoryEntry {
 }
 
 /// Pairs final utterances into memory turns. A user utterance opens a turn;
-/// the agent utterances after it are its reply, joined and released when the
-/// next user utterance arrives or the session ends. Agent speech before any
-/// user utterance (a greeting) is not logged.
+/// the agent utterances after it are its reply. The whole exchange is released
+/// when the next user utterance arrives or the session ends, so an exchange in
+/// which the phone was read ([`Self::mark_private`]) can be left out entirely.
+/// Agent speech before any user utterance (a greeting) is not logged.
 #[derive(Debug, Default)]
 pub(crate) struct VoiceTurns {
     exchanges: usize,
-    open: bool,
+    open: Option<String>,
     reply: Vec<String>,
+    /// The open exchange read December's phone: it never goes into memory.
+    private: bool,
+    /// The phone was read before this exchange's words were final (Gemini can
+    /// finalise the transcript after starting the tool): the next one is private.
+    private_next: bool,
 }
 
 impl VoiceTurns {
@@ -54,38 +60,54 @@ impl VoiceTurns {
         }
         match role {
             TranscriptRole::User => {
-                let mut entries = self.flush();
-                self.open = true;
-                entries.push(MemoryEntry::User {
-                    index: hooks::user_turn_index(self.exchanges),
-                    text: text.to_string(),
-                });
+                let entries = self.flush();
+                self.open = Some(text.to_string());
+                self.private = std::mem::take(&mut self.private_next);
                 entries
             }
             TranscriptRole::Agent => {
-                if self.open {
+                if self.open.is_some() {
                     self.reply.push(text.to_string());
                 }
+                // the reply to the marked exchange is under way: the mark was for this one
+                self.private_next = false;
                 Vec::new()
             }
         }
     }
 
-    /// Closes the open turn: its reply, if the agent said anything.
-    pub(crate) fn flush(&mut self) -> Vec<MemoryEntry> {
-        if !self.open {
-            return Vec::new();
+    /// The model read December's phone (contacts, calls, messages) in this
+    /// exchange: keep it out of memory (December's privacy rule).
+    pub(crate) fn mark_private(&mut self) {
+        if self.open.is_some() {
+            self.private = true;
         }
-        let index = hooks::user_turn_index(self.exchanges) + 1;
-        self.open = false;
+        self.private_next = true;
+    }
+
+    /// Closes the open exchange: the user's words and the reply, unless private.
+    pub(crate) fn flush(&mut self) -> Vec<MemoryEntry> {
+        let Some(user) = self.open.take() else {
+            return Vec::new();
+        };
+        let index = hooks::user_turn_index(self.exchanges);
         self.exchanges += 1;
         let reply = std::mem::take(&mut self.reply).join(" ");
-        if reply.is_empty() {
-            Vec::new()
-        } else {
-            vec![MemoryEntry::Reply { index, text: reply }]
+        if std::mem::take(&mut self.private) {
+            return Vec::new();
         }
+        let mut entries = vec![MemoryEntry::User { index, text: user }];
+        if !reply.is_empty() {
+            entries.push(MemoryEntry::Reply { index: index + 1, text: reply });
+        }
+        entries
     }
+}
+
+/// Whether a tool call reads December's phone (the `mochi-phone` command
+/// through the shell tool): that exchange stays out of memory.
+pub(crate) fn reads_phone(tool: &str, args: &serde_json::Value) -> bool {
+    tool == "shell" && args.to_string().contains("mochi-phone")
 }
 
 /// Logs a live session's turns into memory on a background worker.
@@ -141,6 +163,10 @@ impl VoiceMemoryLog {
             sender,
             worker,
         })
+    }
+
+    fn mark_private(&mut self) {
+        self.turns.mark_private();
     }
 
     fn record(&mut self, role: TranscriptRole, text: &str) {
@@ -230,6 +256,14 @@ impl TranscriptPersister {
             sender: sender.to_string(),
             created_at: chrono::Utc::now().to_rfc3339(),
         })
+    }
+
+    /// The phone was read in the current exchange: keep it out of memory (it
+    /// still shows in the chat thread).
+    pub(crate) fn mark_private(&mut self) {
+        if let Some(memory) = self.memory.as_mut() {
+            memory.mark_private();
+        }
     }
 
     /// Appends a final utterance to the thread. Failures are logged, never

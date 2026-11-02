@@ -356,6 +356,24 @@ fn refusal_of(outcomes: &[Result<ContextPack, MemoryError>]) -> Option<MemoryErr
 /// longer than a typed turn's pre-turn budget before the user starts talking.
 const SESSION_START_MIN_TIMEOUT: Duration = Duration::from_secs(3);
 
+/// `mochi-phone` (the server command that reads December's phone through the
+/// Mochi app) touches this workspace file each time it's used. Replies written
+/// within [`PHONE_READ_WINDOW`] of it may carry contacts, calls or messages,
+/// so they stay out of memory (December's privacy rule). The typed brain runs
+/// that command inside its own CLI, out of sight of the turn's tool list, so a
+/// marker file is the only signal there is.
+pub(crate) const PHONE_READ_MARKER: &str = ".phone-read";
+const PHONE_READ_WINDOW: Duration = Duration::from_secs(600);
+
+/// Whether December's phone was read recently (see [`PHONE_READ_MARKER`]).
+pub(crate) fn phone_read_recently(workspace_dir: &std::path::Path) -> bool {
+    std::fs::metadata(workspace_dir.join(PHONE_READ_MARKER))
+        .and_then(|meta| meta.modified())
+        .ok()
+        .and_then(|at| at.elapsed().ok())
+        .is_some_and(|age| age < PHONE_READ_WINDOW)
+}
+
 /// The pack a session that has no user turn yet opens with (a live voice
 /// session): what memory holds for `thread_id`, ranked around `focus`.
 /// Nothing is logged. `None` when memory or recall is off, nothing relevant
@@ -483,6 +501,10 @@ pub async fn post_turn(config: &Config, identity: &ResolvedIdentity, input: Post
     }
     let text = logged_reply(&input.assistant_text, &input.tool_calls);
     if text.is_empty() {
+        return;
+    }
+    if phone_read_recently(&config.workspace_dir) {
+        tracing::debug!(thread_id = %input.thread_id, "[memory:hooks] post_turn skipped: the phone was read just now");
         return;
     }
     let bound = match engine::resolve(config).engine() {

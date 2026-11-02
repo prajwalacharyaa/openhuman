@@ -20,7 +20,7 @@ use tinyagents_live::LiveAgentEvent;
 
 use super::error::LiveVoiceError;
 use super::handoff::{claude_reply_note, HandoffCheck, HandoffEvent};
-use super::persist::TranscriptPersister;
+use super::persist::{reads_phone, TranscriptPersister};
 use super::timing::{self, TimingEvent, VoiceTiming};
 use super::session::{self, LiveStartRequest};
 use super::types::{ClientFrame, ServerFrame, TranscriptRole};
@@ -296,6 +296,11 @@ pub async fn handle_live_voice_ws(socket: WebSocket, config: Arc<Config>) {
                     };
                     if let Some(record) = step.and_then(|s| timing.on_event(s, std::time::Instant::now())) {
                         tracing::info!(session_id, ?record, "{LOG_PREFIX} timing");
+                    }
+                }
+                if let LiveAgentEvent::Live(LiveEvent::ToolCall(call)) = &event {
+                    if reads_phone(&call.name, &call.args) {
+                        persister.mark_private(); // December's phone data stays out of memory
                     }
                 }
                 let handoff_step = match &event {
