@@ -20,7 +20,8 @@ import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 
 /**
- * What waits for December: Mochi's browser requests (Allow / Deny / answer with a message) and calls that were
+ * What waits for December: Mochi's browser requests and emails to other people (Allow / Deny / answer with a
+ * message) and calls that were
  * missed or declined with a decision still in them (Call back / reply / Dismiss). Items stay until dealt with,
  * so a missed ring is never lost. Re-read every 10 s while open.
  */
@@ -71,20 +72,20 @@ class ApprovalsActivity : Activity() {
             shown = key
             replies.clear()
             list.removeAllViews()
-            items.forEach { list.addView(if (it.optString("kind") == "browse") browseCard(it) else callCard(it)) }
+            items.forEach { list.addView(if (it.has("approve_url")) approveCard(it) else callCard(it)) }
         }
     }
 
-    private fun browseCard(item: JSONObject): LinearLayout {
-        val card = card("Browser request", item.optString("purpose") +
-            item.optString("url").let { if (it.isEmpty()) "" else "\n$it" }, item)
+    /** Anything with an approval page: a browser request, an email to someone else, and whatever comes next. */
+    private fun approveCard(item: JSONObject): LinearLayout {
+        val card = card(item.optString("title", "Approval"), item.optString("text"), item)
         val approve = item.optString("approve_url")
         card.addView(row(
             button("Allow", "#2E9D5B") { decide(approve, true) },
             button("Deny", "#B4472C") { decide(approve, false) }))
         card.addView(reply("Or tell Mochi something else…") { text ->
             // answering with a message means "not this": deny, then say what to do instead
-            Mochi.decideBrowse(this, approve, false)
+            Mochi.decideApproval(this, approve, false)
             Mochi.send(this, item.optString("thread_id"), text)
         })
         return card
@@ -108,8 +109,8 @@ class ApprovalsActivity : Activity() {
 
     private fun decide(approveUrl: String, allow: Boolean) {
         status.text = if (allow) "Allowing…" else "Denying…"
-        background({ Mochi.decideBrowse(this, approveUrl, allow) }) {
-            status.text = if (allow) "Allowed: Mochi carries on in the chat." else "Denied."
+        background({ Mochi.decideApproval(this, approveUrl, allow) }) {
+            status.text = if (allow) "Allowed: Mochi carries on, and the chat is told." else "Denied: the chat is told."
             load(force = true)
         }
     }

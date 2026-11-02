@@ -113,10 +113,10 @@ object Mochi {
     }
 
     /**
-     * Allow or deny a browser request on its approval page. That page trusts only requests that come through
+     * Allow or deny an approval (a browser task, an email to someone else) on its approval page. That page trusts only requests that come through
      * Tailscale, so no token is sent (or needed): the tap is proven to come from December's tailnet.
      */
-    fun decideBrowse(c: Context, approveUrl: String, allow: Boolean) {
+    fun decideApproval(c: Context, approveUrl: String, allow: Boolean) {
         val req = Request.Builder().url("$approveUrl/${if (allow) "allow" else "deny"}")
             .post(ByteArray(0).toRequestBody(null)).build()
         quick.newCall(req).execute().use { r -> if (!r.isSuccessful) throw IllegalStateException("HTTP ${r.code}") }
