@@ -32,7 +32,6 @@ object Mochi {
     const val NOTIFY_RING = 2
     const val NOTIFY_ONGOING = 3
     const val NOTIFY_APPROVALS = 5
-    const val NOTIFY_CONFIRM = 6
     const val NOTIFY_WAKE = 7
     const val NOTIFY_WAKE_PROMPT = 8
     const val NOTIFY_NOTICE_BASE = 100
@@ -139,7 +138,6 @@ object Mochi {
         quick.newCall(req).execute().close()
     }
 
-    /** Tell mochi-ring how a call ended (answered / declined / missed) so it stops ringing. */
     /** The phone's answer to a mochi-ring "phone" request. */
     fun phoneResult(c: Context, jobId: String, result: JSONObject) {
         val req = Request.Builder().url("${ringUrl(c)}/phone/$jobId/result")
@@ -148,6 +146,7 @@ object Mochi {
         quick.newCall(req).execute().close()
     }
 
+    /** Tell mochi-ring how a call ended (answered / declined / missed) so it stops ringing. */
     fun callDone(c: Context, callId: String, result: String) {
         val req = Request.Builder().url("${ringUrl(c)}/calls/$callId/done")
             .header("Authorization", "Bearer ${token(c)}")

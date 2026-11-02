@@ -4,8 +4,10 @@ import ai.picovoice.porcupine.PorcupineManager
 import android.app.Notification
 import android.app.NotificationManager
 import android.app.PendingIntent
+import android.Manifest
 import android.app.Service
 import android.content.Context
+import android.content.pm.PackageManager
 import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.media.AudioManager
@@ -34,10 +36,6 @@ class WakeService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        if (!Mochi.wakeEnabled(this)) {
-            stopSelf()
-            return START_NOT_STICKY
-        }
         Mochi.createChannels(this)
         val open = PendingIntent.getActivity(this, 11, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE)
         val n = Notification.Builder(this, Mochi.CHANNEL_LISTENING)
@@ -47,18 +45,35 @@ class WakeService : Service() {
             .setContentIntent(open)
             .build()
         try {
+            // first, always: a service started with startForegroundService must get here, or Android ends the app
             startForeground(Mochi.NOTIFY_WAKE, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE)
         } catch (e: Exception) {
-            Log.i("mochi-wake", "can't listen from the background: ${e.message}")
+            Log.i("mochi-wake", "can't listen: ${e.message}")
+            lastError = e.message ?: "couldn't start"
+            stopSelf()
+            return START_NOT_STICKY
+        }
+        if (!Mochi.wakeEnabled(this)) {
             stopSelf()
             return START_NOT_STICKY
         }
         if (Call.active) pause() else listen()
-        return START_STICKY
+        // not sticky: Android may not let a background restart use the microphone; opening the app starts it
+        return START_NOT_STICKY
+    }
+
+    /** A Mochi call or a phone call is using the microphone. */
+    private fun micBusy(): Boolean {
+        val mode = getSystemService(AudioManager::class.java).mode
+        return Call.active || mode == AudioManager.MODE_IN_CALL || mode == AudioManager.MODE_IN_COMMUNICATION
     }
 
     private fun listen() {
-        if (porcupine != null) return
+        if (porcupine != null || instance !== this || !Mochi.wakeEnabled(this)) return
+        if (micBusy()) {
+            main.postDelayed({ listen() }, 30_000) // try again after the call
+            return
+        }
         val keyword = File(filesDir, KEYWORD_FILE)
         try {
             porcupine = PorcupineManager.Builder()
@@ -83,9 +98,15 @@ class WakeService : Service() {
 
     /** "Mochi" was heard: a chime, then a call. */
     private fun heard() {
-        if (Call.active) return
+        if (micBusy()) return
         pause() // the call needs the microphone; listening resumes when it ends
-        runCatching { ToneGenerator(AudioManager.STREAM_NOTIFICATION, 70).startTone(ToneGenerator.TONE_PROP_ACK, 150) }
+        // and if no call comes of it (mic denied, screen not opened), listen again anyway
+        main.postDelayed({ if (!Call.active) listen() }, 20_000)
+        runCatching {
+            val tone = ToneGenerator(AudioManager.STREAM_NOTIFICATION, 70)
+            tone.startTone(ToneGenerator.TONE_PROP_ACK, 150)
+            main.postDelayed({ tone.release() }, 400)
+        }
         val call = Intent(this, CallActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             .putExtra(CallActivity.EXTRA_ANSWER, true)
         if (Settings.canDrawOverlays(this)) {
@@ -108,11 +129,11 @@ class WakeService : Service() {
             .setTimeoutAfter(20_000)
             .build()
         getSystemService(NotificationManager::class.java).notify(Mochi.NOTIFY_WAKE_PROMPT, n)
-        main.postDelayed({ if (!Call.active) listen() }, 20_000)
     }
 
     override fun onDestroy() {
         if (instance === this) instance = null
+        main.removeCallbacksAndMessages(null)
         pause()
         super.onDestroy()
     }
@@ -125,6 +146,10 @@ class WakeService : Service() {
 
         fun start(c: Context) {
             if (!Mochi.wakeEnabled(c)) return
+            if (c.checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+                lastError = "microphone permission is off"
+                return
+            }
             lastError = ""
             runCatching { c.startForegroundService(Intent(c, WakeService::class.java)) }
                 .onFailure { lastError = it.message ?: "couldn't start" }
@@ -139,10 +164,13 @@ class WakeService : Service() {
          * foreground start, which Android may refuse from the background.
          */
         fun resume(c: Context) {
-            Handler(Looper.getMainLooper()).post {
-                val running = instance
-                if (running != null) { if (Mochi.wakeEnabled(c)) running.listen() } else start(c)
-            }
+            // only a running service: from the background the microphone can't be started anew (opening the app does)
+            Handler(Looper.getMainLooper()).post { instance?.listen() }
+        }
+
+        /** A call is starting: give it the microphone now (main thread). */
+        fun pauseNow() {
+            instance?.pause()
         }
     }
 }

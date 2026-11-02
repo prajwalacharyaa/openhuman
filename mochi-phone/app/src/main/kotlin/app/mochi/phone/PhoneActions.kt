@@ -145,8 +145,14 @@ object PhoneActions {
                 .putExtra(ConfirmActivity.EXTRA_ID, id).putExtra(ConfirmActivity.EXTRA_KIND, kind)
                 .putExtra(ConfirmActivity.EXTRA_NAME, name).putExtra(ConfirmActivity.EXTRA_NUMBER, number)
                 .putExtra(ConfirmActivity.EXTRA_TEXT, text)
-            // A full-screen notification is how a background app may bring up a screen (like an incoming call)
-            val open = PendingIntent.getActivity(c, 9, intent, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
+                .putExtra(ConfirmActivity.EXTRA_NOTIFICATION, id.hashCode())
+            // During a Mochi call the app is on screen and may open it directly; otherwise a full-screen notification
+            // is how a background app brings up a screen (like an incoming call)
+            if (Call.active && runCatching { c.startActivity(intent) }.isSuccess) {
+                return waitFor(p, c, id.hashCode())
+            }
+            val open = PendingIntent.getActivity(c, id.hashCode(), intent,
+                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
             val n = Notification.Builder(c, Mochi.CHANNEL_NOTICES)
                 .setSmallIcon(R.drawable.ic_mochi)
                 .setContentTitle(if (kind == "call") "Call $name?" else "Text $name?")
@@ -156,16 +162,23 @@ object PhoneActions {
                 .setCategory(Notification.CATEGORY_CALL)
                 .setAutoCancel(true)
                 .build()
-            c.getSystemService(NotificationManager::class.java).notify(Mochi.NOTIFY_CONFIRM, n)
-            if (!p.latch.await(CONFIRM_WAIT_S, TimeUnit.SECONDS)) {
-                c.getSystemService(NotificationManager::class.java).cancel(Mochi.NOTIFY_CONFIRM)
-                return fail("December didn't confirm on the phone in time")
-            }
-            return p.answer ?: fail("not done")
+            c.getSystemService(NotificationManager::class.java).notify(id.hashCode(), n)
+            return waitFor(p, c, id.hashCode())
         } finally {
             pending.remove(id)
         }
     }
+
+    private fun waitFor(p: Pending, c: Context, notificationId: Int): JSONObject {
+        if (!p.latch.await(CONFIRM_WAIT_S, TimeUnit.SECONDS)) {
+            c.getSystemService(NotificationManager::class.java).cancel(notificationId)
+            return fail("December didn't confirm on the phone in time")
+        }
+        return p.answer ?: fail("not done")
+    }
+
+    /** Whether Mochi is still waiting for this confirmation (not timed out, not answered). */
+    fun isPending(id: String) = pending[id]?.answer == null && pending.containsKey(id)
 
     /** ConfirmActivity reports what happened (done, cancelled, failed). */
     fun answer(id: String, result: JSONObject) {

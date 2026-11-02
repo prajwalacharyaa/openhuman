@@ -53,10 +53,15 @@ class AbilitiesActivity : Activity() {
             "\"Check the message that just arrived\" (WhatsApp, Messenger, texts…): Mochi reads the newest message " +
                 "notifications, kept in the phone's memory only.",
             listOf(Triple("Notification access", notificationAccess()) {
-                startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_DETAIL_SETTINGS)
-                    .putExtra(Settings.EXTRA_NOTIFICATION_LISTENER_COMPONENT_NAME,
-                        ComponentName(this, MochiNotifications::class.java).flattenToString()))
+                runCatching {
+                    startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_DETAIL_SETTINGS)
+                        .putExtra(Settings.EXTRA_NOTIFICATION_LISTENER_COMPONENT_NAME,
+                            ComponentName(this, MochiNotifications::class.java).flattenToString()))
+                }.onFailure { startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)) }
             }))
+        body.addView(Ui.text(this, "If Android says this setting is restricted: open Settings → Apps → Mochi → ⋮ → " +
+            "Allow restricted settings, then try again (Android asks this of apps installed from a file).", 12f, Ui.MUTED)
+            .apply { setPadding(0, Ui.dp(this@AbilitiesActivity, 6), 0, 0) })
         wakeSection()
         section("Assistant button",
             "Make Mochi the phone's digital assistant: the assistant gesture (long-press power, or a corner swipe) " +
@@ -85,8 +90,8 @@ class AbilitiesActivity : Activity() {
 
     override fun onRequestPermissionsResult(code: Int, permissions: Array<out String>, results: IntArray) = draw()
 
-    private fun notificationAccess() =
-        (Settings.Secure.getString(contentResolver, "enabled_notification_listeners") ?: "").contains(packageName)
+    private fun notificationAccess() = getSystemService(android.app.NotificationManager::class.java)
+        .isNotificationListenerAccessGranted(ComponentName(this, MochiNotifications::class.java))
 
     // ---- the "Mochi" wake word ----
 

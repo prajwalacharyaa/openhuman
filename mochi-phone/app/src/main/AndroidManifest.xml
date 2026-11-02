@@ -66,6 +66,7 @@
         <activity
             android:name=".ConfirmActivity"
             android:exported="false"
+            android:taskAffinity=""
             android:excludeFromRecents="true"
             android:showWhenLocked="true"
             android:turnScreenOn="true" />

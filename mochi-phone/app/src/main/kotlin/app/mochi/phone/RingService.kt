@@ -89,7 +89,8 @@ class RingService : Service() {
                             line.startsWith("data: ") && event == "phone" -> {
                                 val job = runCatching { JSONObject(line.removePrefix("data: ")) }.getOrNull()
                                 val id = job?.optString("id").orEmpty()
-                                if (job != null && id.isNotEmpty()) Thread {
+                                // once per request, even if a reconnect replays it
+                                if (job != null && id.isNotEmpty() && Mochi.firstSeen(this, "job:$id")) Thread {
                                     val result = PhoneActions.handle(this, job.optString("action"),
                                         job.optJSONObject("args") ?: JSONObject())
                                     runCatching { Mochi.phoneResult(this, id, result) }

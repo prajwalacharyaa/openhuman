@@ -75,6 +75,7 @@ object Call {
             main.post { listener?.onEnded() }
             return
         }
+        WakeService.pauseNow() // the wake word lets go of the microphone for the call
         active = true
         answered = false
         muted = false

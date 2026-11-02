@@ -2,6 +2,7 @@ package app.mochi.phone
 
 import android.Manifest
 import android.app.Activity
+import android.app.KeyguardManager
 import android.app.NotificationManager
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -22,7 +23,7 @@ class ConfirmActivity : Activity() {
         super.onCreate(savedInstanceState)
         setShowWhenLocked(true)
         setTurnScreenOn(true)
-        getSystemService(NotificationManager::class.java).cancel(Mochi.NOTIFY_CONFIRM)
+        getSystemService(NotificationManager::class.java).cancel(intent.getIntExtra(EXTRA_NOTIFICATION, 0))
         val kind = intent.getStringExtra(EXTRA_KIND) ?: "call"
         val name = intent.getStringExtra(EXTRA_NAME) ?: ""
         val number = intent.getStringExtra(EXTRA_NUMBER) ?: ""
@@ -36,10 +37,11 @@ class ConfirmActivity : Activity() {
             .apply { setPadding(0, Ui.dp(this@ConfirmActivity, 12), 0, 0) })
         screen.root.addView(card)
         val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        row.addView(Ui.button(this, "Cancel", Ui.GREY) { finishWith(PhoneActions.failed("December cancelled it")) },
+        row.addView(Ui.button(this, "Cancel", Ui.GREY) { act { PhoneActions.failed("December cancelled it") } },
             LinearLayout.LayoutParams(0, Ui.dp(this, 56), 1f).apply { marginEnd = Ui.dp(this@ConfirmActivity, 6) })
         row.addView(Ui.button(this, if (kind == "call") "Call" else "Send", Ui.GREEN) {
-            finishWith(if (kind == "call") call(number, name) else sms(number, name, text))
+            // on a locked phone, unlocking comes first: whoever holds it can't confirm
+            unlocked { act { if (kind == "call") call(number, name) else sms(number, name, text) } }
         }, LinearLayout.LayoutParams(0, Ui.dp(this, 56), 1f).apply { marginStart = Ui.dp(this@ConfirmActivity, 6) })
         screen.root.addView(row, Ui.matchWidth(this, 16))
     }
@@ -62,7 +64,7 @@ class ConfirmActivity : Activity() {
         if (checkSelfPermission(Manifest.permission.SEND_SMS) == PackageManager.PERMISSION_GRANTED) {
             val sms = getSystemService(SmsManager::class.java)
             sms.sendMultipartTextMessage(number, null, sms.divideMessage(text), null, null)
-            PhoneActions.answered("sent to $name")
+            PhoneActions.answered("handed to the phone to send to $name")
         } else {
             startActivity(Intent(Intent.ACTION_SENDTO, Uri.parse("smsto:$number")).putExtra("sms_body", text))
             PhoneActions.answered("opened Messages with the text for $name (tap send)")
@@ -71,10 +73,20 @@ class ConfirmActivity : Activity() {
         PhoneActions.failed("couldn't send it: ${e.message}")
     }
 
-    private fun finishWith(result: org.json.JSONObject) {
+    /** Once only (a double tap does nothing), and only while Mochi is still waiting: after a timeout, nothing. */
+    private fun act(block: () -> org.json.JSONObject) {
+        if (answered) return
         answered = true
-        PhoneActions.answer(id, result)
+        if (PhoneActions.isPending(id)) PhoneActions.answer(id, block())
         finish()
+    }
+
+    private fun unlocked(then: () -> Unit) {
+        val keyguard = getSystemService(KeyguardManager::class.java)
+        if (!keyguard.isKeyguardLocked) return then()
+        keyguard.requestDismissKeyguard(this, object : KeyguardManager.KeyguardDismissCallback() {
+            override fun onDismissSucceeded() = then()
+        })
     }
 
     override fun onDestroy() {
@@ -88,5 +100,6 @@ class ConfirmActivity : Activity() {
         const val EXTRA_NAME = "name"
         const val EXTRA_NUMBER = "number"
         const val EXTRA_TEXT = "text"
+        const val EXTRA_NOTIFICATION = "notification"
     }
 }
