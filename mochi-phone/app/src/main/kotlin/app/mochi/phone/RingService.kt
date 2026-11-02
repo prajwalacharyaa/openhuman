@@ -23,6 +23,7 @@ import org.json.JSONObject
 class RingService : Service() {
     @Volatile private var running = false
     private var worker: Thread? = null
+    @Volatile private var current: okhttp3.Call? = null // the open /events request, to cancel it
     private val main = Handler(Looper.getMainLooper())
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -35,11 +36,20 @@ class RingService : Service() {
             .setContentIntent(PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java),
                 PendingIntent.FLAG_IMMUTABLE))
             .build()
-        if (Build.VERSION.SDK_INT >= 34) {
-            startForeground(Mochi.NOTIFY_LISTENING, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_REMOTE_MESSAGING)
-        } else {
-            startForeground(Mochi.NOTIFY_LISTENING, n)
+        try {
+            if (Build.VERSION.SDK_INT >= 34) {
+                startForeground(Mochi.NOTIFY_LISTENING, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_REMOTE_MESSAGING)
+            } else {
+                startForeground(Mochi.NOTIFY_LISTENING, n)
+            }
+        } catch (e: Exception) {
+            // Android refused a background start (e.g. a restart while battery-restricted): try again when the
+            // app is next opened
+            Log.i("mochi-ring", "couldn't start in the background: ${e.message}")
+            stopSelf()
+            return START_NOT_STICKY
         }
+        if (intent?.action == ACTION_RECONNECT) current?.cancel() // new server or token: reconnect with them
         if (!running) {
             running = true
             worker = Thread(::listen, "mochi-ring").also { it.start() }
@@ -49,6 +59,7 @@ class RingService : Service() {
 
     override fun onDestroy() {
         running = false
+        current?.cancel()
         worker?.interrupt()
         connected = false
         super.onDestroy()
@@ -60,7 +71,8 @@ class RingService : Service() {
             try {
                 val req = Request.Builder().url("${Mochi.ringUrl(this)}/events")
                     .header("Authorization", "Bearer ${Mochi.token(this)}").build()
-                Mochi.http.newCall(req).execute().use { r ->
+                val call = Mochi.http.newCall(req).also { current = it }
+                call.execute().use { r ->
                     if (!r.isSuccessful) throw IllegalStateException("HTTP ${r.code}")
                     connected = true
                     backoff = 2_000L
@@ -71,12 +83,15 @@ class RingService : Service() {
                         when {
                             line.startsWith("event: ") -> event = line.removePrefix("event: ")
                             line.startsWith("data: ") && event == "call" -> {
-                                val call = JSONObject(line.removePrefix("data: "))
-                                main.post { ring(this, call) }
+                                val call = runCatching { JSONObject(line.removePrefix("data: ")) }.getOrNull()
+                                if (call != null && call.optString("id").isNotEmpty()) main.post { ring(this, call) }
                             }
                             line.startsWith("data: ") && event == "notice" -> {
-                                val notice = JSONObject(line.removePrefix("data: "))
-                                if (Mochi.firstSeen(this, notice.getString("id"))) main.post { showNotice(this, notice) }
+                                val notice = runCatching { JSONObject(line.removePrefix("data: ")) }.getOrNull()
+                                val id = notice?.optString("id").orEmpty()
+                                if (notice != null && id.isNotEmpty() && Mochi.firstSeen(this, id)) {
+                                    main.post { showNotice(this, notice) }
+                                }
                             }
                             line.isEmpty() -> event = ""
                         }
@@ -96,15 +111,27 @@ class RingService : Service() {
         @Volatile var connected = false
 
         private const val RING_FOR_MS = 45_000L
+        private const val ACTION_RECONNECT = "app.mochi.phone.RECONNECT"
         private var ringing: String? = null
+        /** The incoming-call screen, to close when the ring stops (missed, declined from the notification). */
+        var onRingStopped: (() -> Unit)? = null
 
         fun start(c: Context) {
-            if (Mochi.configured(c)) c.startForegroundService(Intent(c, RingService::class.java))
+            if (!Mochi.configured(c)) return
+            runCatching { c.startForegroundService(Intent(c, RingService::class.java)) }
+                .onFailure { Log.i("mochi-ring", "couldn't start: ${it.message}") }
+        }
+
+        /** After the server or token changed: drop the connection and reconnect with the new ones. */
+        fun reconnect(c: Context) {
+            if (!Mochi.configured(c)) return
+            runCatching { c.startForegroundService(Intent(c, RingService::class.java).setAction(ACTION_RECONNECT)) }
         }
 
         /** Show the incoming call: full screen on a locked phone, a heads-up call card otherwise. */
         fun ring(c: Context, call: JSONObject) {
-            val id = call.getString("id")
+            if (Call.active) return // already talking: it stays in Approvals if it's missed
+            val id = call.optString("id")
             ringing = id
             val mochi = Person.Builder().setName("Mochi").setImportant(true).build()
             val answer = Intent(c, CallActivity::class.java).putExtra(CallActivity.EXTRA_CALL, call.toString())
@@ -135,8 +162,7 @@ class RingService : Service() {
          */
         fun showNotice(c: Context, notice: JSONObject) {
             if (notice.has("url")) return approvalNotice(c, notice.optString("body"))
-            val open = PendingIntent.getActivity(c, 7 + notices % 50, Intent(c, ChatActivity::class.java),
-                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
+            val open = withHome(c, 7 + notices % 50, Intent(c, ChatActivity::class.java))
             val body = notice.optString("body")
             val n = Notification.Builder(c, Mochi.CHANNEL_NOTICES)
                 .setSmallIcon(R.drawable.ic_mochi)
@@ -151,14 +177,18 @@ class RingService : Service() {
 
         private var waiting = 0
 
+        /** Opens `target` with the home screen under it, so Back goes home instead of leaving the app. */
+        private fun withHome(c: Context, code: Int, target: Intent) = PendingIntent.getActivities(c, code,
+            arrayOf(Intent(c, MainActivity::class.java), target),
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
+
         /**
          * One notification for everything waiting on December (browser requests, missed calls): it counts them
          * and opens the Approvals screen, which clears it.
          */
         fun approvalNotice(c: Context, latest: String) {
             waiting++
-            val open = PendingIntent.getActivity(c, 6, Intent(c, ApprovalsActivity::class.java),
-                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
+            val open = withHome(c, 6, Intent(c, ApprovalsActivity::class.java))
             val n = Notification.Builder(c, Mochi.CHANNEL_NOTICES)
                 .setSmallIcon(R.drawable.ic_mochi)
                 .setContentTitle(if (waiting == 1) "Mochi needs you" else "Mochi needs you: $waiting things waiting")
@@ -179,6 +209,7 @@ class RingService : Service() {
         /** Stop ringing (answered or declined). */
         fun stopRinging(c: Context) {
             ringing = null
+            onRingStopped?.invoke()
             c.getSystemService(NotificationManager::class.java).cancel(Mochi.NOTIFY_RING)
         }
 

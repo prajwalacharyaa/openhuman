@@ -16,6 +16,7 @@ class CallService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == ACTION_HANG_UP) {
             Call.end()
+            stopSelf()
             return START_NOT_STICKY
         }
         Mochi.createChannels(this)

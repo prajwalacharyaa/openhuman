@@ -42,6 +42,10 @@ object Mochi {
         .pingInterval(20, TimeUnit.SECONDS) // keeps the voice WebSocket alive through Tailscale
         .build()
 
+    /** For quick requests (chat, approvals, RAM): give up after 20 s instead of piling up while offline. */
+    private val quick: OkHttpClient = http.newBuilder().readTimeout(20, TimeUnit.SECONDS)
+        .connectTimeout(10, TimeUnit.SECONDS).build()
+
     private fun prefs(c: Context) = c.getSharedPreferences("mochi", Context.MODE_PRIVATE)
     fun host(c: Context): String = prefs(c).getString("host", "") ?: ""
     fun token(c: Context): String = prefs(c).getString("token", "") ?: ""
@@ -62,7 +66,7 @@ object Mochi {
         val req = Request.Builder().url("https://${host(c)}:8446/rpc")
             .header("Authorization", "Bearer ${token(c)}")
             .post(body.toString().toRequestBody(JSON)).build()
-        http.newCall(req).execute().use { r ->
+        quick.newCall(req).execute().use { r ->
             val reply = JSONObject(r.body?.string() ?: "{}")
             reply.optJSONObject("error")?.let { throw IllegalStateException(it.optString("message")) }
             return reply.optJSONObject("result") ?: JSONObject()
@@ -72,7 +76,7 @@ object Mochi {
     /** "RAM 68%" for the screen headers; asked only while a screen is open. Blocking. */
     fun ramLabel(c: Context): String {
         val req = Request.Builder().url("${ringUrl(c)}/stats").header("Authorization", "Bearer ${token(c)}").build()
-        http.newCall(req).execute().use { r -> return "RAM ${JSONObject(r.body?.string() ?: "{}").getInt("ram")}%" }
+        quick.newCall(req).execute().use { r -> return "RAM ${JSONObject(r.body?.string() ?: "{}").getInt("ram")}%" }
     }
 
     /**
@@ -81,16 +85,20 @@ object Mochi {
      */
     fun ramWatcher(c: Context, label: android.widget.TextView): Pair<() -> Unit, () -> Unit> {
         val main = android.os.Handler(android.os.Looper.getMainLooper())
+        val busy = java.util.concurrent.atomic.AtomicBoolean(false)
         val tick = object : Runnable {
             override fun run() {
-                Thread {
-                    val text = runCatching { ramLabel(c) }.getOrDefault("")
-                    main.post { label.text = text }
-                }.start()
+                if (busy.compareAndSet(false, true)) {
+                    Thread {
+                        val text = runCatching { ramLabel(c) }.getOrDefault("")
+                        busy.set(false)
+                        main.post { label.text = text }
+                    }.start()
+                }
                 main.postDelayed(this, 10_000)
             }
         }
-        val start: () -> Unit = { main.post(tick) }
+        val start: () -> Unit = { main.removeCallbacks(tick); main.post(tick) }
         val stop: () -> Unit = { main.removeCallbacks(tick) }
         return Pair(start, stop)
     }
@@ -98,7 +106,7 @@ object Mochi {
     /** What waits for December (mochi-ring GET /approvals), newest first. Blocking. */
     fun approvals(c: Context): List<JSONObject> {
         val req = Request.Builder().url("${ringUrl(c)}/approvals").header("Authorization", "Bearer ${token(c)}").build()
-        http.newCall(req).execute().use { r ->
+        quick.newCall(req).execute().use { r ->
             val items = JSONObject(r.body?.string() ?: "{}").optJSONArray("items") ?: JSONArray()
             return (0 until items.length()).map { items.getJSONObject(it) }
         }
@@ -111,7 +119,7 @@ object Mochi {
     fun decideBrowse(c: Context, approveUrl: String, allow: Boolean) {
         val req = Request.Builder().url("$approveUrl/${if (allow) "allow" else "deny"}")
             .post(ByteArray(0).toRequestBody(null)).build()
-        http.newCall(req).execute().use { r -> if (!r.isSuccessful) throw IllegalStateException("HTTP ${r.code}") }
+        quick.newCall(req).execute().use { r -> if (!r.isSuccessful) throw IllegalStateException("HTTP ${r.code}") }
     }
 
     /** A missed or declined call was dealt with some other way: drop it from Approvals. */
@@ -119,7 +127,7 @@ object Mochi {
         val req = Request.Builder().url("${ringUrl(c)}/calls/$callId/dismiss")
             .header("Authorization", "Bearer ${token(c)}")
             .post(JSONObject().toString().toRequestBody(JSON)).build()
-        http.newCall(req).execute().close()
+        quick.newCall(req).execute().close()
     }
 
     /** Tell mochi-ring how a call ended (answered / declined / missed) so it stops ringing. */
@@ -127,7 +135,7 @@ object Mochi {
         val req = Request.Builder().url("${ringUrl(c)}/calls/$callId/done")
             .header("Authorization", "Bearer ${token(c)}")
             .post(JSONObject().put("result", result).toString().toRequestBody(JSON)).build()
-        http.newCall(req).execute().close()
+        quick.newCall(req).execute().close()
     }
 
     /** The `data` of a core RPC envelope (or the result itself). */

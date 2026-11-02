@@ -28,6 +28,9 @@ class ApprovalsActivity : Activity() {
     private lateinit var list: LinearLayout
     private lateinit var status: TextView
     private val main = Handler(Looper.getMainLooper())
+    private var shown = ""                // the items drawn, to redraw only when they change
+    @Volatile private var loading = false
+    private val replies = mutableListOf<EditText>()
     private val refresh = object : Runnable {
         override fun run() {
             load()
@@ -55,9 +58,18 @@ class ApprovalsActivity : Activity() {
         super.onPause()
     }
 
-    private fun load() {
-        background({ Mochi.approvals(this) }) { items ->
-            status.text = if (items.isEmpty()) "Nothing waiting for you." else ""
+    private fun load(force: Boolean = false) {
+        // don't wipe a reply December is typing; and don't stack requests while offline
+        if (loading || (!force && replies.any { it.hasFocus() || it.text.isNotEmpty() })) return
+        loading = true
+        background({ try { Mochi.approvals(this) } finally { loading = false } }) { items ->
+            if (status.text.startsWith("Can't reach")) status.text = ""
+            if (items.isEmpty()) status.text = "Nothing waiting for you."
+            else if (status.text == "Nothing waiting for you.") status.text = ""
+            val key = items.joinToString { it.optString("id") + it.optString("result") }
+            if (key == shown && !force) return@background
+            shown = key
+            replies.clear()
             list.removeAllViews()
             items.forEach { list.addView(if (it.optString("kind") == "browse") browseCard(it) else callCard(it)) }
         }
@@ -86,7 +98,7 @@ class ApprovalsActivity : Activity() {
                 startActivity(Intent(this, CallActivity::class.java)
                     .putExtra(CallActivity.EXTRA_CALL, item.toString()).putExtra(CallActivity.EXTRA_ANSWER, true))
             },
-            button("Dismiss", "#55555C") { background({ Mochi.dismissCall(this, item.optString("id")) }) { load() } }))
+            button("Dismiss", "#55555C") { background({ Mochi.dismissCall(this, item.optString("id")) }) { load(force = true) } }))
         card.addView(reply("Or answer by typing…") { text ->
             Mochi.send(this, item.optString("thread_id"), text)
             Mochi.dismissCall(this, item.optString("id"))
@@ -98,7 +110,7 @@ class ApprovalsActivity : Activity() {
         status.text = if (allow) "Allowing…" else "Denying…"
         background({ Mochi.decideBrowse(this, approveUrl, allow) }) {
             status.text = if (allow) "Allowed: Mochi carries on in the chat." else "Denied."
-            load()
+            load(force = true)
         }
     }
 
@@ -109,10 +121,10 @@ class ApprovalsActivity : Activity() {
         }.getOrDefault("")
         return LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(28, 22, 28, 22)
+            setPadding(Ui.dp(this@ApprovalsActivity, 16), Ui.dp(this@ApprovalsActivity, 12), Ui.dp(this@ApprovalsActivity, 16), Ui.dp(this@ApprovalsActivity, 12))
             background = GradientDrawable().apply { cornerRadius = 28f; setColor(Color.WHITE) }
             layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT).apply { topMargin = 18 }
+                LinearLayout.LayoutParams.WRAP_CONTENT).apply { topMargin = Ui.dp(this@ApprovalsActivity, 12) }
             addView(TextView(this@ApprovalsActivity).apply {
                 this.text = "$title · $at"; textSize = 13f; setTextColor(Color.parseColor("#6B6B70"))
             })
@@ -132,6 +144,7 @@ class ApprovalsActivity : Activity() {
         orientation = LinearLayout.HORIZONTAL
         gravity = Gravity.CENTER_VERTICAL
         val input = EditText(this@ApprovalsActivity).apply {
+            replies.add(this)
             this.hint = hint
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_CAP_SENTENCES
             setTextColor(Color.parseColor("#1D1D1F"))
@@ -143,7 +156,9 @@ class ApprovalsActivity : Activity() {
                 status.text = "Sending…"
                 background({ send(text) }) {
                     status.text = "Sent to Mochi: it answers in the chat."
-                    load()
+                    input.setText("")
+                    input.clearFocus()
+                    load(force = true)
                 }
             }
         })

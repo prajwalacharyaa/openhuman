@@ -61,9 +61,18 @@ object Call {
     private val playback = LinkedBlockingQueue<ByteArray>()
 
     /** Start a call. `mochiCall` is the ring event when answering Mochi; null when December calls. */
+    @Synchronized
     fun start(c: Context, mochiCall: JSONObject?) {
         if (active) return
         app = c.applicationContext
+        val request = runCatching {
+            Request.Builder().url(Mochi.voiceUrl(app) + "?token=" + URLEncoder.encode(Mochi.token(app), "UTF-8")).build()
+        }.getOrElse {
+            status("The server address isn't valid: change it on the home screen.")
+            app.stopService(Intent(app, CallService::class.java))
+            main.post { listener?.onEnded() }
+            return
+        }
         active = true
         answered = false
         muted = false
@@ -75,10 +84,10 @@ object Call {
         am.mode = AudioManager.MODE_IN_COMMUNICATION
         setSpeaker(true)
         status("Connecting…")
-        val url = Mochi.voiceUrl(app) + "?token=" + URLEncoder.encode(Mochi.token(app), "UTF-8")
-        ws = Mochi.http.newWebSocket(Request.Builder().url(url).build(), Socket())
+        ws = Mochi.http.newWebSocket(request, Socket())
     }
 
+    @Synchronized
     fun end() {
         if (!active) return
         active = false
@@ -125,7 +134,8 @@ object Call {
         }
 
         override fun onMessage(webSocket: WebSocket, text: String) {
-            val f = JSONObject(text)
+            if (webSocket !== ws) return // a hung-up call's late message
+            val f = runCatching { JSONObject(text) }.getOrNull() ?: return
             when (f.optString("type")) {
                 "ready" -> {
                     answered = true
@@ -133,7 +143,7 @@ object Call {
                         threadId = it
                         if (call == null) Mochi.setThread(app, it)
                     }
-                    startAudio(webSocket, f.optInt("output_sample_rate", 24_000))
+                    startAudio(webSocket, f.optInt("output_sample_rate", 24_000).takeIf { it in 8_000..48_000 } ?: 24_000)
                     status("Listening")
                     call?.let {
                         val hello = "(December picked up the phone call you made. Greet them in a few words, " +
@@ -156,16 +166,23 @@ object Call {
         }
 
         override fun onMessage(webSocket: WebSocket, bytes: ByteString) {
-            playback.offer(bytes.toByteArray())
+            if (webSocket === ws) playback.offer(bytes.toByteArray())
         }
 
         override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
+            if (webSocket !== ws) return
             status(if (response?.code == 401 || response?.code == 403) "The server refused the token."
                    else "Can't reach Mochi. Is Tailscale on?")
-            main.postDelayed({ end() }, 2_000)
+            main.postDelayed({ if (ws === webSocket) end() }, 2_000)
         }
 
-        override fun onClosed(webSocket: WebSocket, code: Int, reason: String) = end()
+        override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
+            if (webSocket === ws) end()
+        }
+
+        override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
+            if (webSocket === ws) end()
+        }
     }
 
     private fun startAudio(socket: WebSocket, outRate: Int) {
@@ -173,20 +190,37 @@ object Call {
         Thread({ play(socket, outRate) }, "mochi-speaker").start()
     }
 
-    private fun record(socket: WebSocket) {
+    /** Runs an audio thread's body; an audio failure ends the call instead of crashing the app. */
+    private fun audio(socket: WebSocket, body: () -> Unit) {
+        try {
+            body()
+        } catch (e: Exception) {
+            if (ws === socket) {
+                status("Audio problem: ${e.message ?: "the microphone or speaker is busy"}")
+                end()
+            }
+        }
+    }
+
+    private fun record(socket: WebSocket) = audio(socket) {
         if (app.checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
-            status("Microphone permission is off")
-            return
+            throw IllegalStateException("microphone permission is off")
         }
         val min = AudioRecord.getMinBufferSize(RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
         val rec = AudioRecord(MediaRecorder.AudioSource.VOICE_COMMUNICATION, RATE, AudioFormat.CHANNEL_IN_MONO,
             AudioFormat.ENCODING_PCM_16BIT, maxOf(min, FRAME_BYTES * 4))
-        if (AcousticEchoCanceler.isAvailable()) AcousticEchoCanceler.create(rec.audioSessionId)?.enabled = true
-        if (NoiseSuppressor.isAvailable()) NoiseSuppressor.create(rec.audioSessionId)?.enabled = true
+        if (rec.state != AudioRecord.STATE_INITIALIZED) {
+            rec.release()
+            throw IllegalStateException("the microphone is busy")
+        }
+        val echo = if (AcousticEchoCanceler.isAvailable()) AcousticEchoCanceler.create(rec.audioSessionId) else null
+        val noise = if (NoiseSuppressor.isAvailable()) NoiseSuppressor.create(rec.audioSessionId) else null
+        echo?.enabled = true
+        noise?.enabled = true
         val buf = ByteArray(FRAME_BYTES)
         val silence = ByteArray(FRAME_BYTES)
-        rec.startRecording()
         try {
+            rec.startRecording()
             while (active && ws === socket) {
                 var n = 0
                 while (n < FRAME_BYTES && active) {
@@ -197,12 +231,14 @@ object Call {
                 if (n == FRAME_BYTES) socket.send((if (muted) silence else buf).toByteString())
             }
         } finally {
-            rec.stop()
+            runCatching { rec.stop() }
             rec.release()
+            echo?.release()
+            noise?.release()
         }
     }
 
-    private fun play(socket: WebSocket, rate: Int) {
+    private fun play(socket: WebSocket, rate: Int) = audio(socket) {
         val min = AudioTrack.getMinBufferSize(rate, AudioFormat.CHANNEL_OUT_MONO, AudioFormat.ENCODING_PCM_16BIT)
         val track = AudioTrack.Builder()
             .setAudioAttributes(AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_VOICE_COMMUNICATION)
@@ -212,8 +248,8 @@ object Call {
             .setTransferMode(AudioTrack.MODE_STREAM)
             .setBufferSizeInBytes(maxOf(min, rate / 5 * 2)) // ~200 ms: small, so interrupting is quick
             .build()
-        track.play()
         try {
+            track.play()
             while (active && ws === socket) {
                 if (flushPlayback) {
                     flushPlayback = false
@@ -223,7 +259,7 @@ object Call {
                 if (!flushPlayback) track.write(chunk, 0, chunk.size)
             }
         } finally {
-            track.stop()
+            runCatching { track.stop() }
             track.release()
         }
     }

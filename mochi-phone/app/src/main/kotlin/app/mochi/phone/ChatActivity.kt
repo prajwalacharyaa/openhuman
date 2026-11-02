@@ -33,6 +33,7 @@ class ChatActivity : Activity() {
     private var thread: String? = null
     private var shown = ""          // what's drawn (last id + count + waiting), to redraw only on change
     private var waitingSince = 0L   // when we sent a message and haven't seen a reply yet
+    @Volatile private var loading = false // a refresh is in flight (offline, they'd pile up)
     private val refresh = object : Runnable {
         override fun run() {
             load()
@@ -44,7 +45,8 @@ class ChatActivity : Activity() {
         super.onCreate(savedInstanceState)
         buildUi()
         thread = Mochi.thread(this)
-        if (intent.getBooleanExtra(EXTRA_NEW, false) || thread == null) startNew()
+        // after a rotation the intent is the same one: don't start yet another conversation
+        if (savedInstanceState == null && intent.getBooleanExtra(EXTRA_NEW, false) || thread == null) startNew()
     }
 
     override fun onResume() {
@@ -72,8 +74,16 @@ class ChatActivity : Activity() {
 
     private fun load() {
         val id = thread ?: return
-        background({ Mochi.messages(this, id) }) { all ->
-            val messages = (0 until all.length()).map { all.getJSONObject(it) }.filter(::visible)
+        if (loading) return
+        loading = true
+        background({
+            try {
+                val all = Mochi.messages(this, id)
+                (0 until all.length()).mapNotNull { all.optJSONObject(it) }.filter(::visible)
+            } finally {
+                loading = false
+            }
+        }) { messages ->
             val last = messages.lastOrNull()
             if (waitingSince > 0 && last != null && last.optString("sender") != "user") waitingSince = 0
             if (status.text.startsWith("Can't reach")) status.text = ""
@@ -131,8 +141,8 @@ class ChatActivity : Activity() {
 
     private fun sendTyped() {
         val text = input.text.toString().trim()
-        val id = thread ?: return
         if (text.isEmpty()) return
+        val id = thread ?: return startNew() // the first try to start one failed (offline): try again
         input.setText("")
         send.isEnabled = false
         waitingSince = System.currentTimeMillis()

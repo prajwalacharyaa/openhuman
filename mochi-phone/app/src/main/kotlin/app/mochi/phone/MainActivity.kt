@@ -15,6 +15,7 @@ import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 
 /**
  * Home: Call / Chat with Mochi, Approvals, past conversations, setup (server address + Mochi's token) and the
@@ -98,7 +99,7 @@ class MainActivity : Activity() {
         val host = EditText(this).apply {
             hint = "Server, e.g. xarvis-core.tailnet.ts.net"
             setText(Mochi.host(this@MainActivity))
-            inputType = InputType.TYPE_TEXT_VARIATION_URI
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_URI
             setTextColor(Ui.TEXT)
         }
         val token = EditText(this).apply {
@@ -113,10 +114,15 @@ class MainActivity : Activity() {
                 val h = host.text.toString().trim().removePrefix("https://").substringBefore('/').substringBefore(':')
                 val t = token.text.toString().trim()
                 if (h.isNotEmpty() && t.isNotEmpty()) {
+                    if (h.contains(' ') || "https://$h/".toHttpUrlOrNull() == null) {
+                        state.text = "That server address isn't valid (e.g. xarvis-core.tailnet.ts.net)."
+                        return@button
+                    }
                     Mochi.save(this@MainActivity, h, t)
                     token.setText("")
-                    RingService.start(this@MainActivity)
+                    RingService.reconnect(this@MainActivity)
                     refresh()
+                    ramWatch.first()
                 }
             }, Ui.matchWidth(this@MainActivity, 8))
         }

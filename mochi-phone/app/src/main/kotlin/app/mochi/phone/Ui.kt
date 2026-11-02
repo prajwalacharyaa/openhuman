@@ -48,7 +48,7 @@ object Ui {
         @Suppress("DEPRECATION") run { window.statusBarColor = BG; window.navigationBarColor = BG } // Android 12-14
         root.setBackgroundColor(BG)
         root.setOnApplyWindowInsetsListener { v, insets ->
-            val bars = insets.getInsets(WindowInsets.Type.systemBars() or WindowInsets.Type.ime())
+            val bars = insets.getInsets(WindowInsets.Type.systemBars() or WindowInsets.Type.displayCutout() or WindowInsets.Type.ime())
             v.setPadding(pad + bars.left, dp(activity, 8) + bars.top, pad + bars.right, dp(activity, 8) + bars.bottom)
             insets
         }

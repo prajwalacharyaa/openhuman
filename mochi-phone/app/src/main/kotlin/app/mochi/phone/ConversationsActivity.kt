@@ -64,7 +64,7 @@ class ConversationsActivity : Activity() {
         }.getOrDefault("")
         val card = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(28, 22, 28, 22)
+            setPadding(Ui.dp(this@ConversationsActivity, 16), Ui.dp(this@ConversationsActivity, 12), Ui.dp(this@ConversationsActivity, 16), Ui.dp(this@ConversationsActivity, 12))
             background = GradientDrawable().apply {
                 cornerRadius = 28f
                 setColor(Color.WHITE)
@@ -90,7 +90,7 @@ class ConversationsActivity : Activity() {
         })
         card.addView(actions)
         val lp = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
-        lp.topMargin = 18
+        lp.topMargin = Ui.dp(this, 12)
         card.layoutParams = lp
         return card
     }

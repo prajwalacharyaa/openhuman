@@ -35,12 +35,13 @@ class CallActivity : Activity(), Call.Listener {
         super.onCreate(savedInstanceState)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         buildUi()
-        handle(intent)
+        // after a rotation the intent is the same one: don't answer or start a call again
+        handle(intent, fresh = savedInstanceState == null)
     }
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
-        handle(intent)
+        handle(intent, fresh = true)
     }
 
     override fun onResume() {
@@ -51,20 +52,23 @@ class CallActivity : Activity(), Call.Listener {
 
     override fun onDestroy() {
         if (Call.listener === this) Call.listener = null
+        RingService.onRingStopped = null
         super.onDestroy()
     }
 
-    private fun handle(intent: Intent) {
-        call = intent.getStringExtra(EXTRA_CALL)?.let(::JSONObject) ?: call
+    private fun handle(intent: Intent, fresh: Boolean) {
+        call = intent.getStringExtra(EXTRA_CALL)?.let { runCatching { JSONObject(it) }.getOrNull() } ?: call
         when {
             Call.active -> showControls()
-            intent.getBooleanExtra(EXTRA_ANSWER, false) -> answer()
+            fresh && intent.getBooleanExtra(EXTRA_ANSWER, false) -> answer()
             call != null -> showIncoming()
             else -> finish()
         }
     }
 
     private fun showIncoming() {
+        // missed (45 s) or declined from the notification: this screen goes too
+        RingService.onRingStopped = { if (!Call.active) finish() }
         status.text = "Mochi is calling"
         line("agent", call?.optString("question") ?: "", true)
         incoming.visibility = View.VISIBLE
@@ -72,18 +76,23 @@ class CallActivity : Activity(), Call.Listener {
     }
 
     private fun answer() {
-        RingService.stopRinging(this)
         if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
             requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), 1)
             return
         }
+        RingService.onRingStopped = null
+        RingService.stopRinging(this)
         startForegroundService(Intent(this, CallService::class.java).putExtra(EXTRA_CALL, call?.toString()))
         showControls()
     }
 
     override fun onRequestPermissionsResult(code: Int, permissions: Array<out String>, results: IntArray) {
-        if (results.firstOrNull() == PackageManager.PERMISSION_GRANTED) answer()
-        else status.text = "Mochi needs the microphone for calls"
+        if (results.firstOrNull() == PackageManager.PERMISSION_GRANTED) {
+            answer()
+        } else {
+            status.text = "Mochi needs the microphone for calls"
+            if (call != null) decline() // it stays in Approvals: call back or answer by typing there
+        }
     }
 
     private fun showControls() {
