@@ -19,7 +19,7 @@ use tinyagents_live::tinyliveagents::{CloseReason, LiveEvent};
 use tinyagents_live::LiveAgentEvent;
 
 use super::error::LiveVoiceError;
-use super::handoff::{claude_reply_note, HandoffCheck, HandoffEvent};
+use super::handoff::{claude_reply_note, HandoffCheck, HandoffEvent, NoteGate};
 use super::persist::{reads_phone, TranscriptPersister};
 use super::timing::{self, TimingEvent, VoiceTiming};
 use super::session::{self, LiveStartRequest};
@@ -222,6 +222,7 @@ pub async fn handle_live_voice_ws(socket: WebSocket, config: Arc<Config>) {
     let timing_on = timing::enabled_from(std::env::var(timing::TIMING_ENV).ok().as_deref());
     let mut timing = VoiceTiming::default();
     let mut handoff = HandoffCheck::default();
+    let mut notes = NoteGate::default();
     // Claude's answers to `mochi-ask` requests arrive as web-chat events.
     let mut chat_events = crate::web_chat::subscribe_web_channel_events();
 
@@ -268,7 +269,9 @@ pub async fn handle_live_voice_ws(socket: WebSocket, config: Arc<Config>) {
                     Ok(chat) => {
                         if let Some(note) = claude_reply_note(&chat, &thread_id) {
                             tracing::info!(session_id, "{LOG_PREFIX} Claude's answer arrived: passing it to the call");
-                            let _ = sender.send_text(note).await;
+                            if let Some(now) = notes.offer(note) {
+                                let _ = sender.send_text(now).await;
+                            }
                         }
                     }
                     // Lagged: a burst of other chats' events went past. The bus is a
@@ -297,6 +300,16 @@ pub async fn handle_live_voice_ws(socket: WebSocket, config: Arc<Config>) {
                     if let Some(record) = step.and_then(|s| timing.on_event(s, std::time::Instant::now())) {
                         tracing::info!(session_id, ?record, "{LOG_PREFIX} timing");
                     }
+                }
+                match &event {
+                    LiveAgentEvent::Live(LiveEvent::Audio(_)) => notes.agent_audio(),
+                    // after the model's turn, not when December interrupts (December is talking then)
+                    LiveAgentEvent::Live(LiveEvent::TurnComplete { .. }) => {
+                        if let Some(waited) = notes.turn_over() {
+                            let _ = sender.send_text(waited).await;
+                        }
+                    }
+                    _ => {}
                 }
                 if let LiveAgentEvent::Live(LiveEvent::ToolCall(call)) = &event {
                     if reads_phone(&call.name, &call.args) {

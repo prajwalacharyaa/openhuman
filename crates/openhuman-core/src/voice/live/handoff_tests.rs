@@ -74,3 +74,14 @@ fn passes_back_only_this_calls_claude_answers() {
     };
     assert!(claude_reply_note(&failed, "t1").unwrap().contains("couldn't finish the request you handed it: rate limited"));
 }
+
+#[test]
+fn notes_wait_until_the_model_stops_speaking() {
+    let mut gate = NoteGate::default();
+    assert_eq!(gate.offer("first".into()), Some("first".into()), "quiet: straight through");
+    gate.agent_audio();
+    assert_eq!(gate.offer("second".into()), None, "mid-sentence: held");
+    assert_eq!(gate.offer("third".into()), None);
+    assert_eq!(gate.turn_over(), Some("second\n\nthird".into()));
+    assert_eq!(gate.turn_over(), None);
+}

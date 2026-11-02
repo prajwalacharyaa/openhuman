@@ -60,6 +60,37 @@ pub(crate) fn claude_reply_note(event: &WebChannelEvent, thread_id: &str) -> Opt
     }
 }
 
+/// Holds server notes (Claude's answers) while the model is speaking: a note sent mid-sentence is taken as new
+/// input, so the model cuts itself off and starts its answer again. Notes go out when its turn is over.
+#[derive(Debug, Default)]
+pub(crate) struct NoteGate {
+    speaking: bool,
+    waiting: Vec<String>,
+}
+
+impl NoteGate {
+    /// The model's audio is playing.
+    pub(crate) fn agent_audio(&mut self) {
+        self.speaking = true;
+    }
+
+    /// A note to pass to the model: now, or `None` while it's speaking (then on [`Self::turn_over`]).
+    pub(crate) fn offer(&mut self, note: String) -> Option<String> {
+        if self.speaking {
+            self.waiting.push(note);
+            None
+        } else {
+            Some(note)
+        }
+    }
+
+    /// The model finished (or was interrupted): the notes that waited, as one.
+    pub(crate) fn turn_over(&mut self) -> Option<String> {
+        self.speaking = false;
+        (!self.waiting.is_empty()).then(|| std::mem::take(&mut self.waiting).join("\n\n"))
+    }
+}
+
 /// What the handoff check needs to know about a session event.
 pub(crate) enum HandoffEvent<'a> {
     /// A final transcript of the user's speech: a new turn starts.
