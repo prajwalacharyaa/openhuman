@@ -195,8 +195,16 @@ object PhoneActions {
             val telecom = c.getSystemService(android.telecom.TelecomManager::class.java)
             val tm = c.getSystemService(android.telephony.TelephonyManager::class.java)
             val handles = telecom.callCapablePhoneAccounts
-            subs.sortedBy { it.simSlotIndex }.map { sub ->
+            val sorted = subs.sortedBy { it.simSlotIndex }
+            // phone makers map a SIM to its call account differently: Android's own lookup first, then the account id
+            // (often the subscription id), then, when there's one account per SIM, the same order
+            val simAccounts = handles.filter { h ->
+                telecom.getPhoneAccount(h)?.hasCapabilities(android.telecom.PhoneAccount.CAPABILITY_SIM_SUBSCRIPTION) == true
+            }
+            sorted.mapIndexed { i, sub ->
                 val handle = handles.firstOrNull { h -> runCatching { tm.getSubscriptionId(h) == sub.subscriptionId }.getOrDefault(false) }
+                    ?: handles.firstOrNull { it.id == sub.subscriptionId.toString() }
+                    ?: simAccounts.takeIf { it.size == sorted.size }?.get(i)
                 Sim(sub.simSlotIndex + 1, (sub.carrierName ?: sub.displayName ?: "SIM").toString(), handle)
             }
         }.getOrDefault(emptyList())
@@ -282,7 +290,8 @@ object PhoneActions {
         c.getSystemService(android.telecom.TelecomManager::class.java)
             .placeCall(android.net.Uri.fromParts("tel", number.getString("number"), null), extras)
         remember()
-        return ok("calling $how")
+        // without the SIM's call account Android shows its own SIM picker: say so, so it can be fixed
+        return ok("calling $how" + if (sim != null && sim.handle == null) " (the phone couldn't match SIM ${sim.slot}, so Android asks which SIM)" else "")
     }
 
     private fun choose(ask: String, contacts: List<String> = emptyList(), numbers: List<String> = emptyList(),
