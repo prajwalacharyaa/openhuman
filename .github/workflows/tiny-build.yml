@@ -66,9 +66,19 @@ jobs:
           key: tiny-test-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
           restore-keys: tiny-test-${{ runner.os }}-
       - name: cargo test (voice, voice tool harness and shell gate, voice recap, memory hooks, Claude session cap)
-        run: >
-          cargo test --manifest-path Cargo.toml -p openhuman --lib --
-          voice::live live_harness voice_shell voice_recap memory::lifecycle claude_session_cap layout_migration::service
+        shell: bash
+        run: |
+          set -o pipefail
+          cargo test --manifest-path Cargo.toml -p openhuman --lib -- \
+            voice::live live_harness voice_shell voice_recap memory::lifecycle claude_session_cap layout_migration::service \
+            2>&1 | tee test.log
+      # job logs need admin rights to download; annotations are public, so a failure can be read from the API
+      - name: Report test failures as annotations
+        if: failure()
+        shell: bash
+        run: |
+          grep -E -A6 '^error(\[E[0-9]+\])?:|panicked at|^test .* FAILED' test.log | head -60 \
+            | sed 's/%/%25/g' | awk 'BEGIN{ORS="%0A"} {print}' | sed 's/^/::error title=cargo test::/'; echo
 
   build:
     name: Build ${{ matrix.settings.name }}

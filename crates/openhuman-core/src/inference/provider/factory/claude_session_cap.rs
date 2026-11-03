@@ -70,7 +70,7 @@ impl SessionCap {
             .map(str::to_string);
         // no transcripts folder at all (another HOME): leave sessions as they are
         let stale = self.transcripts.is_dir()
-            && session.is_some_and(|id| self.transcript(&id).is_none_or(|transcript| needs_fresh(&transcript)));
+            && session.as_deref().is_some_and(|id| self.transcript(id).is_none_or(|transcript| needs_fresh(&transcript)));
         // too big, idle, or its transcript was cleaned up (resuming it would fail)
         if session.is_none() || stale {
             keep_recent(&mut request.messages, FRESH_HISTORY);
