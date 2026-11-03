@@ -82,7 +82,7 @@ object Call {
         quiet = false
         call = mochiCall
         startedAt = java.time.Instant.now()
-        threadId = mochiCall?.optString("thread_id")?.takeIf { it.isNotEmpty() } ?: Mochi.thread(app)
+        threadId = mochiCall?.optString("thread_id")?.takeIf { it.isNotEmpty() } ?: Mochi.callThread(app)
         playback.clear()
         val am = app.getSystemService(AudioManager::class.java)
         am.mode = AudioManager.MODE_IN_COMMUNICATION
@@ -103,6 +103,7 @@ object Call {
         val ended = call
         val thread = threadId
         val since = startedAt
+        if (ended == null && answered && thread == Mochi.thread(app)) Mochi.touchThread(app)
         if (ended != null) {
             Thread {
                 runCatching { Mochi.callDone(app, ended.getString("id"), if (answered) "answered" else "missed") }

@@ -10,7 +10,8 @@
 //! 1. the SDK tool-policy projection (`require_sandbox`),
 //! 2. human-in-the-loop approval (`ApprovalSecurityMiddleware` through the
 //!    global `ApprovalGate`),
-//! 3. the CLI/RPC-only scope gate,
+//! 3. the CLI/RPC-only scope gate, then the voice shell gate (only Mochi's
+//!    helper commands: project and install work goes to Claude),
 //! 4. the session's `ToolPolicyMiddleware` (deny / require-approval rules),
 //! 5. credential scrubbing of every tool result, then the per-result byte cap,
 //! 6. malformed-argument recovery,
@@ -100,6 +101,7 @@ pub(crate) fn assemble_live_tool_harness(
     harness.push_tool_middleware(Arc::new(middleware::CliRpcOnlyMiddleware::new(
         tool_sets.clone(),
     )));
+    harness.push_tool_middleware(Arc::new(middleware::VoiceShellMiddleware));
     let route_session = tool_policy
         .as_ref()
         .map(|enforcement| enforcement.session.clone());

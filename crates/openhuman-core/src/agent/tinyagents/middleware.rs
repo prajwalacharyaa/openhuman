@@ -44,6 +44,7 @@ mod tool_output;
 mod tool_output_file_read;
 mod tool_policy;
 mod turn_context;
+mod voice_shell;
 
 pub(crate) use approval::ApprovalSecurityMiddleware;
 pub(crate) use cli_rpc_only::CliRpcOnlyMiddleware;
@@ -53,6 +54,7 @@ pub(crate) use embedder_hooks::EmbedderToolHooksMiddleware;
 pub(crate) use loop_guards::is_repeat_call_exempt;
 pub(crate) use memory_pack::MemoryPackMiddleware;
 pub(crate) use packed_tool_route::PackedToolRouteMiddleware;
+pub(crate) use voice_shell::VoiceShellMiddleware;
 pub(crate) use repeated_failure::RepeatedToolFailureMiddleware;
 pub(crate) use research_budget::ResearchBudgetMiddleware;
 pub(crate) use shell_turn_budget::install_time_notes;

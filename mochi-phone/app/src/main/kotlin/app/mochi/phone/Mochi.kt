@@ -33,6 +33,7 @@ object Mochi {
     const val NOTIFY_ONGOING = 3
     const val NOTIFY_APPROVALS = 5
     const val NOTIFY_WAKE = 7
+    private const val FRESH_AFTER_MS = 30 * 60_000L
     const val NOTIFY_WAKE_PROMPT = 8
     const val NOTIFY_NOTICE_BASE = 100
     private const val CLIENT_ID = "mochi-phone"
@@ -55,15 +56,26 @@ object Mochi {
     fun save(c: Context, host: String, token: String) =
         prefs(c).edit().putString("host", host).putString("token", token).apply()
 
-    /** The conversation "Call Mochi" continues; null starts a new one. */
+    /** The conversation the chat screen shows; null starts a new one. */
     fun thread(c: Context): String? = prefs(c).getString("thread", null)
+
+    /**
+     * The conversation "Call Mochi" continues: the current one while it's in use, a new one after a
+     * [FRESH_AFTER_MS] break. One all-day conversation makes every Claude answer re-read the whole day.
+     */
+    fun callThread(c: Context): String? =
+        thread(c)?.takeIf { System.currentTimeMillis() - prefs(c).getLong("thread_at", 0) < FRESH_AFTER_MS }
+
+    /** The current conversation was just used (a call or a typed message). */
+    fun touchThread(c: Context) = prefs(c).edit().putLong("thread_at", System.currentTimeMillis()).apply()
 
     /** "Mochi" wake word: on/off, and the Picovoice access key it needs (the keyword file is in filesDir). */
     fun wakeEnabled(c: Context) = prefs(c).getBoolean("wake", false)
     fun setWakeEnabled(c: Context, on: Boolean) = prefs(c).edit().putBoolean("wake", on).apply()
     fun wakeKey(c: Context): String = prefs(c).getString("wake_key", "") ?: ""
     fun setWakeKey(c: Context, key: String) = prefs(c).edit().putString("wake_key", key).apply()
-    fun setThread(c: Context, id: String?) = prefs(c).edit().putString("thread", id).apply()
+    fun setThread(c: Context, id: String?) =
+        prefs(c).edit().putString("thread", id).putLong("thread_at", System.currentTimeMillis()).apply()
 
     fun voiceUrl(c: Context) = "wss://${host(c)}:8446/ws/live-voice"
     fun ringUrl(c: Context) = "https://${host(c)}:8448"
@@ -171,6 +183,7 @@ object Mochi {
             .put("type", "text").put("extraMetadata", JSONObject()).put("sender", "user")
             .put("createdAt", Instant.now().toString())
         rpc(c, "openhuman.threads_message_append", JSONObject().put("thread_id", threadId).put("message", message))
+        if (threadId == thread(c)) touchThread(c)
         rpc(c, "openhuman.channel_web_chat",
             JSONObject().put("client_id", CLIENT_ID).put("thread_id", threadId).put("message", text))
     }

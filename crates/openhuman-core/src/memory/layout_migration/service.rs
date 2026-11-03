@@ -158,6 +158,11 @@ pub fn start(
             Ok(outcome) => {
                 tracing::info!(?outcome, "[memory:layout_migration] run ended");
             }
+            // Signed out (a self-hosted install): nothing to move. Not a failure: the job retries every
+            // few minutes, so a warning here floods the log.
+            Err(MemoryError::Off(reason)) => {
+                tracing::debug!(%reason, "[memory:layout_migration] nothing to move");
+            }
             Err(error) => {
                 tracing::warn!(code = error.code(), "[memory:layout_migration] run failed");
                 record_failure(&config, &error);

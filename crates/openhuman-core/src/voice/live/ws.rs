@@ -336,7 +336,7 @@ pub async fn handle_live_voice_ws(socket: WebSocket, config: Arc<Config>) {
                         tracing::info!(session_id, "{LOG_PREFIX} said Claude is on it without a handoff call: nudging");
                         let _ = sender.send_text(nudge.to_string()).await;
                     } else if let Some(nudge) = unchecked {
-                        tracing::info!(session_id, "{LOG_PREFIX} answered a current question without a lookup: nudging");
+                        tracing::info!(session_id, "{LOG_PREFIX} a turn that needed a search or command ran none: nudging");
                         let _ = sender.send_text(nudge.to_string()).await;
                     }
                 }

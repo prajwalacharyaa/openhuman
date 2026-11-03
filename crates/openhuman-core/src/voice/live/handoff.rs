@@ -8,10 +8,11 @@
 //! handoff and the turn completes with no handoff call, it returns a short
 //! correction for the caller to send to the model, once per turn.
 //!
-//! [`LookupCheck`] does the same for searches: a question about something
-//! current (news, prices, weather, "the latest") answered with no lookup came
-//! from the model's own knowledge, which is about a year old, so it is told to
-//! search and answer again.
+//! [`LookupCheck`] does the same for turns that needed a tool and ran none: a
+//! question about something current (news, prices, weather, "the latest")
+//! answered from the model's own knowledge, which is about a year old; "I've
+//! installed it" when nothing was run; and giving in to a pushback ("you're
+//! right, I stand corrected") without checking.
 //!
 //! It also brings Claude's answer back: when the typed-chat turn `mochi-ask`
 //! started for this call's thread finishes, [`claude_reply_note`] is the note
@@ -171,15 +172,36 @@ current, or you said you were checking, but you answered without searching. Your
 old, so that answer may be out of date. Search now with your web search tool and give December the up-to-date \
 answer briefly. If the search fails or this needs deeper research, hand it to Claude with mochi-ask instead.)";
 
+/// Sent to the live model when it said it did something (installed, added, pushed…) with no tool call.
+pub(crate) const DONE_NUDGE: &str = "(Server check, not December speaking: you said you did something, but you \
+ran no command in this turn, so nothing was done. If Claude did it earlier, say so (\"Claude did that earlier\"). \
+Otherwise tell December plainly it isn't done yet and hand it to Claude with mochi-ask; you can't install, \
+change or switch on anything yourself.)";
+
+/// Sent to the live model when it gave in to December's pushback without checking.
+pub(crate) const AGREE_NUDGE: &str = "(Server check, not December speaking: you changed your answer because \
+December pushed back, without checking anything. Check now: search with your web search tool, or hand it to \
+Claude with mochi-ask if it's about December's own server, projects or code. If your first answer stands, say \
+so politely; agree only with what the check shows.)";
+
 /// Words in December's request that only a fresh lookup can answer.
 const FRESH_WORDS: &[&str] = &[
     "news", "headline", "latest", "price", "score", "weather", "nepse", "share market", "stock market",
+    "check if", "verify", "is it true", "is that true", "are you sure", "genuine",
     "समाचार", "न्युज", "खबर", "ताजा", "मौसम", "सेयर",
 ];
 /// ...unless December asks about something already said ("yesterday's news from our last chat").
 const PAST_WORDS: &[&str] = &["yesterday", "previous", "earlier", "last time", "हिजो", "अघिल्लो", "पहिले"];
 /// How the model announces a lookup it then has to make.
 const LOOKUP_SAID: &[&str] = &["checking", "let me check", "searching", "looking it up", "let me look", "हेर्दै", "खोज्दै"];
+/// Things only a command can do; "I've installed…" with no tool call is made up.
+const DONE_VERBS: &[&str] = &[
+    "installed", "added", "cloned", "activated", "enabled", "pushed", "set up", "created", "updated", "saved",
+    "deleted", "removed", "opened a pull request", "opened a pr", "merged", "configured",
+];
+/// How the model gives in to a pushback.
+const AGREE_SAID: &[&str] =
+    &["you're absolutely right", "you are absolutely right", "i stand corrected", "my mistake", "i was wrong"];
 
 /// Whether December's words ask for something current.
 pub(crate) fn asks_fresh(text: &str) -> bool {
@@ -193,15 +215,35 @@ pub(crate) fn announces_lookup(text: &str) -> bool {
     LOOKUP_SAID.iter().any(|w| text.contains(w))
 }
 
+/// Whether the model's words say it did something itself ("I've installed it"). Reporting Claude's work
+/// ("Claude has installed…") and questions are not claims.
+pub(crate) fn claims_done(text: &str) -> bool {
+    let text = text.trim().to_lowercase().replace('\u{2019}', "'");
+    if text.ends_with('?') || text.contains("claude") {
+        return false;
+    }
+    DONE_VERBS.iter().any(|verb| {
+        ["i've ", "i have ", "i've successfully ", "i have successfully ", "i've now ", "i have now "]
+            .iter()
+            .any(|me| text.contains(&format!("{me}{verb}")))
+    })
+}
+
+/// Whether the model's words give in to a pushback.
+pub(crate) fn concedes(text: &str) -> bool {
+    let text = text.to_lowercase().replace('\u{2019}', "'");
+    AGREE_SAID.iter().any(|w| text.contains(w))
+}
+
 /// A tool started this soon before December's words were finalised was for them (Gemini often finalises the
 /// transcript only after it has started the tool).
 const LOOKUP_GRACE: Duration = Duration::from_secs(15);
 
-/// Per-session lookup state: catches answers about current things given without any tool call.
+/// Per-session state: catches turns that needed a tool call and made none.
 #[derive(Debug, Default)]
 pub(crate) struct LookupCheck {
-    /// This turn needs a lookup: December asked for something current, or the model said it was checking.
-    needed: bool,
+    /// The nudge this turn needs if it ends without a tool call (the most serious reason wins).
+    needed: Option<&'static str>,
     /// December is speaking (the next final transcripts belong to the same request).
     user_turn: bool,
     asked_at: Option<Instant>,
@@ -211,21 +253,38 @@ pub(crate) struct LookupCheck {
 }
 
 impl LookupCheck {
-    /// Returns [`LOOKUP_NUDGE`] when a turn that needed a lookup ends without any tool call.
+    fn need(&mut self, nudge: &'static str) {
+        let rank = |n: &str| [DONE_NUDGE, AGREE_NUDGE, LOOKUP_NUDGE].iter().position(|x| *x == n);
+        if self.needed.is_none_or(|current| rank(nudge) < rank(current)) {
+            self.needed = Some(nudge);
+        }
+    }
+
+    /// Returns the nudge when a turn that needed a tool call ends without any.
     pub(crate) fn on_event(&mut self, event: HandoffEvent<'_>, now: Instant) -> Option<&'static str> {
         match event {
             HandoffEvent::UserSaid(text) => {
                 if !self.user_turn {
                     self.user_turn = true;
-                    self.needed = false;
+                    self.needed = None;
                     self.nudged = false;
                     self.asked_at = Some(now);
                 }
-                self.needed |= asks_fresh(text);
+                if asks_fresh(text) {
+                    self.need(LOOKUP_NUDGE);
+                }
             }
             HandoffEvent::AgentSaid(text) => {
                 self.user_turn = false;
-                self.needed |= announces_lookup(text);
+                if claims_done(text) {
+                    self.need(DONE_NUDGE);
+                }
+                if concedes(text) {
+                    self.need(AGREE_NUDGE);
+                }
+                if announces_lookup(text) {
+                    self.need(LOOKUP_NUDGE);
+                }
             }
             HandoffEvent::ToolStarted(_) => self.last_tool = Some(now),
             HandoffEvent::TurnComplete => {
@@ -235,11 +294,12 @@ impl LookupCheck {
                     (tool, None) => tool.is_some(),
                     (None, _) => false,
                 };
-                let nudge = self.needed && !looked && !self.nudged;
-                self.needed = false;
-                if nudge {
-                    self.nudged = true;
-                    return Some(LOOKUP_NUDGE);
+                let needed = self.needed.take();
+                if !looked && !self.nudged {
+                    if let Some(nudge) = needed {
+                        self.nudged = true;
+                        return Some(nudge);
+                    }
                 }
             }
         }

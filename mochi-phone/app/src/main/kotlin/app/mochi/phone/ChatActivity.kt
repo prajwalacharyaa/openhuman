@@ -68,7 +68,7 @@ class ChatActivity : Activity() {
             Mochi.setThread(this, id)
             lines.removeAllViews()
             shown = ""
-            status.text = "New conversation. Calls continue this one too."
+            status.text = "New conversation. A call within half an hour continues it."
         }
     }
 

@@ -143,3 +143,35 @@ fn stays_quiet_when_it_looked_or_nothing_current_was_asked() {
     check.on_event(HandoffEvent::AgentSaid("I'm well, thanks!"), later(301));
     assert_eq!(check.on_event(HandoffEvent::TurnComplete, later(302)), None);
 }
+
+#[test]
+fn knows_made_up_actions_and_giving_in() {
+    assert!(claims_done("I have successfully installed Graphify on your server."));
+    assert!(claims_done("Understood, I’ve activated Ponytail mode."));
+    assert!(!claims_done("Claude has installed Graphify and updated the rules."));
+    assert!(!claims_done("Shall I have it installed?"));
+    assert!(!claims_done("The plugin installs globally."));
+    assert!(concedes("You're absolutely right, and I apologize. I stand corrected."));
+    assert!(!concedes("Right now it is sunny."));
+    assert!(asks_fresh("Also check if this project was actually awarded number one."));
+}
+
+#[test]
+fn nudges_a_made_up_action_first() {
+    let t0 = std::time::Instant::now();
+    let later = |s: u64| t0 + std::time::Duration::from_secs(s);
+    let mut check = LookupCheck::default();
+    check.on_event(HandoffEvent::UserSaid("Okay, let's add it to our portfolio site then."), t0);
+    check.on_event(HandoffEvent::AgentSaid("Checking… I have successfully installed Graphify."), later(1));
+    assert_eq!(check.on_event(HandoffEvent::TurnComplete, later(2)), Some(DONE_NUDGE));
+
+    check.on_event(HandoffEvent::UserSaid("No, I mean an Anthropic hackathon."), later(60));
+    check.on_event(HandoffEvent::AgentSaid("You're absolutely right, it won. I stand corrected."), later(61));
+    assert_eq!(check.on_event(HandoffEvent::TurnComplete, later(62)), Some(AGREE_NUDGE));
+
+    // it ran a command: the claim may be true
+    check.on_event(HandoffEvent::UserSaid("Open it in my map."), later(120));
+    check.on_event(HandoffEvent::ToolStarted("shell"), later(121));
+    check.on_event(HandoffEvent::AgentSaid("I've opened the location in your maps app."), later(123));
+    assert_eq!(check.on_event(HandoffEvent::TurnComplete, later(124)), None);
+}
