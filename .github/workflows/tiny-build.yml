@@ -65,10 +65,10 @@ jobs:
             ~/.cargo/git
           key: tiny-test-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
           restore-keys: tiny-test-${{ runner.os }}-
-      - name: cargo test (voice, voice tool harness, voice recap, memory hooks)
+      - name: cargo test (voice, voice tool harness and shell gate, voice recap, memory hooks, Claude session cap)
         run: >
           cargo test --manifest-path Cargo.toml -p openhuman --lib --
-          voice::live live_harness voice_recap memory::lifecycle
+          voice::live live_harness voice_shell voice_recap memory::lifecycle claude_session_cap layout_migration::service
 
   build:
     name: Build ${{ matrix.settings.name }}

@@ -39,6 +39,7 @@
 
 pub(crate) mod access_gates;
 mod chat_model;
+mod claude_session_cap;
 mod cloud_slug;
 mod credentials;
 mod discovery;

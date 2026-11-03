@@ -115,11 +115,14 @@ pub(super) fn try_create_claude_code_chat_model_from_string(
     );
     let chat = match tinyagents_harness::providers::claude_code::ClaudeCodeProvider::from_env(
         effective_model,
-        workspace,
+        workspace.clone(),
         config.action_dir.clone(),
     ) {
-        Ok(model) => Arc::new(model.with_mcp_provider(Arc::new(OpenHumanMcpEndpoint)))
-            as Arc<dyn ChatModel<()>>,
+        // each chat's session is kept small: see `claude_session_cap`
+        Ok(model) => Arc::new(super::claude_session_cap::SessionCap::new(
+            Arc::new(model.with_mcp_provider(Arc::new(OpenHumanMcpEndpoint))),
+            &workspace,
+        )) as Arc<dyn ChatModel<()>>,
         Err(error) => return Some(Err(error)),
     };
     Some(Ok((chat, configured_model)))
