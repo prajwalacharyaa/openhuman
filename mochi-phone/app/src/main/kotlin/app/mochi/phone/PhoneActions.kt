@@ -258,6 +258,10 @@ object PhoneActions {
         }
 
         val sims = sims(c)
+        // without the phone-state permission no SIM is visible, and Android would show its own SIM picker
+        if (sims.isEmpty() && args.optInt("sim", 0) > 0) {
+            return fail("can't pick the SIM: turn on \"Choose the SIM\" in Phone abilities in the Mochi app")
+        }
         val askSim = { choose("Ask December which SIM to call $name from, then call again with --sim.",
             sims = sims.map { "SIM ${it.slot} (${it.name})" }, name = name) }
         val sim: Sim? = when {
@@ -295,7 +299,10 @@ object PhoneActions {
             .placeCall(android.net.Uri.fromParts("tel", number.getString("number"), null), extras)
         remember()
         // without the SIM's call account Android shows its own SIM picker: say so, so it can be fixed
+        val simState = when { sims.isEmpty() -> "no SIM visible"; sim == null -> "default SIM"
+            sim.handle == null -> "SIM ${sim.slot} not matched"; else -> "SIM ${sim.slot} matched" }
         return ok("calling $how" + if (sim != null && sim.handle == null) " (the phone couldn't match SIM ${sim.slot}, so Android asks which SIM)" else "")
+            .put("sim", simState)
     }
 
     private fun choose(ask: String, contacts: List<String> = emptyList(), numbers: List<String> = emptyList(),
