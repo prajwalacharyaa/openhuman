@@ -8,6 +8,11 @@
 //! handoff and the turn completes with no handoff call, it returns a short
 //! correction for the caller to send to the model, once per turn.
 //!
+//! [`LookupCheck`] does the same for searches: a question about something
+//! current (news, prices, weather, "the latest") answered with no lookup came
+//! from the model's own knowledge, which is about a year old, so it is told to
+//! search and answer again.
+//!
 //! It also brings Claude's answer back: when the typed-chat turn `mochi-ask`
 //! started for this call's thread finishes, [`claude_reply_note`] is the note
 //! that makes the live model say the answer without being asked.
@@ -91,10 +96,11 @@ impl NoteGate {
     }
 }
 
-/// What the handoff check needs to know about a session event.
+/// What the handoff and lookup checks need to know about a session event.
+#[derive(Clone, Copy)]
 pub(crate) enum HandoffEvent<'a> {
-    /// A final transcript of the user's speech: a new turn starts.
-    UserSaid,
+    /// A final transcript of (part of) the user's speech: a new turn starts.
+    UserSaid(&'a str),
     /// A final transcript of the model's speech.
     AgentSaid(&'a str),
     ToolStarted(&'a str),
@@ -135,7 +141,7 @@ impl HandoffCheck {
     /// Returns [`NUDGE`] when a turn ends with a claimed but missing handoff.
     pub(crate) fn on_event(&mut self, event: HandoffEvent<'_>, now: Instant) -> Option<&'static str> {
         match event {
-            HandoffEvent::UserSaid => {
+            HandoffEvent::UserSaid(_) => {
                 self.claimed = false;
                 self.nudged = false;
             }
@@ -152,6 +158,88 @@ impl HandoffCheck {
                 if nudge {
                     self.nudged = true;
                     return Some(NUDGE);
+                }
+            }
+        }
+        None
+    }
+}
+
+/// Sent to the live model when it answered a question about something current without looking it up.
+pub(crate) const LOOKUP_NUDGE: &str = "(Server check, not December speaking: December asked about something \
+current, or you said you were checking, but you answered without searching. Your own knowledge is about a year \
+old, so that answer may be out of date. Search now with your web search tool and give December the up-to-date \
+answer briefly. If the search fails or this needs deeper research, hand it to Claude with mochi-ask instead.)";
+
+/// Words in December's request that only a fresh lookup can answer.
+const FRESH_WORDS: &[&str] = &[
+    "news", "headline", "latest", "price", "score", "weather", "nepse", "share market", "stock market",
+    "समाचार", "न्युज", "खबर", "ताजा", "मौसम", "सेयर",
+];
+/// ...unless December asks about something already said ("yesterday's news from our last chat").
+const PAST_WORDS: &[&str] = &["yesterday", "previous", "earlier", "last time", "हिजो", "अघिल्लो", "पहिले"];
+/// How the model announces a lookup it then has to make.
+const LOOKUP_SAID: &[&str] = &["checking", "let me check", "searching", "looking it up", "let me look", "हेर्दै", "खोज्दै"];
+
+/// Whether December's words ask for something current.
+pub(crate) fn asks_fresh(text: &str) -> bool {
+    let text = text.to_lowercase();
+    FRESH_WORDS.iter().any(|w| text.contains(w)) && !PAST_WORDS.iter().any(|w| text.contains(w))
+}
+
+/// Whether the model's words say it is looking something up.
+pub(crate) fn announces_lookup(text: &str) -> bool {
+    let text = text.to_lowercase();
+    LOOKUP_SAID.iter().any(|w| text.contains(w))
+}
+
+/// A tool started this soon before December's words were finalised was for them (Gemini often finalises the
+/// transcript only after it has started the tool).
+const LOOKUP_GRACE: Duration = Duration::from_secs(15);
+
+/// Per-session lookup state: catches answers about current things given without any tool call.
+#[derive(Debug, Default)]
+pub(crate) struct LookupCheck {
+    /// This turn needs a lookup: December asked for something current, or the model said it was checking.
+    needed: bool,
+    /// December is speaking (the next final transcripts belong to the same request).
+    user_turn: bool,
+    asked_at: Option<Instant>,
+    last_tool: Option<Instant>,
+    /// Already nudged since December last spoke.
+    nudged: bool,
+}
+
+impl LookupCheck {
+    /// Returns [`LOOKUP_NUDGE`] when a turn that needed a lookup ends without any tool call.
+    pub(crate) fn on_event(&mut self, event: HandoffEvent<'_>, now: Instant) -> Option<&'static str> {
+        match event {
+            HandoffEvent::UserSaid(text) => {
+                if !self.user_turn {
+                    self.user_turn = true;
+                    self.needed = false;
+                    self.nudged = false;
+                    self.asked_at = Some(now);
+                }
+                self.needed |= asks_fresh(text);
+            }
+            HandoffEvent::AgentSaid(text) => {
+                self.user_turn = false;
+                self.needed |= announces_lookup(text);
+            }
+            HandoffEvent::ToolStarted(_) => self.last_tool = Some(now),
+            HandoffEvent::TurnComplete => {
+                self.user_turn = false;
+                let looked = match (self.last_tool, self.asked_at) {
+                    (Some(tool), Some(asked)) => tool + LOOKUP_GRACE >= asked,
+                    (tool, None) => tool.is_some(),
+                    (None, _) => false,
+                };
+                let nudge = self.needed && !looked && !self.nudged;
+                self.needed = false;
+                if nudge {
+                    self.nudged = true;
+                    return Some(LOOKUP_NUDGE);
                 }
             }
         }

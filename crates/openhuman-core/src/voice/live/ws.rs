@@ -19,7 +19,7 @@ use tinyagents_live::tinyliveagents::{CloseReason, LiveEvent};
 use tinyagents_live::LiveAgentEvent;
 
 use super::error::LiveVoiceError;
-use super::handoff::{claude_reply_note, HandoffCheck, HandoffEvent, NoteGate};
+use super::handoff::{claude_reply_note, HandoffCheck, HandoffEvent, LookupCheck, NoteGate};
 use super::persist::{reads_phone, TranscriptPersister};
 use super::timing::{self, TimingEvent, VoiceTiming};
 use super::session::{self, LiveStartRequest};
@@ -222,6 +222,7 @@ pub async fn handle_live_voice_ws(socket: WebSocket, config: Arc<Config>) {
     let timing_on = timing::enabled_from(std::env::var(timing::TIMING_ENV).ok().as_deref());
     let mut timing = VoiceTiming::default();
     let mut handoff = HandoffCheck::default();
+    let mut lookup = LookupCheck::default();
     let mut notes = NoteGate::default();
     // Claude's answers to `mochi-ask` requests arrive as web-chat events.
     let mut chat_events = crate::web_chat::subscribe_web_channel_events();
@@ -318,8 +319,8 @@ pub async fn handle_live_voice_ws(socket: WebSocket, config: Arc<Config>) {
                 }
                 let handoff_step = match &event {
                     LiveAgentEvent::ToolStarted { name, .. } => Some(HandoffEvent::ToolStarted(name.as_str())),
-                    LiveAgentEvent::Live(LiveEvent::InputTranscript { is_final: true, .. }) => {
-                        Some(HandoffEvent::UserSaid)
+                    LiveAgentEvent::Live(LiveEvent::InputTranscript { text, is_final: true }) => {
+                        Some(HandoffEvent::UserSaid(text.as_str()))
                     }
                     LiveAgentEvent::Live(LiveEvent::OutputTranscript { text, is_final: true }) => {
                         Some(HandoffEvent::AgentSaid(text.as_str()))
@@ -327,9 +328,17 @@ pub async fn handle_live_voice_ws(socket: WebSocket, config: Arc<Config>) {
                     LiveAgentEvent::Live(LiveEvent::TurnComplete { .. }) => Some(HandoffEvent::TurnComplete),
                     _ => None,
                 };
-                if let Some(nudge) = handoff_step.and_then(|step| handoff.on_event(step, std::time::Instant::now())) {
-                    tracing::info!(session_id, "{LOG_PREFIX} said Claude is on it without a handoff call: nudging");
-                    let _ = sender.send_text(nudge.to_string()).await;
+                if let Some(step) = handoff_step {
+                    let now = std::time::Instant::now();
+                    let claimed = handoff.on_event(step, now);
+                    let unchecked = lookup.on_event(step, now);
+                    if let Some(nudge) = claimed {
+                        tracing::info!(session_id, "{LOG_PREFIX} said Claude is on it without a handoff call: nudging");
+                        let _ = sender.send_text(nudge.to_string()).await;
+                    } else if let Some(nudge) = unchecked {
+                        tracing::info!(session_id, "{LOG_PREFIX} answered a current question without a lookup: nudging");
+                        let _ = sender.send_text(nudge.to_string()).await;
+                    }
                 }
                 for outbound in map_event(event, &session_id, &provider, &thread_id) {
                     let sent = match outbound {
