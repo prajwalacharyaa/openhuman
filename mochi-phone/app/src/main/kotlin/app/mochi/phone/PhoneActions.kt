@@ -197,13 +197,17 @@ object PhoneActions {
             val handles = telecom.callCapablePhoneAccounts
             val sorted = subs.sortedBy { it.simSlotIndex }
             // phone makers map a SIM to its call account differently: Android's own lookup first, then the account id
-            // (often the subscription id), then, when there's one account per SIM, the same order
+            // (often the subscription id), then its name (NTC, Ncell), then, when there's one account per SIM, the order
             val simAccounts = handles.filter { h ->
                 telecom.getPhoneAccount(h)?.hasCapabilities(android.telecom.PhoneAccount.CAPABILITY_SIM_SUBSCRIPTION) == true
             }
             sorted.mapIndexed { i, sub ->
                 val handle = handles.firstOrNull { h -> runCatching { tm.getSubscriptionId(h) == sub.subscriptionId }.getOrDefault(false) }
                     ?: handles.firstOrNull { it.id == sub.subscriptionId.toString() }
+                    ?: simAccounts.filter { h ->
+                        val label = telecom.getPhoneAccount(h)?.label?.toString().orEmpty()
+                        label.isNotEmpty() && (label == sub.displayName?.toString() || label == sub.carrierName?.toString())
+                    }.singleOrNull()
                     ?: simAccounts.takeIf { it.size == sorted.size }?.get(i)
                 Sim(sub.simSlotIndex + 1, (sub.carrierName ?: sub.displayName ?: "SIM").toString(), handle)
             }
