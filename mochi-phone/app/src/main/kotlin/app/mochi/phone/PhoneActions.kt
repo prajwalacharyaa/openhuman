@@ -261,7 +261,9 @@ object PhoneActions {
         val remember = { prefs(c).edit().putString(key, JSONObject().put("name", name)
             .put("label", number.getString("label")).put("sim", sim?.slot ?: 0).toString()).apply() }
         val how = "$name (${number.getString("label")})" + (sim?.let { " from SIM ${it.slot}, ${it.name}" } ?: "")
-        if (!Call.active) {
+        // December asked on a Mochi call on this phone, or said yes out loud on a voice call (the server checked a
+        // voice call is live): no tap. Otherwise the Confirm screen.
+        if (!Call.active && !args.optBoolean("voice_ok")) {
             val result = confirmAndDo(c, "call", name, "", number.getString("number"), sim?.slot ?: 0)
             if (result.optBoolean("ok")) remember() // only a call December confirmed is remembered
             return result
@@ -269,10 +271,12 @@ object PhoneActions {
         if (c.checkSelfPermission(Manifest.permission.CALL_PHONE) != PackageManager.PERMISSION_GRANTED) {
             return fail("the Place calls permission is off (Phone abilities in the Mochi app)")
         }
-        // December asked by voice on this phone: end the Mochi call first (it holds the audio), then let Telecom
-        // place the call; that isn't an activity launch, so Android can't silently block it from the background
-        android.os.Handler(android.os.Looper.getMainLooper()).post { if (Call.active) Call.end() }
-        Thread.sleep(400)
+        // end a Mochi call here first (it holds the audio), then let Telecom place the call; that isn't an activity
+        // launch, so Android can't silently block it from the background
+        if (Call.active) {
+            android.os.Handler(android.os.Looper.getMainLooper()).post { if (Call.active) Call.end() }
+            Thread.sleep(400)
+        }
         val extras = android.os.Bundle()
         sim?.handle?.let { extras.putParcelable(android.telecom.TelecomManager.EXTRA_PHONE_ACCOUNT_HANDLE, it) }
         c.getSystemService(android.telecom.TelecomManager::class.java)
