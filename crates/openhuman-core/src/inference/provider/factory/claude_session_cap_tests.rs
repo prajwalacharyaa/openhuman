@@ -79,3 +79,31 @@ fn moves_on_when_the_transcript_was_cleaned_up() {
     std::fs::remove_file(dir.path().join("projects/-home-x-projects/aaaa-session.jsonl")).unwrap();
     assert_eq!(key(&cap.rekey(request(Some("thread-1")))), Some("thread-1~1"));
 }
+
+#[test]
+fn a_fresh_session_opens_with_recent_messages_only() {
+    use tinyinference_llm::Message;
+    let mut messages = vec![Message::system("rules")];
+    for i in 0..30 {
+        messages.push(Message::user(format!("question {i}")));
+        messages.push(Message::assistant(format!("answer {i}")));
+    }
+    keep_recent(&mut messages, FRESH_HISTORY);
+    assert_eq!(messages.len(), 1 + FRESH_HISTORY);
+    assert!(matches!(messages[0], Message::System(_)));
+    assert_eq!(messages.last().unwrap().text(), "answer 29");
+
+    let (_dir, cap) = setup(&[call(260_000)]);
+    let mut big = request(Some("thread-1"));
+    big.messages = (0..50).map(|i| Message::user(format!("m{i}"))).collect();
+    assert_eq!(cap.rekey(big).messages.len(), FRESH_HISTORY);
+    // a chat with no session yet opens one the same way
+    let mut new_chat = request(Some("thread-new"));
+    new_chat.messages = (0..50).map(|i| Message::user(format!("m{i}"))).collect();
+    assert_eq!(cap.rekey(new_chat).messages.len(), FRESH_HISTORY);
+    // a chat whose session is resumed keeps what it was sent (the provider sends only the new turn)
+    let (_dir, cap) = setup(&[call(40_000)]);
+    let mut resumed = request(Some("thread-1"));
+    resumed.messages = (0..50).map(|i| Message::user(format!("m{i}"))).collect();
+    assert_eq!(cap.rekey(resumed).messages.len(), 50);
+}

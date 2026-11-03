@@ -7,8 +7,8 @@
 //! [`SessionCap`] wraps the provider and moves a chat to a fresh session once its last call read more than
 //! [`MAX_CONTEXT_TOKENS`], or after [`IDLE_FRESH`] without use. It only changes the thread key the provider
 //! sees (`<thread>~<n>`), also when the session's transcript was cleaned up: a new key is a new CLI session, and the provider seeds it with the chat's recent
-//! messages, so nothing said in the chat is lost; old tool output and file reads are. Memory recall and the
-//! chat history OpenHuman sends each turn carry the rest.
+//! messages ([`FRESH_HISTORY`] of them), so recent context carries over; old tool output and file reads don't.
+//! Memory recall covers older parts of the chat.
 
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
@@ -20,6 +20,9 @@ use tinyinference_llm::{ChatModel, InputModality, InputSource, ModelRequest, Mod
 pub(crate) const MAX_CONTEXT_TOKENS: u64 = 150_000;
 /// A session unused this long starts fresh (the old one's details are stale anyway).
 pub(crate) const IDLE_FRESH: Duration = Duration::from_secs(6 * 3600);
+/// Chat messages a fresh session is opened with (the provider folds them into its first message). OpenHuman
+/// sends the whole chat, which on a long day is itself tens of thousands of tokens; memory recall covers older.
+pub(crate) const FRESH_HISTORY: usize = 20;
 /// How much of a session transcript's end is read to find its last call's size.
 const TAIL_BYTES: u64 = 1 << 20;
 
@@ -69,6 +72,9 @@ impl SessionCap {
         let stale = self.transcripts.is_dir()
             && session.is_some_and(|id| self.transcript(&id).is_none_or(|transcript| needs_fresh(&transcript)));
         // too big, idle, or its transcript was cleaned up (resuming it would fail)
+        if session.is_none() || stale {
+            keep_recent(&mut request.messages, FRESH_HISTORY);
+        }
         let key = if stale {
             fresh[thread.as_str()] = serde_json::json!(generation + 1);
             if let Err(error) = write_json(&self.fresh_file, &fresh) {
@@ -95,6 +101,19 @@ impl SessionCap {
             .map(|dir| dir.path().join(&name))
             .find(|path| path.is_file())
     }
+}
+
+/// Keeps the system messages and the last `keep` others: what a new session is opened with.
+pub(crate) fn keep_recent(messages: &mut Vec<tinyinference_llm::Message>, keep: usize) {
+    let others = messages.iter().filter(|m| !matches!(m, tinyinference_llm::Message::System(_))).count();
+    let mut drop = others.saturating_sub(keep);
+    messages.retain(|m| {
+        if drop == 0 || matches!(m, tinyinference_llm::Message::System(_)) {
+            return true;
+        }
+        drop -= 1;
+        false
+    });
 }
 
 /// The provider's thread key for a chat's `generation`-th session.
