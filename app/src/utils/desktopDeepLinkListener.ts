@@ -15,6 +15,7 @@ import {
   completeDeepLinkAuthProcessing,
   failDeepLinkAuthProcessing,
 } from '../store/deepLinkAuthState';
+import { IS_DEV_LIKE } from './config';
 import { getStoredCoreMode } from './configPersistence';
 import {
   CORE_CONFIG_UNREADABLE_I18N_KEY,
@@ -700,7 +701,9 @@ export const setupDesktopDeepLinkListener = async () => {
       void handleDeepLinkUrls(urls);
     });
 
-    if (typeof window !== 'undefined') {
+    // Dev/E2E builds only: the helper mints a CSRF `state` nonce, so in a
+    // shipped binary any script in the WebView could inject a login token.
+    if (IS_DEV_LIKE && typeof window !== 'undefined') {
       // window.__simulateDeepLink('openhuman://auth?token=1234567890')
       // window.__simulateDeepLink('openhuman://oauth/success?integrationId=69cafd0b103bd070232d3223&provider=notion')
       // window.__simulateDeepLink('openhuman://oauth/success?integrationId=69cafd0b103bd070232d3223&skillId=discord')
