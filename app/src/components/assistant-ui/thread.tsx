@@ -16,6 +16,7 @@ import { StoppedRun } from '@/components/assistant-ui/elements/stopped-run';
 import { ToolFallback } from '@/components/assistant-ui/elements/tool-fallback';
 import { File } from '@/components/assistant-ui/file';
 import { ThreadFollowupSuggestions } from '@/components/assistant-ui/follow-up-suggestions';
+import { useComposerFocusOnThreadOpen } from '@/components/assistant-ui/lib/useComposerFocusOnThreadOpen';
 import { cn } from '@/components/assistant-ui/lib/utils';
 import { MarkdownText } from '@/components/assistant-ui/markdown-text';
 import { ComposerQuotePreview, SelectionToolbar } from '@/components/assistant-ui/quote';
@@ -1011,6 +1012,7 @@ const Composer: FC<{
       textbox?.removeAttribute('data-testid');
     };
   }, [messageInputLabel]);
+  useComposerFocusOnThreadOpen(inputWrapperRef);
 
   // Set for as long as an IME composition is open. The gate is a ref rather
   // than state because it is read from a microtask, not from a render.
