@@ -9,7 +9,8 @@ or todos; those are TinyAgents capabilities integrated under `agent/`.
 
 - List, create, update, delete, and purge conversation threads.
 - List, append, and metadata-patch messages.
-- Generate durable conversation titles with deterministic fallbacks.
+- Generate durable conversation titles with deterministic fallbacks; a rename
+  made while a title is being generated wins (`support::update_title_unless_renamed`).
 - Persist restart-survivable turn snapshots for transcript/process replay.
 - Project `session_raw/*.jsonl` into paginated chat display items.
 - Total persisted token and cost usage for a conversation.
