@@ -65,12 +65,14 @@ jobs:
             ~/.cargo/git
           key: tiny-test-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
           restore-keys: tiny-test-${{ runner.os }}-
-      - name: cargo test (voice, voice tool harness and shell gate, voice recap, memory hooks, Claude session cap)
+      - name: cargo test (voice, voice tool harness and shell gate, voice recap, memory hooks, Claude session cap, upstream picks)
         shell: bash
         run: |
           set -o pipefail
           cargo test --manifest-path Cargo.toml -p openhuman --lib -- \
             voice::live live_harness voice_shell voice_recap memory::lifecycle claude_session_cap layout_migration::service \
+            protected_literal literal_credential_paths the_bus_logger_names_events security::pairing \
+            memory::sources::sync memory::backfill harness_context_ladder title_and_cancellation_tests shell::tests::timeout_tests \
             2>&1 | tee test.log
       # job logs need admin rights to download; annotations are public, so a failure can be read from the API
       - name: Report test failures as annotations
