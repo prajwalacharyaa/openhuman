@@ -63,7 +63,8 @@ fn passes_back_only_this_calls_claude_answers() {
     let note = claude_reply_note(&done("mochi-ask", "t1"), "t1").expect("a note");
     assert!(note.ends_with("Yes, it's merged in pull request 28."));
     assert_eq!(claude_reply_note(&done("mochi-ask", "t2"), "t1"), None, "another chat");
-    assert_eq!(claude_reply_note(&done("desktop", "t1"), "t1"), None, "a typed chat");
+    assert!(claude_reply_note(&done("desktop", "t1"), "t1").unwrap().contains("Claude answered what December typed"));
+    assert_eq!(claude_reply_note(&done("desktop", "t2"), "t1"), None, "a typed turn in another chat");
 
     let failed = WebChannelEvent {
         event: "chat_error".into(),
@@ -174,4 +175,19 @@ fn nudges_a_made_up_action_first() {
     check.on_event(HandoffEvent::ToolStarted("shell"), later(121));
     check.on_event(HandoffEvent::AgentSaid("I've opened the location in your maps app."), later(123));
     assert_eq!(check.on_event(HandoffEvent::TurnComplete, later(124)), None);
+}
+
+#[test]
+fn tells_the_call_december_typed_without_the_text() {
+    let started = |client: &str| WebChannelEvent {
+        event: "inference_start".into(),
+        client_id: client.into(),
+        thread_id: "t1".into(),
+        ..Default::default()
+    };
+    assert_eq!(claude_reply_note(&started("mochi-phone"), "t1").as_deref(), Some(TYPED_NOTE));
+    // a mochi-ask turn is the call's own handoff: nothing to announce
+    assert_eq!(claude_reply_note(&started("mochi-ask"), "t1"), None);
+    let progress = WebChannelEvent { event: "tool_call".into(), ..started("desktop") };
+    assert_eq!(claude_reply_note(&progress, "t1"), None);
 }

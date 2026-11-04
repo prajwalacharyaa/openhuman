@@ -16,7 +16,10 @@
 //!
 //! It also brings Claude's answer back: when the typed-chat turn `mochi-ask`
 //! started for this call's thread finishes, [`claude_reply_note`] is the note
-//! that makes the live model say the answer without being asked.
+//! that makes the live model say the answer without being asked. The same goes
+//! for what December types into this chat during the call (a pasted CV, say):
+//! the live model never sees typed messages, so it's told one arrived (not its
+//! text, which may hold personal details) and then hears Claude's answer.
 
 use std::time::{Duration, Instant};
 
@@ -38,11 +41,21 @@ const ASK_CLIENT: &str = "mochi-ask";
 /// Most of Claude's answer passed into the call; the rest stays in the chat.
 const MAX_ANSWER_CHARS: usize = 3000;
 
+/// Sent when December starts a typed turn in this call's chat.
+pub(crate) const TYPED_NOTE: &str = "(Server note, not December speaking: December just typed or pasted a \
+message into this chat, and Claude is working on it. You can't see its text and don't need to. Say in a few \
+words that you got it and Claude is on it; never ask December to say or paste it again. Claude's answer will \
+come to you.)";
+
 /// The note that makes the live model tell December how a `mochi-ask`
-/// request for this thread ended; `None` for every other chat event.
+/// request for this thread ended, or that December typed into this chat (and
+/// what Claude answered); `None` for every other chat event.
 pub(crate) fn claude_reply_note(event: &WebChannelEvent, thread_id: &str) -> Option<String> {
-    if event.client_id != ASK_CLIENT || event.thread_id != thread_id {
+    if event.thread_id != thread_id {
         return None;
+    }
+    if event.client_id != ASK_CLIENT {
+        return typed_turn_note(event);
     }
     match event.event.as_str() {
         "chat_done" => {
@@ -62,6 +75,30 @@ pub(crate) fn claude_reply_note(event: &WebChannelEvent, thread_id: &str) -> Opt
              Tell December briefly.)",
             event.message.as_deref().map(|m| format!(": {m}")).unwrap_or_default()
         )),
+        _ => None,
+    }
+}
+
+/// A turn December typed into this call's chat (any client but `mochi-ask`).
+fn typed_turn_note(event: &WebChannelEvent) -> Option<String> {
+    match event.event.as_str() {
+        "inference_start" => Some(TYPED_NOTE.to_string()),
+        "chat_done" => {
+            let answer = event.full_response.as_deref().unwrap_or_default().trim();
+            if answer.is_empty() {
+                return None;
+            }
+            let answer: String = answer.chars().take(MAX_ANSWER_CHARS).collect();
+            Some(format!(
+                "(Server note, not December speaking: Claude answered what December typed into the chat. \
+                 Tell December the gist now, briefly and in spoken style. The full answer is in the chat.)\n\n{answer}"
+            ))
+        }
+        "chat_error" => Some(
+            "(Server note, not December speaking: Claude couldn't finish what December typed into the chat. \
+             Tell December briefly.)"
+                .to_string(),
+        ),
         _ => None,
     }
 }
