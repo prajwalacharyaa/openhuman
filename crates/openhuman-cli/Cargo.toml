@@ -357,3 +357,7 @@ rss-bench-dhat = ["rss-bench", "dep:dhat"]
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(coverage)'] }
+
+[[test]]
+name = "embeddings_opt_out"
+path = "../../tests/embeddings_opt_out.rs"
