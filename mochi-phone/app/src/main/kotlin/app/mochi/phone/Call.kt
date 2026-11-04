@@ -114,7 +114,10 @@ object Call {
         if (ended != null) {
             Thread {
                 runCatching { Mochi.callDone(app, ended.getString("id"), if (answered) "answered" else "missed") }
-                if (answered && thread != null) runCatching { Mochi.continueAfterCall(app, thread, since) }
+                // a reminder has nothing for the text brain to carry on with
+                if (answered && thread != null && !ended.optBoolean("reminder")) {
+                    runCatching { Mochi.continueAfterCall(app, thread, since) }
+                }
             }.start()
         }
         app.stopService(Intent(app, CallService::class.java))
@@ -182,8 +185,13 @@ object Call {
                     startAudio(webSocket, f.optInt("output_sample_rate", 24_000).takeIf { it in 8_000..48_000 } ?: 24_000)
                     status("Listening")
                     call?.let {
-                        val hello = "(December picked up the phone call you made. Greet them in a few words, " +
-                            "say what you need decided and why, and ask: ${it.optString("question")})"
+                        val hello = if (it.optBoolean("reminder")) {
+                            "(December picked up the phone call you made. Greet them in a few words and give them " +
+                                "this reminder; there's nothing to decide: ${it.optString("question")})"
+                        } else {
+                            "(December picked up the phone call you made. Greet them in a few words, " +
+                                "say what you need decided and why, and ask: ${it.optString("question")})"
+                        }
                         webSocket.send(JSONObject().put("type", "text").put("text", hello).toString())
                     }
                 }
