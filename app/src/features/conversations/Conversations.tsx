@@ -507,6 +507,9 @@ const Conversations = ({
   // `default_model` (the core keys per-model levels by it after a restart,
   // before anything is picked here).
   const [persistedDefaultModel, setPersistedDefaultModel] = useState<string | null>(null);
+  // Set once the user picks or clears a model here, so a slow mount read of
+  // the persisted default can't overwrite that choice when it lands.
+  const composerModelChosenRef = useRef(false);
   const reasoningModel = composerModelOverride ?? persistedDefaultModel;
   const composerReasoningEffort: ReasoningEffortChoice =
     (reasoningModel ? reasoningEffortByModel[reasoningModel] : undefined) ?? globalReasoningEffort;
@@ -516,7 +519,9 @@ const Conversations = ({
       .then(res => {
         if (!cancelled) {
           setGlobalReasoningEffort(toReasoningEffortChoice(res.result?.reasoning_effort));
-          setPersistedDefaultModel(res.result?.default_model?.trim() || null);
+          if (!composerModelChosenRef.current) {
+            setPersistedDefaultModel(res.result?.default_model?.trim() || null);
+          }
           const byModel: Record<string, ReasoningEffortChoice> = {};
           for (const [model, effort] of Object.entries(
             res.result?.reasoning_effort_by_model ?? {}
@@ -622,6 +627,7 @@ const Conversations = ({
 
   const applyComposerModel = useCallback(
     (value: string | null, contextWindow?: number | null) => {
+      composerModelChosenRef.current = true;
       setComposerModelOverride(value);
       setPersistedDefaultModel(value);
       setComposerModelContextWindow(contextWindow ?? null);
