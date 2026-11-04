@@ -86,7 +86,6 @@ import {
   useContext,
   useEffect,
   useLayoutEffect,
-  useMemo,
   useRef,
   useState,
 } from 'react';
@@ -1495,21 +1494,10 @@ const isStoppedRun = (s: AssistantState): boolean =>
   s.message.status?.type === 'incomplete' && s.message.status.reason === 'cancelled';
 
 /**
- * The stopped turn's own text, split into words for the vendored
- * `StoppedRun` element, plus `cancel_reason`/`superseded_by`
- * (wire-contract.md `chat_cancelled`, carried through
- * `metadata.custom.extraMetadata` by `assistantUiMessages.ts`) so the reason
- * chip can distinguish a user-initiated Stop from a turn the core superseded.
+ * `cancel_reason` (wire-contract.md `chat_cancelled`, carried through
+ * `metadata.custom.extraMetadata` by `assistantUiMessages.ts`), so the reason
+ * chip can tell a user-initiated Stop from a turn the core superseded.
  */
-// Two primitive selectors rather than one object-returning selector:
-// `useAuiState`'s selector is compared by `Object.is`, so an inline `{...}`
-// literal differs from itself on every store tick and free-runs the
-// subscription — exactly the "Maximum update depth exceeded" loop this file
-// hit once already. `words` (an array) is derived from `text` with
-// `useMemo` in the component below instead of being computed here.
-const selectStoppedRunText = (s: AssistantState): string =>
-  s.message.parts.flatMap(part => (part.type === 'text' ? [part.text] : [])).join(' ');
-
 const selectStoppedRunCancelReason = (s: AssistantState): string | undefined => {
   const custom = s.message.metadata?.custom as
     | { extraMetadata?: { cancelReason?: string; supersededBy?: string } }
@@ -1529,9 +1517,7 @@ const selectStoppedRunCancelReason = (s: AssistantState): string | undefined => 
 const StoppedRunSlot: FC = () => {
   const aui = useAui();
   const { t } = useT();
-  const text = useAuiState(selectStoppedRunText);
   const cancelReason = useAuiState(selectStoppedRunCancelReason);
-  const words = useMemo(() => (text.length > 0 ? text.split(/\s+/).filter(Boolean) : []), [text]);
   const { disabled: reloadDisabled, reload } = useActionBarReload();
   const reasonLabel =
     cancelReason === 'superseded'
@@ -1540,7 +1526,6 @@ const StoppedRunSlot: FC = () => {
   return (
     <StoppedRun
       data-testid="stopped-marker"
-      words={words}
       reason={reasonLabel}
       onContinue={() => {
         if (!reloadDisabled) reload();
@@ -1618,10 +1603,9 @@ const AssistantMessage: FC = () => {
               case 'group-source':
                 return SourceGroup ? <SourceGroupSlot Component={SourceGroup} /> : null;
               case 'text':
-                // A stopped/cancelled turn's text renders once, inside
-                // `StoppedRunSlot` below (as `words`), not here — see that
-                // component's docstring.
-                return stopped ? null : <MarkdownText />;
+                // A stopped turn's partial is markdown like any reply (#7729);
+                // `StoppedRunSlot` below adds only the reason and actions.
+                return <MarkdownText />;
               case 'reasoning':
                 // A step inside the activity group, not a disclosure of its own.
                 return (

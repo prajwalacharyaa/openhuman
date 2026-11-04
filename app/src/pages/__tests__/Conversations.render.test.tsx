@@ -1499,7 +1499,7 @@ describe('Conversations — smoke render (#1123 welcome-lock removal)', () => {
     expect(textarea).toHaveTextContent('a fresh follow-up');
   });
 
-  it('renders a Stopped marker on a stopped partial reply (#4862)', async () => {
+  it('renders a stopped partial reply as markdown with a Stopped marker (#4862, #7729)', async () => {
     const thread = makeThread({ id: 'stopped-marker-thread', title: 'Stopped' });
     const messages: ThreadMessage[] = [
       {
@@ -1514,7 +1514,12 @@ describe('Conversations — smoke render (#1123 welcome-lock removal)', () => {
         id: 'a',
         sender: 'agent',
         type: 'text',
-        content: 'partial reply that got cut off',
+        content: [
+          '## Verification',
+          'First paragraph.',
+          'Second paragraph.',
+          '| Check | Result |\n|---|---|\n| npm test | pass |',
+        ].join('\n\n'),
         extraMetadata: { stopped: true },
         createdAt: '2026-01-01T00:01:00.000Z',
       },
@@ -1533,7 +1538,15 @@ describe('Conversations — smoke render (#1123 welcome-lock removal)', () => {
       });
     });
 
-    expect(screen.getByTestId('stopped-marker')).toHaveTextContent('Stopped');
+    const marker = screen.getByTestId('stopped-marker');
+    expect(marker).toHaveTextContent('Stopped');
+    // The partial keeps its structure instead of one flattened paragraph, and
+    // renders once: the marker holds only the reason and actions.
+    expect(screen.getByRole('heading', { level: 2, name: 'Verification' })).toBeInTheDocument();
+    expect(screen.getByText('First paragraph.').tagName).toBe('P');
+    expect(screen.getByText('Second paragraph.').tagName).toBe('P');
+    expect(screen.getByRole('table')).toHaveTextContent('npm test');
+    expect(marker).not.toHaveTextContent('First paragraph.');
   });
 
   it('shows no Stop button while the thread is idle (#4862)', async () => {
