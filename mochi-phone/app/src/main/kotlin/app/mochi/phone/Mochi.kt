@@ -177,15 +177,19 @@ object Mochi {
         data(rpc(c, "openhuman.threads_messages_list", JSONObject().put("thread_id", threadId)))
             .optJSONArray("messages") ?: JSONArray()
 
-    /** Send a typed message, exactly like the desktop chat: Claude answers it in the thread. */
-    fun send(c: Context, threadId: String, text: String) {
+    /**
+     * Send a typed message, exactly like the desktop chat: Claude answers it in the thread. `followup`: wait for
+     * a turn Claude is still working on instead of cancelling it.
+     */
+    fun send(c: Context, threadId: String, text: String, followup: Boolean = false) {
         val message = JSONObject().put("id", "phone-" + UUID.randomUUID()).put("content", text)
             .put("type", "text").put("extraMetadata", JSONObject()).put("sender", "user")
             .put("createdAt", Instant.now().toString())
         rpc(c, "openhuman.threads_message_append", JSONObject().put("thread_id", threadId).put("message", message))
         if (threadId == thread(c)) touchThread(c)
-        rpc(c, "openhuman.channel_web_chat",
-            JSONObject().put("client_id", CLIENT_ID).put("thread_id", threadId).put("message", text))
+        val chat = JSONObject().put("client_id", CLIENT_ID).put("thread_id", threadId).put("message", text)
+        if (followup) chat.put("queue_mode", "followup")
+        rpc(c, "openhuman.channel_web_chat", chat)
     }
 
     /**
@@ -199,7 +203,10 @@ object Mochi {
             it.optString("id").startsWith("voice-ask-") &&
                 runCatching { Instant.parse(it.optString("createdAt")) >= callStartedAt }.getOrDefault(false)
         }
-        if (!handedOff) send(c, threadId, "We just talked about this on the phone. Continue with what I decided on the call.")
+        // Claude may still be busy with something from during the call (a pasted CV): queue behind it
+        if (!handedOff) {
+            send(c, threadId, "We just talked about this on the phone. Continue with what I decided on the call.", followup = true)
+        }
     }
 
     /** Whether this notice id was shown before (remembers the last 100). */

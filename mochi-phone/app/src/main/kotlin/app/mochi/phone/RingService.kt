@@ -140,7 +140,11 @@ class RingService : Service() {
 
         /** Show the incoming call: full screen on a locked phone, a heads-up call card otherwise. */
         fun ring(c: Context, call: JSONObject) {
-            if (Call.active) return // already talking: it stays in Approvals if it's missed
+            if (Call.active) {
+                // already talking to Mochi: ask in this call; otherwise it stays in Approvals if it's missed
+                if (Call.relay(call)) Thread { runCatching { Mochi.callDone(c, call.getString("id"), "answered") } }.start()
+                return
+            }
             val id = call.optString("id")
             ringing = id
             val mochi = Person.Builder().setName("Mochi").setImportant(true).build()

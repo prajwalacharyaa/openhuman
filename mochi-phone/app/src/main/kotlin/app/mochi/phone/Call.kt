@@ -137,6 +137,24 @@ object Call {
             "(December is back after asking you to stay silent. Say in a few words that you're here.)").toString())
     }
 
+    /**
+     * Mochi rang while December is already on a call with it: the question goes into this call instead
+     * (true), so it's answered here rather than missed. Not while frozen: December asked for silence.
+     */
+    @Synchronized
+    fun relay(call: JSONObject): Boolean {
+        val socket = ws ?: return false
+        if (frozen || !answered) return false
+        val question = call.optString("question")
+        val text = if (call.optBoolean("reminder")) {
+            "(Server note, not December speaking: a reminder is due. At a pause, give it in a few words: $question)"
+        } else {
+            "(Server note, not December speaking: Mochi's typed side needs December to decide something. At a " +
+                "pause, ask them: $question. When they answer, hand their answer to Claude with mochi-ask.)"
+        }
+        return socket.send(JSONObject().put("type", "text").put("text", text).toString())
+    }
+
     private fun freeze(socket: WebSocket) {
         frozen = true
         quiet = true
@@ -185,6 +203,8 @@ object Call {
                     startAudio(webSocket, f.optInt("output_sample_rate", 24_000).takeIf { it in 8_000..48_000 } ?: 24_000)
                     status("Listening")
                     call?.let {
+                        // picked up: December decides on this call, so the 3-minute fallback mustn't run meanwhile
+                        Thread { runCatching { Mochi.callDone(app, it.getString("id"), "answered") } }.start()
                         val hello = if (it.optBoolean("reminder")) {
                             "(December picked up the phone call you made. Greet them in a few words and give them " +
                                 "this reminder; there's nothing to decide: ${it.optString("question")})"
