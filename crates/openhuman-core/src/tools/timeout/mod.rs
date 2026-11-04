@@ -215,6 +215,47 @@ pub async fn output_or_kill(
     }
 }
 
+/// Like [`output_or_kill`], but a command killed at `deadline` still hands back
+/// what it printed before the kill. Returns the output and whether the
+/// deadline fired. After the kill the streams are drained for at most
+/// [`KILLED_OUTPUT_DRAIN`]: a process that escaped the group can hold a pipe
+/// open, and the tool must not wait on it.
+pub async fn output_or_kill_keeping_output(
+    cmd: &mut tokio::process::Command,
+    deadline: Duration,
+) -> std::io::Result<(std::process::Output, bool)> {
+    use std::process::Stdio;
+    cmd.stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true);
+    own_process_group(cmd.as_std_mut());
+    let child = cmd.spawn()?;
+    let pid = child.id();
+    let mut output = Box::pin(child.wait_with_output());
+    match tokio::time::timeout(deadline, &mut output).await {
+        Ok(output) => output.map(|output| (output, false)),
+        Err(_) => {
+            if let Some(pid) = pid {
+                kill_process_group(pid);
+            }
+            let output = match tokio::time::timeout(KILLED_OUTPUT_DRAIN, &mut output).await {
+                Ok(Ok(output)) => output,
+                _ => std::process::Output {
+                    status: std::process::ExitStatus::default(),
+                    stdout: Vec::new(),
+                    stderr: Vec::new(),
+                },
+            };
+            Ok((output, true))
+        }
+    }
+}
+
+/// How long [`output_or_kill_keeping_output`] drains a killed command's
+/// streams.
+const KILLED_OUTPUT_DRAIN: Duration = Duration::from_secs(2);
+
 /// Make `cmd` the leader of a new process group when it is spawned, so that
 /// [`kill_process_group`] can reach everything it starts. A no-op off Unix.
 pub fn own_process_group(cmd: &mut std::process::Command) {

@@ -111,3 +111,57 @@ async fn the_tools_deadline_kills_the_commands_grandchildren_too() {
         "grandchild {grandchild} survived the shell tool's deadline"
     );
 }
+
+/// A command killed at its deadline still shows what it printed on both
+/// streams: a test that reported its first failures, or a build that wrote
+/// its progress to stderr, must not come back as only "timed out".
+#[cfg(not(windows))]
+#[tokio::test]
+async fn the_tools_deadline_keeps_what_the_command_printed() {
+    let tool = ShellTool::new(
+        test_security(AutonomyLevel::Full),
+        test_runtime(),
+        test_audit(),
+    );
+    let result = tool
+        .execute(json!({
+            "command": "echo 'FAIL: case 3'; echo 'warning: slow' >&2; sleep 5",
+            "timeout_secs": 1
+        }))
+        .await
+        .unwrap();
+    assert!(result.is_error);
+    let out = result.output();
+    assert!(
+        out.starts_with("Command timed out after 1s"),
+        "the timeout line stays first: {out}"
+    );
+    assert!(out.contains("[stdout]\nFAIL: case 3"), "{out}");
+    assert!(out.contains("[stderr]\nwarning: slow"), "{out}");
+}
+
+#[test]
+fn a_timed_out_result_carries_both_streams_after_the_timeout_line() {
+    assert_eq!(
+        timed_out_output(
+            1331,
+            "tested 40 positions\nFAIL: e1d2\n",
+            "warning: slow\n"
+        ),
+        "Command timed out after 1331s and was killed: the shell tool's timeout_secs limit fired. \
+         Output before the kill:\n[stdout]\ntested 40 positions\nFAIL: e1d2\n[stderr]\nwarning: slow"
+    );
+}
+
+#[test]
+fn a_kill_with_no_output_says_why_output_can_be_missing() {
+    let out = timed_out_output(5, "", "\n");
+    assert!(
+        out.starts_with("Command timed out after 5s and was killed"),
+        "{out}"
+    );
+    assert!(
+        out.contains("No output reached the tool before the kill") && out.contains("`| tail`"),
+        "{out}"
+    );
+}
