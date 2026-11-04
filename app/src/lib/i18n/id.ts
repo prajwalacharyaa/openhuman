@@ -1535,7 +1535,9 @@ const messages: TranslationMap = {
   'chat.stallWarning.thinking':
     'Masih berpikir. Tidak ada keluaran baru selama 2 menit, tetapi agen masih bekerja. Tekan Berhenti jika ingin membatalkan.',
   'chat.stallWarning.working':
-    'Masih bekerja. Satu langkah sudah berjalan lebih dari 2 menit tanpa keluaran baru. Tekan Berhenti jika ingin membatalkan.',
+    'Tidak ada keluaran baru selama {duration}. Agen mungkin macet; tekan Hentikan untuk membatalkan.',
+  'chat.stallWarning.toolRunning':
+    '{tool}. Langkah panjang seperti build atau pemantauan CI bisa memakan waktu.',
   'chat.filter.tasks': 'Tugas',
   'chat.selectThread': 'Pilih thread',
   'chat.noThreads': 'Belum ada thread',

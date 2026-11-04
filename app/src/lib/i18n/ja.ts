@@ -1739,7 +1739,9 @@ const messages: TranslationMap = {
   'chat.stallWarning.thinking':
     '思考中です。2分間新しい出力がありませんが、エージェントは動作を継続しています。キャンセルする場合は「停止」を押してください。',
   'chat.stallWarning.working':
-    '処理中です。1つのステップが2分以上実行され、新しい出力がありません。キャンセルする場合は「停止」を押してください。',
+    '{duration}間、新しい出力がありません。エージェントが停止している可能性があります。キャンセルするには「停止」を押してください。',
+  'chat.stallWarning.toolRunning':
+    '{tool}。ビルドや CI の監視など、長いステップには時間がかかることがあります。',
   'chat.filter.tasks': 'タスク',
   'chat.selectThread': 'スレッドを選択',
   'chat.noThreads': 'スレッドがありません',

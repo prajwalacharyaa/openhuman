@@ -1563,7 +1563,9 @@ const messages: TranslationMap = {
   'chat.stallWarning.thinking':
     "Réflexion en cours. Aucune nouvelle sortie depuis 2 minutes, mais l'agent travaille toujours. Appuie sur Arrêter si tu veux annuler.",
   'chat.stallWarning.working':
-    'Travail en cours. Une étape tourne depuis plus de 2 minutes sans nouvelle sortie. Appuie sur Arrêter si tu veux annuler.',
+    "Aucune nouvelle sortie depuis {duration}. L'agent est peut-être bloqué ; appuie sur Arrêter pour annuler.",
+  'chat.stallWarning.toolRunning':
+    '{tool}. Les étapes longues, comme les builds ou le suivi de la CI, peuvent prendre du temps.',
   'chat.filter.tasks': 'Tâches',
   'chat.selectThread': 'Sélectionne un fil',
   'chat.noThreads': "Aucun fil pour l'instant",

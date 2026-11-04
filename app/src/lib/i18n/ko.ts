@@ -1507,7 +1507,8 @@ const messages: TranslationMap = {
   'chat.stallWarning.thinking':
     '아직 생각 중입니다. 2분 동안 새 출력이 없지만 에이전트는 계속 작업 중입니다. 취소하려면 중지를 누르세요.',
   'chat.stallWarning.working':
-    '아직 작업 중입니다. 한 단계가 새 출력 없이 2분 넘게 실행되고 있습니다. 취소하려면 중지를 누르세요.',
+    '{duration} 동안 새 출력이 없습니다. 에이전트가 멈췄을 수 있습니다. 취소하려면 중지를 누르세요.',
+  'chat.stallWarning.toolRunning': '{tool}. 빌드나 CI 감시 같은 긴 단계는 시간이 걸릴 수 있습니다.',
   'chat.filter.tasks': '작업',
   'chat.selectThread': '스레드 선택',
   'chat.noThreads': '아직 스레드가 없습니다',

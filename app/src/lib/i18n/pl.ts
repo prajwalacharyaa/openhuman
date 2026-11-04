@@ -1540,7 +1540,9 @@ const messages: TranslationMap = {
   'chat.stallWarning.thinking':
     'Nadal myśli. Brak nowych danych od 2 minut, ale agent nadal pracuje. Naciśnij Zatrzymaj, jeśli chcesz anulować.',
   'chat.stallWarning.working':
-    'Nadal pracuje. Krok trwa ponad 2 minuty bez nowych danych. Naciśnij Zatrzymaj, jeśli chcesz anulować.',
+    'Brak nowych danych od {duration}. Agent mógł utknąć; naciśnij Zatrzymaj, aby anulować.',
+  'chat.stallWarning.toolRunning':
+    '{tool}. Długie kroki, takie jak kompilacje czy śledzenie CI, mogą chwilę potrwać.',
   'chat.filter.tasks': 'Zadania',
   'chat.selectThread': 'Wybierz wątek',
   'chat.noThreads': 'Brak wątków',

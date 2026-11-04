@@ -1551,7 +1551,9 @@ const messages: TranslationMap = {
   'chat.stallWarning.thinking':
     'Ainda pensando. Nenhuma saída nova há 2 minutos, mas o agente continua trabalhando. Pressione Parar se quiser cancelar.',
   'chat.stallWarning.working':
-    'Ainda trabalhando. Uma etapa está rodando há mais de 2 minutos sem saída nova. Pressione Parar se quiser cancelar.',
+    'Nenhuma saída nova há {duration}. O agente pode estar travado; pressione Parar para cancelar.',
+  'chat.stallWarning.toolRunning':
+    '{tool}. Etapas longas, como builds ou o acompanhamento de CI, podem demorar.',
   'chat.filter.tasks': 'Tarefas',
   'chat.selectThread': 'Selecione uma conversa',
   'chat.noThreads': 'Nenhuma conversa ainda',

@@ -1567,7 +1567,9 @@ const messages: TranslationMap = {
   'chat.stallWarning.thinking':
     'Denkt noch nach. Seit 2 Minuten keine neue Ausgabe, aber der Agent arbeitet noch. Drücke Stopp, wenn du abbrechen möchtest.',
   'chat.stallWarning.working':
-    'Arbeitet noch. Ein Schritt läuft seit über 2 Minuten ohne neue Ausgabe. Drücke Stopp, wenn du abbrechen möchtest.',
+    'Seit {duration} keine neue Ausgabe. Der Agent hängt möglicherweise; drücke Stoppen, um abzubrechen.',
+  'chat.stallWarning.toolRunning':
+    '{tool}. Lange Schritte wie Builds oder CI-Überwachung können eine Weile dauern.',
   'chat.filter.tasks': 'Aufgaben',
   'chat.selectThread': 'Wähle einen Thread aus',
   'chat.noThreads': 'Noch keine Threads',

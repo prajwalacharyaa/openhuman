@@ -1552,7 +1552,9 @@ const messages: TranslationMap = {
   'chat.stallWarning.thinking':
     "Sta ancora pensando. Nessun nuovo output da 2 minuti, ma l'agente sta ancora lavorando. Premi Interrompi se vuoi annullare.",
   'chat.stallWarning.working':
-    'Sta ancora lavorando. Un passaggio è in corso da oltre 2 minuti senza nuovo output. Premi Interrompi se vuoi annullare.',
+    "Nessun nuovo output da {duration}. L'agente potrebbe essersi bloccato; premi Interrompi per annullare.",
+  'chat.stallWarning.toolRunning':
+    '{tool}. I passaggi lunghi, come le build o il monitoraggio della CI, possono richiedere tempo.',
   'chat.filter.tasks': 'Attività',
   'chat.selectThread': 'Seleziona un thread',
   'chat.noThreads': 'Nessun thread',

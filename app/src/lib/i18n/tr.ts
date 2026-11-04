@@ -1595,7 +1595,9 @@ const messages: TranslationMap = {
   'chat.stallWarning.thinking':
     "Hâlâ düşünüyor. 2 dakikadır yeni çıktı yok, ancak ajan çalışmaya devam ediyor. İptal etmek istiyorsanız Durdur'a basın.",
   'chat.stallWarning.working':
-    "Hâlâ çalışıyor. Bir adım 2 dakikadan uzun süredir yeni çıktı olmadan çalışıyor. İptal etmek istiyorsanız Durdur'a basın.",
+    "{duration} boyunca yeni çıktı yok. Ajan takılmış olabilir; iptal etmek için Durdur'a basın.",
+  'chat.stallWarning.toolRunning':
+    '{tool}. Derleme veya CI izleme gibi uzun adımlar biraz zaman alabilir.',
   'chat.filter.tasks': 'Görevler',
   'chat.selectThread': 'Bir sohbet dizisi seçin',
   'chat.noThreads': 'Henüz sohbet dizisi yok',
