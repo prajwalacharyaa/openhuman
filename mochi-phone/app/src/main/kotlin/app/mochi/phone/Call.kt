@@ -242,22 +242,26 @@ object Call {
         return STOP.any { phrase == it || phrase == "mochi $it" || phrase == "$it mochi" || phrase == "$it please" }
     }
 
-    /** "Mochi freeze", "Mochi don't talk", "Mochi silent"…: Mochi's name and a freeze phrase, said on their own. */
+    /** "Mochi freeze", "Mochi don't talk", "Mochi silent"…: Mochi's name and a freeze phrase, said on their own.
+     *  Said as a short command, the live transcription often mishears it ("mucho frío", "Mochi fries", 4 Nov),
+     *  so both words go by how they sound; the short phrase with the name keeps sentences from matching. */
     private fun isFreeze(said: String): Boolean {
         val words = said.lowercase().replace("'", "").replace("’", "").replace(Regex("[^\\p{L}\\p{M}\\s]"), " ")
             .trim().split(Regex("\\s+")).filter { it.isNotEmpty() }
         if (words.size !in 2..5) return false
         val rest = when {
-            words.first() in NAMES -> words.drop(1)
-            words.last() in NAMES -> words.dropLast(1)
+            NAME.matches(words.first()) -> words.drop(1)
+            NAME.matches(words.last()) -> words.dropLast(1)
             else -> return false
-        }
-        return rest.joinToString(" ") in FREEZE
+        }.filter { it != "now" && it != "please" }
+        return (rest.size == 1 && FREEZE_WORD.matches(rest[0])) || rest.joinToString(" ") in FREEZE
     }
 
-    // how transcription tends to spell Mochi
-    private val NAMES = setOf("mochi", "mochee", "mochie", "moochi", "mocchi", "mochy", "mochii")
-    private val FREEZE = setOf("freeze", "dont talk", "do not talk", "dont speak", "do not speak", "silent", "be silent",
+    // Mochi as transcription spells it: mochi, moochi, mocchi, mochee, mochy, mucho, muchi…, or in Devanagari
+    private val NAME = Regex("m[ou]{1,2}c{1,2}h?(i|ii|ee|ie|y|o)s?|मोची|मोचि|मुची")
+    // freeze, frees, frieze, fries, frío, breeze…, or फ्रीज / फ्रिज (with or without the nukta)
+    private val FREEZE_WORD = Regex("fr(ee|ie|i|e|í)+[sz]{1,2}e?[sd]?|fries|fr[ií]o|breeze|फ्र[ीि](ज\u093C?|\u095B)")
+    private val FREEZE = setOf("dont talk", "do not talk", "dont speak", "do not speak", "silent", "be silent",
         "stay silent", "go silent", "silence")
 
     private val STOP = setOf("stop", "stop it", "stop talking", "silent", "be silent", "silence", "quiet", "be quiet",
