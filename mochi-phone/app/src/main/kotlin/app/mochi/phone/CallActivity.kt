@@ -99,12 +99,20 @@ class CallActivity : Activity(), Call.Listener {
         incoming.visibility = View.GONE
         controls.visibility = View.VISIBLE
         status.text = Call.status
-        mute.text = if (Call.muted) "Unmute" else "Mute"
+        mute.text = muteLabel()
         speaker.text = if (Call.speaker) "Earpiece" else "Speaker"
+    }
+
+    /** While frozen ("Mochi, freeze") the mute button brings Mochi back. */
+    private fun muteLabel() = when {
+        Call.frozen -> "Unfreeze"
+        Call.muted -> "Unmute"
+        else -> "Mute"
     }
 
     override fun onStatus(text: String) {
         status.text = text
+        mute.text = muteLabel()
     }
 
     override fun onTranscript(role: String, text: String, final: Boolean) {
@@ -173,7 +181,7 @@ class CallActivity : Activity(), Call.Listener {
             addView(button("Decline", "#B4472C") { decline() }, cell)
             addView(button("Answer", "#2E9D5B") { answer() }, cell)
         }
-        mute = button("Mute", "#55555C") { Call.muted = !Call.muted; showControls() }
+        mute = button("Mute", "#55555C") { if (Call.frozen) Call.unfreeze() else Call.muted = !Call.muted; showControls() }
         speaker = button("Earpiece", "#55555C") { Call.setSpeaker(!Call.speaker); showControls() }
         controls = row().apply {
             addView(mute, cell)

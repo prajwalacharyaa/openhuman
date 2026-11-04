@@ -60,6 +60,10 @@ object Call {
     @Volatile private var flushPlayback = false
     /** December said "stop" / "be quiet": Mochi's audio is dropped until December speaks again. */
     @Volatile private var quiet = false
+    /** December said "Mochi, freeze": the mic isn't sent and Mochi says nothing until "Mochi, unfreeze" (heard on
+     *  the phone, see [Unfreeze]) or the Unfreeze button. */
+    @Volatile var frozen = false
+        private set
     private val playback = LinkedBlockingQueue<ByteArray>()
 
     /** Start a call. `mochiCall` is the ring event when answering Mochi; null when December calls. */
@@ -80,6 +84,7 @@ object Call {
         answered = false
         muted = false
         quiet = false
+        frozen = false
         call = mochiCall
         startedAt = java.time.Instant.now()
         threadId = mochiCall?.optString("thread_id")?.takeIf { it.isNotEmpty() } ?: Mochi.callThread(app)
@@ -95,6 +100,8 @@ object Call {
     fun end() {
         if (!active) return
         active = false
+        frozen = false
+        Unfreeze.stop()
         ws?.let { runCatching { it.send("""{"type":"stop"}"""); it.close(1000, "hang up") } }
         ws = null
         val am = app.getSystemService(AudioManager::class.java)
@@ -113,6 +120,29 @@ object Call {
         app.stopService(Intent(app, CallService::class.java))
         WakeService.resume(app) // listen for "Mochi" again, if that's on
         main.post { listener?.onEnded() }
+    }
+
+    /** Back from "Mochi, freeze": the mic is sent again and Mochi says it's there. */
+    @Synchronized
+    fun unfreeze() {
+        if (!frozen) return
+        Unfreeze.stop()
+        frozen = false
+        quiet = false
+        status("Listening")
+        ws?.send(JSONObject().put("type", "text").put("text",
+            "(December is back after asking you to stay silent. Say in a few words that you're here.)").toString())
+    }
+
+    private fun freeze(socket: WebSocket) {
+        frozen = true
+        quiet = true
+        socket.send("""{"type":"interrupt"}""")
+        playback.clear()
+        flushPlayback = true
+        val why = Unfreeze.start(app) { unfreeze() }
+        status(if (why == null) "Frozen: Mochi hears nothing. Say \"Mochi, unfreeze\" or tap Unfreeze."
+               else "Frozen: Mochi hears nothing. Tap Unfreeze to continue ($why).")
     }
 
     fun setSpeaker(on: Boolean) {
@@ -161,7 +191,10 @@ object Call {
                     val role = f.optString("role")
                     val line = f.optString("text")
                     val final = f.optBoolean("final")
-                    if (role == "user" && final) {
+                    if (frozen) return // a late line from before the freeze
+                    if (role == "user" && final && isFreeze(line)) {
+                        freeze(webSocket)
+                    } else if (role == "user" && final) {
                         quiet = isStop(line)
                         if (quiet) {
                             // say nothing at all until December speaks again: cut Mochi off and drop its reply
@@ -173,8 +206,8 @@ object Call {
                     }
                     if (role == "user" || !quiet) main.post { listener?.onTranscript(role, line, final) }
                 }
-                "tool_started" -> status("Checking (${f.optString("name")})…")
-                "tool_finished", "turn_complete" -> status("Listening")
+                "tool_started" -> if (!frozen) status("Checking (${f.optString("name")})…")
+                "tool_finished", "turn_complete" -> if (!frozen) status("Listening")
                 "interrupted" -> { playback.clear(); flushPlayback = true }
                 "error" -> { status("Error: ${f.optString("message")}"); if (f.optBoolean("fatal")) end() }
                 "closed" -> end()
@@ -208,6 +241,24 @@ object Call {
         val phrase = words.joinToString(" ")
         return STOP.any { phrase == it || phrase == "mochi $it" || phrase == "$it mochi" || phrase == "$it please" }
     }
+
+    /** "Mochi freeze", "Mochi don't talk", "Mochi silent"…: Mochi's name and a freeze phrase, said on their own. */
+    private fun isFreeze(said: String): Boolean {
+        val words = said.lowercase().replace("'", "").replace("’", "").replace(Regex("[^\\p{L}\\p{M}\\s]"), " ")
+            .trim().split(Regex("\\s+")).filter { it.isNotEmpty() }
+        if (words.size !in 2..5) return false
+        val rest = when {
+            words.first() in NAMES -> words.drop(1)
+            words.last() in NAMES -> words.dropLast(1)
+            else -> return false
+        }
+        return rest.joinToString(" ") in FREEZE
+    }
+
+    // how transcription tends to spell Mochi
+    private val NAMES = setOf("mochi", "mochee", "mochie", "moochi", "mocchi", "mochy", "mochii")
+    private val FREEZE = setOf("freeze", "dont talk", "do not talk", "dont speak", "do not speak", "silent", "be silent",
+        "stay silent", "go silent", "silence")
 
     private val STOP = setOf("stop", "stop it", "stop talking", "silent", "be silent", "silence", "quiet", "be quiet",
         "shut up", "hush", "pause", "enough", "chup", "chup lag", "chup basa", "चुप", "चुप लाग", "चुप बस", "रोक")
@@ -249,13 +300,26 @@ object Call {
         try {
             rec.startRecording()
             while (active && ws === socket) {
+                if (Unfreeze.needsMic) {
+                    // checking what came after "Mochi" on the phone: the recognizer needs the mic; the call stays open
+                    rec.stop()
+                    while (Unfreeze.needsMic && active && ws === socket) {
+                        socket.send(silence.toByteString())
+                        Thread.sleep(100)
+                    }
+                    rec.startRecording()
+                    continue
+                }
                 var n = 0
                 while (n < FRAME_BYTES && active) {
                     val got = rec.read(buf, n, FRAME_BYTES - n)
                     if (got <= 0) break
                     n += got
                 }
-                if (n == FRAME_BYTES) socket.send((if (muted) silence else buf).toByteString())
+                if (n == FRAME_BYTES) {
+                    if (frozen) Unfreeze.feed(buf)
+                    socket.send((if (muted || frozen) silence else buf).toByteString())
+                }
             }
         } finally {
             runCatching { rec.stop() }
