@@ -79,7 +79,8 @@ jobs:
         if: failure()
         shell: bash
         run: |
-          grep -E -A6 '^error(\[E[0-9]+\])?:|panicked at|^test .* FAILED' test.log | head -60 \
+          # CARGO_TERM_COLOR=always puts colour codes in test.log: strip them, or nothing matches
+          sed 's/\x1b\[[0-9;]*m//g' test.log | grep -E -A6 '^error(\[E[0-9]+\])?:|panicked at|^test .* FAILED' | head -60 \
             | sed 's/%/%25/g' | awk 'BEGIN{ORS="%0A"} {print}' | sed 's/^/::error title=cargo test::/'; echo
 
   build:
