@@ -65,7 +65,7 @@ jobs:
             ~/.cargo/git
           key: tiny-test-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
           restore-keys: tiny-test-${{ runner.os }}-
-      - name: cargo test (voice, voice tool harness and shell gate, voice recap, memory hooks, Claude session cap, upstream picks)
+      - name: cargo test (voice, voice tool harness and shell gate, voice recap, memory hooks, Claude session cap, upstream picks, Claude Code driver)
         shell: bash
         run: |
           set -o pipefail
@@ -74,6 +74,8 @@ jobs:
             protected_literal literal_credential_paths the_bus_logger_names_events security::pairing \
             memory::sources::sync memory::backfill harness_context_ladder title_and_cancellation_tests shell::tests::timeout_tests \
             2>&1 | tee test.log
+          # tinyagents comes from our fork (Claude Code driver fixes): run that driver's own tests too
+          cargo test --manifest-path Cargo.toml -p tinyagents-harness --lib -- providers::claude_code 2>&1 | tee -a test.log
       # job logs need admin rights to download; annotations are public, so a failure can be read from the API
       - name: Report test failures as annotations
         if: failure()
