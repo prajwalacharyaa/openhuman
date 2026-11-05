@@ -75,7 +75,7 @@ jobs:
             memory::sources::sync memory::backfill harness_context_ladder title_and_cancellation_tests shell::tests::timeout_tests \
             2>&1 | tee test.log
           # tinyagents comes from our fork (Claude Code driver fixes): run that driver's own tests too
-          cargo test --manifest-path Cargo.toml -p tinyagents-harness --lib -- providers::claude_code 2>&1 | tee -a test.log
+          cargo test --manifest-path vendor/tinyagents/Cargo.toml -p tinyagents-harness --lib -- providers::claude_code 2>&1 | tee -a test.log
       # job logs need admin rights to download; annotations are public, so a failure can be read from the API
       - name: Report test failures as annotations
         if: failure()
