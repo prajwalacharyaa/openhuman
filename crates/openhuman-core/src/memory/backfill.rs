@@ -462,28 +462,6 @@ async fn run(
     );
 }
 
-/// The last batch of the run that stores anything, as (thread, group): the
-/// one the run waits on until it is visible.
-fn last_batch(identity: &ResolvedIdentity, plans: &[ThreadPlan]) -> Option<(usize, usize)> {
-    plans.iter().enumerate().rev().find_map(|(thread, plan)| {
-        turn_groups(plan.range.clone())
-            .iter()
-            .enumerate()
-            .rev()
-            .find(|(_, group)| {
-                !group_items(
-                    &identity.layout,
-                    &identity.agent_id,
-                    &plan.thread_id,
-                    &plan.turns,
-                    group,
-                )
-                .is_empty()
-            })
-            .map(|(index, _)| (thread, index))
-    })
-}
-
 /// The conversation items for the turns `group` of `plan`.
 fn group_items(identity: &ResolvedIdentity, plan: &ThreadPlan, group: &[usize]) -> Vec<StoreItem> {
     group
