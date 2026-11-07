@@ -66,8 +66,10 @@ pub(crate) fn claude_reply_note(event: &WebChannelEvent, thread_id: &str) -> Opt
             let answer: String = answer.chars().take(MAX_ANSWER_CHARS).collect();
             Some(format!(
                 "(Server note, not December speaking: Claude finished the request you handed it. \
-                 Tell December the answer now, briefly and in spoken style, without waiting to be asked. \
-                 The full answer is in the chat.)\n\n{answer}"
+                 Tell December now, without waiting to be asked, in one short spoken sentence (two at most): \
+                 the result only. If Claude asks December to decide something, name each choice in a few \
+                 words and ask; never drop a choice or a warning. Don't read out details: the full answer is \
+                 in the chat.)\n\n{answer}"
             ))
         }
         "chat_error" => Some(format!(
@@ -145,12 +147,18 @@ pub(crate) enum HandoffEvent<'a> {
     TurnComplete,
 }
 
+/// Words of a status update about work handed off earlier ("Claude is still working on it", "I'll update you
+/// the moment Claude finishes"): not a new handoff.
+const STATUS_UPDATE: &[&str] = &["still", "keeping an eye", "update you", "let you know", "finish", "is done", "ready"];
+
 /// Whether the model's words claim Claude is (or will be) doing the work.
-/// A question ("Shall I ask Claude?") is not a claim, and neither is a status update about work handed off
-/// earlier ("Claude is still working on it").
+/// A question ("Shall I ask Claude?") is not a claim, and neither is a status update.
 pub(crate) fn claims_handoff(text: &str) -> bool {
     let text = text.trim().to_lowercase();
-    if text.ends_with('?') || text.contains("still") || !(text.contains("claude") || text.contains("क्लाउड")) {
+    if text.ends_with('?')
+        || STATUS_UPDATE.iter().any(|w| text.contains(w))
+        || !(text.contains("claude") || text.contains("क्लाउड"))
+    {
         return false;
     }
     const MARKERS: &[&str] = &[
@@ -209,6 +217,11 @@ current, or you said you were checking, but you answered without searching. Your
 old, so that answer may be out of date. Search now with your web search tool and give December the up-to-date \
 answer briefly. If the search fails or this needs deeper research, hand it to Claude with mochi-ask instead.)";
 
+/// Sent to the live model when December asked how Claude's work is going and it answered without checking.
+pub(crate) const STATUS_NUDGE: &str = "(Server check, not December speaking: December asked how Claude's work \
+is going and you answered without checking. Run mochi-ask --result now and say what it shows in one short \
+sentence, like \"Claude's still on it\" or \"Claude's done, pull request 13 is up\". Send nothing new to Claude.)";
+
 /// Sent to the live model when it said it did something (installed, added, pushed…) with no tool call.
 pub(crate) const DONE_NUDGE: &str = "(Server check, not December speaking: you said you did something, but you \
 ran no command in this turn, so nothing was done. If Claude did it earlier, say so (\"Claude did that earlier\"). \
@@ -227,6 +240,11 @@ const FRESH_WORDS: &[&str] = &[
     "check if", "verify", "is it true", "is that true", "are you sure", "genuine",
     "समाचार", "न्युज", "खबर", "ताजा", "मौसम", "सेयर",
 ];
+/// How December asks whether Claude is still working or done.
+const STATUS_ASKED: &[&str] = &[
+    "is claude", "claude is", "has claude", "if claude", "claude still", "claude done", "claude finished",
+    "claude doing", "claude's doing", "क्लाउडले",
+];
 /// ...unless December asks about something already said ("yesterday's news from our last chat").
 const PAST_WORDS: &[&str] = &["yesterday", "previous", "earlier", "last time", "हिजो", "अघिल्लो", "पहिले"];
 /// How the model announces a lookup it then has to make.
@@ -244,6 +262,12 @@ const AGREE_SAID: &[&str] =
 pub(crate) fn asks_fresh(text: &str) -> bool {
     let text = text.to_lowercase();
     FRESH_WORDS.iter().any(|w| text.contains(w)) && !PAST_WORDS.iter().any(|w| text.contains(w))
+}
+
+/// Whether December asks how Claude's work is going ("Is Claude still editing?").
+pub(crate) fn asks_status(text: &str) -> bool {
+    let text = text.to_lowercase().replace('\u{2019}', "'");
+    STATUS_ASKED.iter().any(|w| text.contains(w))
 }
 
 /// Whether the model's words say it is looking something up.
@@ -291,7 +315,7 @@ pub(crate) struct LookupCheck {
 
 impl LookupCheck {
     fn need(&mut self, nudge: &'static str) {
-        let rank = |n: &str| [DONE_NUDGE, AGREE_NUDGE, LOOKUP_NUDGE].iter().position(|x| *x == n);
+        let rank = |n: &str| [DONE_NUDGE, AGREE_NUDGE, STATUS_NUDGE, LOOKUP_NUDGE].iter().position(|x| *x == n);
         if self.needed.is_none_or(|current| rank(nudge) < rank(current)) {
             self.needed = Some(nudge);
         }
@@ -307,7 +331,10 @@ impl LookupCheck {
                     self.nudged = false;
                     self.asked_at = Some(now);
                 }
-                if asks_fresh(text) {
+                if asks_status(text) {
+                    // checked with mochi-ask --result, not a web search
+                    self.need(STATUS_NUDGE);
+                } else if asks_fresh(text) {
                     self.need(LOOKUP_NUDGE);
                 }
             }
@@ -341,6 +368,33 @@ impl LookupCheck {
             }
         }
         None
+    }
+}
+
+/// Both checks for one call, with at most one nudge between them until December speaks again: each nudge
+/// draws an answer, so a second one (from the other check) made the model answer the same question three times.
+#[derive(Debug, Default)]
+pub(crate) struct CallChecks {
+    handoff: HandoffCheck,
+    lookup: LookupCheck,
+    nudged: bool,
+}
+
+impl CallChecks {
+    /// The one nudge this event calls for, if any.
+    pub(crate) fn on_event(&mut self, event: HandoffEvent<'_>, now: Instant) -> Option<&'static str> {
+        if matches!(event, HandoffEvent::UserSaid(_)) {
+            self.nudged = false;
+        }
+        // both always see the event, so their state stays right even when only one may speak
+        let claimed = self.handoff.on_event(event, now);
+        let unchecked = self.lookup.on_event(event, now);
+        let nudge = claimed.or(unchecked)?;
+        if self.nudged {
+            return None;
+        }
+        self.nudged = true;
+        Some(nudge)
     }
 }
 

@@ -191,3 +191,36 @@ fn tells_the_call_december_typed_without_the_text() {
     let progress = WebChannelEvent { event: "tool_call".into(), ..started("desktop") };
     assert_eq!(claude_reply_note(&progress, "t1"), None);
 }
+
+#[test]
+fn knows_status_questions_and_updates() {
+    assert!(asks_status("Can you check if Claude is making edit in portfolio site?"));
+    assert!(asks_status("Is Claude still working?"));
+    assert!(!asks_status("Ask Claude to fix the footer."));
+    assert!(!claims_handoff("I am keeping an eye on the progress and will update you the moment Claude finishes the edits."));
+    assert!(!claims_handoff("Claude's answer is ready."));
+}
+
+/// 2026-11-07: "Can you check if Claude is making edit?" drew three answers (a guess, a web-search nudge, then a
+/// handoff nudge that made the model send an old request to Claude again).
+#[test]
+fn a_status_question_gets_one_status_nudge_only() {
+    let t0 = std::time::Instant::now();
+    let later = |s: u64| t0 + std::time::Duration::from_secs(s);
+    let mut checks = CallChecks::default();
+    checks.on_event(HandoffEvent::UserSaid("Can you check if Claude is making edit in portfolio site?"), t0);
+    checks.on_event(
+        HandoffEvent::AgentSaid("Claude is still working on the edits, and I'll let you know as soon as everything is ready."),
+        later(1),
+    );
+    assert_eq!(checks.on_event(HandoffEvent::TurnComplete, later(2)), Some(STATUS_NUDGE));
+
+    // whatever the answer to that nudge says, no second nudge from either check
+    checks.on_event(HandoffEvent::AgentSaid("Sure, Claude is on it."), later(3));
+    assert_eq!(checks.on_event(HandoffEvent::TurnComplete, later(4)), None);
+
+    // December speaks again: armed again
+    checks.on_event(HandoffEvent::UserSaid("Fix the footer too."), later(60));
+    checks.on_event(HandoffEvent::AgentSaid("Claude will do it."), later(61));
+    assert_eq!(checks.on_event(HandoffEvent::TurnComplete, later(62)), Some(NUDGE));
+}

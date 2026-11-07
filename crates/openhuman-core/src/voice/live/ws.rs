@@ -19,7 +19,7 @@ use tinyagents_live::tinyliveagents::{CloseReason, LiveEvent};
 use tinyagents_live::LiveAgentEvent;
 
 use super::error::LiveVoiceError;
-use super::handoff::{claude_reply_note, HandoffCheck, HandoffEvent, LookupCheck, NoteGate};
+use super::handoff::{claude_reply_note, CallChecks, HandoffEvent, NoteGate, NUDGE};
 use super::persist::{reads_phone, TranscriptPersister};
 use super::timing::{self, TimingEvent, VoiceTiming};
 use super::session::{self, LiveStartRequest};
@@ -221,8 +221,7 @@ pub async fn handle_live_voice_ws(socket: WebSocket, config: Arc<Config>) {
     .with_memory_log(config.clone());
     let timing_on = timing::enabled_from(std::env::var(timing::TIMING_ENV).ok().as_deref());
     let mut timing = VoiceTiming::default();
-    let mut handoff = HandoffCheck::default();
-    let mut lookup = LookupCheck::default();
+    let mut checks = CallChecks::default();
     let mut notes = NoteGate::default();
     // Claude's answers to `mochi-ask` requests arrive as web-chat events.
     let mut chat_events = crate::web_chat::subscribe_web_channel_events();
@@ -329,14 +328,12 @@ pub async fn handle_live_voice_ws(socket: WebSocket, config: Arc<Config>) {
                     _ => None,
                 };
                 if let Some(step) = handoff_step {
-                    let now = std::time::Instant::now();
-                    let claimed = handoff.on_event(step, now);
-                    let unchecked = lookup.on_event(step, now);
-                    if let Some(nudge) = claimed {
-                        tracing::info!(session_id, "{LOG_PREFIX} said Claude is on it without a handoff call: nudging");
-                        let _ = sender.send_text(nudge.to_string()).await;
-                    } else if let Some(nudge) = unchecked {
-                        tracing::info!(session_id, "{LOG_PREFIX} a turn that needed a search or command ran none: nudging");
+                    if let Some(nudge) = checks.on_event(step, std::time::Instant::now()) {
+                        if nudge == NUDGE {
+                            tracing::info!(session_id, "{LOG_PREFIX} said Claude is on it without a handoff call: nudging");
+                        } else {
+                            tracing::info!(session_id, "{LOG_PREFIX} a turn that needed a check or command ran none: nudging");
+                        }
                         let _ = sender.send_text(nudge.to_string()).await;
                     }
                 }
