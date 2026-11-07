@@ -18,8 +18,9 @@ use futures::{SinkExt, StreamExt};
 use tinyagents_live::tinyliveagents::{CloseReason, LiveEvent};
 use tinyagents_live::LiveAgentEvent;
 
+use super::claims::{self, TurnRecorder, Verdict};
 use super::error::LiveVoiceError;
-use super::handoff::{claude_reply_note, CallChecks, HandoffEvent, NoteGate, NUDGE};
+use super::handoff::{claude_reply_note, CallChecks, HandoffEvent, NoteGate, ASK_CLIENT, NUDGE};
 use super::persist::{reads_phone, TranscriptPersister};
 use super::timing::{self, TimingEvent, VoiceTiming};
 use super::session::{self, LiveStartRequest};
@@ -223,6 +224,14 @@ pub async fn handle_live_voice_ws(socket: WebSocket, config: Arc<Config>) {
     let mut timing = VoiceTiming::default();
     let mut checks = CallChecks::default();
     let mut notes = NoteGate::default();
+    // The meaning check (claims.rs): what each model turn said and what backs it, checked off the event loop.
+    let mut turns = TurnRecorder::default();
+    let claim_key = super::providers::stored_key("google", &config);
+    let claim_client = reqwest::Client::new();
+    let (claim_tx, mut claim_rx) = tokio::sync::mpsc::unbounded_channel::<(u64, u64, Verdict)>();
+    // Anything heard from December since a turn was sent for checking: then its correction is dropped, so it
+    // never talks over December.
+    let mut heard: u64 = 0;
     // Claude's answers to `mochi-ask` requests arrive as web-chat events.
     let mut chat_events = crate::web_chat::subscribe_web_channel_events();
 
@@ -267,6 +276,14 @@ pub async fn handle_live_voice_ws(socket: WebSocket, config: Arc<Config>) {
             chat = chat_events.recv() => {
                 match chat {
                     Ok(chat) => {
+                        if chat.thread_id == thread_id && chat.client_id == ASK_CLIENT {
+                            match chat.event.as_str() {
+                                "inference_start" => turns.back_office(true, None),
+                                "chat_done" => turns.back_office(false, chat.full_response.as_deref()),
+                                "chat_error" => turns.back_office(false, None),
+                                _ => {}
+                            }
+                        }
                         if let Some(note) = claude_reply_note(&chat, &thread_id) {
                             tracing::info!(session_id, "{LOG_PREFIX} Claude's answer arrived: passing it to the call");
                             if let Some(now) = notes.offer(note) {
@@ -277,6 +294,25 @@ pub async fn handle_live_voice_ws(socket: WebSocket, config: Arc<Config>) {
                     // Lagged: a burst of other chats' events went past. The bus is a
                     // process-wide static, so it never closes.
                     Err(_) => {}
+                }
+            }
+            Some((generation, heard_then, verdict)) = claim_rx.recv() => {
+                if verdict != Verdict::Ok {
+                    claims::log_catch(&config.workspace_dir, &session_id, &verdict).await;
+                    let current = generation == turns.generation() && heard_then == heard;
+                    if current && !checks.nudged() {
+                        tracing::info!(session_id, kind = verdict.kind(), "{LOG_PREFIX} claim check: correcting");
+                        checks.mark_nudged();
+                        let note = match &verdict {
+                            Verdict::FalseClaim { claim, truth } => claims::correction_note(claim, truth),
+                            _ => NUDGE.to_string(),
+                        };
+                        if let Some(now) = notes.offer(note) {
+                            let _ = sender.send_text(now).await;
+                        }
+                    } else {
+                        tracing::info!(session_id, kind = verdict.kind(), "{LOG_PREFIX} claim check: December spoke since, not correcting");
+                    }
                 }
             }
             event = session.recv() => {
@@ -314,7 +350,11 @@ pub async fn handle_live_voice_ws(socket: WebSocket, config: Arc<Config>) {
                 if let LiveAgentEvent::Live(LiveEvent::ToolCall(call)) = &event {
                     if reads_phone(&call.name, &call.args) {
                         persister.mark_private(); // December's phone data stays out of memory
+                        turns.private(); // ...and out of the meaning check
                     }
+                }
+                if matches!(&event, LiveAgentEvent::Live(LiveEvent::InputTranscript { .. })) {
+                    heard += 1;
                 }
                 let handoff_step = match &event {
                     LiveAgentEvent::ToolStarted { name, .. } => Some(HandoffEvent::ToolStarted(name.as_str())),
@@ -328,13 +368,32 @@ pub async fn handle_live_voice_ws(socket: WebSocket, config: Arc<Config>) {
                     _ => None,
                 };
                 if let Some(step) = handoff_step {
-                    if let Some(nudge) = checks.on_event(step, std::time::Instant::now()) {
+                    match step {
+                        HandoffEvent::UserSaid(text) => turns.user_said(text),
+                        HandoffEvent::AgentSaid(text) => turns.agent_said(text),
+                        HandoffEvent::ToolStarted(name) => turns.tool_started(name),
+                        HandoffEvent::TurnComplete => {}
+                    }
+                    let nudge = checks.on_event(step, std::time::Instant::now());
+                    if let Some(nudge) = nudge {
                         if nudge == NUDGE {
-                            tracing::info!(session_id, "{LOG_PREFIX} said Claude is on it without a handoff call: nudging");
+                            tracing::info!(session_id, "{LOG_PREFIX} said it's on it without a handoff call: nudging");
                         } else {
                             tracing::info!(session_id, "{LOG_PREFIX} a turn that needed a check or command ran none: nudging");
                         }
                         let _ = sender.send_text(nudge.to_string()).await;
+                    }
+                    if matches!(step, HandoffEvent::TurnComplete) {
+                        // every finished turn is read for claims, unless this call already corrected it
+                        if let (Some((generation, facts)), Some(key), None, false) =
+                            (turns.turn_over(), claim_key.clone(), nudge, checks.nudged())
+                        {
+                            let (client, tx, heard_then) = (claim_client.clone(), claim_tx.clone(), heard);
+                            tokio::spawn(async move {
+                                let verdict = claims::check(&client, &key, &facts).await;
+                                let _ = tx.send((generation, heard_then, verdict));
+                            });
+                        }
                     }
                 }
                 for outbound in map_event(event, &session_id, &provider, &thread_id) {

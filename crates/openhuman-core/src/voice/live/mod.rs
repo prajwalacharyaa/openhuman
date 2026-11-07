@@ -10,6 +10,7 @@
 //! - [`ws`]: the `/ws/live-voice` WebSocket that carries audio and events
 //!   (`http-server` builds only).
 //! - [`persist`]: final transcripts are saved into the thread.
+//! - [`claims`]: a meaning-based check that the model didn't claim work or facts nothing backs.
 //! - [`timing`]: optional per-turn timing records (`OPENHUMAN_VOICE_TIMING=1`).
 //! - [`ops`] / [`schemas`]: the `voice.live_*` RPCs (catalogue, settings,
 //!   provider test).
@@ -17,6 +18,8 @@
 //! Provider protocols live in `tinyliveagents`; nothing here speaks a
 //! provider's wire format.
 
+#[cfg(feature = "http-server")]
+mod claims;
 mod error;
 #[cfg(feature = "http-server")]
 mod handoff;

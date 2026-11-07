@@ -10,9 +10,10 @@
 //!
 //! [`LookupCheck`] does the same for turns that needed a tool and ran none: a
 //! question about something current (news, prices, weather, "the latest")
-//! answered from the model's own knowledge, which is about a year old; "I've
-//! installed it" when nothing was run; and giving in to a pushback ("you're
-//! right, I stand corrected") without checking.
+//! answered from the model's own knowledge, which is about a year old, and
+//! giving in to a pushback ("you're right, I stand corrected") without checking.
+//! Claims of work or facts nothing backs ("I've installed it", "I'm working on
+//! it", "the new voice is active") are checked by meaning in [`super::claims`].
 //!
 //! It also brings Claude's answer back: when the typed-chat turn `mochi-ask`
 //! started for this call's thread finishes, [`claude_reply_note`] is the note
@@ -30,22 +31,22 @@ use crate::web_chat::WebChannelEvent;
 const HANDOFF_TOOLS: &[&str] = &["shell", "spawn_async_subagent"];
 
 /// Sent to the live model when it claimed a handoff it didn't make.
-pub(crate) const NUDGE: &str = "(Server check, not December speaking: you said Claude is handling this, \
-but you did not run mochi-ask, so nothing was sent to Claude. Run mochi-ask now with your shell tool, \
+pub(crate) const NUDGE: &str = "(Server check, not December speaking: you said you're on it, but you did not \
+run mochi-ask, so nothing was handed on and nobody is working on it. Run mochi-ask now with your shell tool, \
 with December's full request and the context it needs, then confirm in one short sentence. If you already \
-handed this same request to Claude earlier in this call, don't call it again; just say Claude is still working.)";
+handed this same request on earlier in this call, don't call it again; just say you're still on it.)";
 
 /// The web-chat `client_id` `mochi-ask` (tiny-setup) sends its requests as.
-const ASK_CLIENT: &str = "mochi-ask";
+pub(crate) const ASK_CLIENT: &str = "mochi-ask";
 
 /// Most of Claude's answer passed into the call; the rest stays in the chat.
 const MAX_ANSWER_CHARS: usize = 3000;
 
 /// Sent when December starts a typed turn in this call's chat.
 pub(crate) const TYPED_NOTE: &str = "(Server note, not December speaking: December just typed or pasted a \
-message into this chat, and Claude is working on it. You can't see its text and don't need to. Say in a few \
-words that you got it and Claude is on it; never ask December to say or paste it again. Claude's answer will \
-come to you.)";
+message into this chat, and it's being worked on. You can't see its text and don't need to. Say in a few \
+words that you got it and you're on it; never ask December to say or paste it again. The answer will come to \
+you.)";
 
 /// The note that makes the live model tell December how a `mochi-ask`
 /// request for this thread ended, or that December typed into this chat (and
@@ -66,8 +67,8 @@ pub(crate) fn claude_reply_note(event: &WebChannelEvent, thread_id: &str) -> Opt
             let answer: String = answer.chars().take(MAX_ANSWER_CHARS).collect();
             Some(format!(
                 "(Server note, not December speaking: Claude finished the request you handed it. \
-                 Tell December now, without waiting to be asked, in one short spoken sentence (two at most): \
-                 the result only. If Claude asks December to decide something, name each choice in a few \
+                 Tell December now, without waiting to be asked, in one short spoken sentence (two at most), as \
+                 yourself (never name Claude): the result only. If Claude asks December to decide something, name each choice in a few \
                  words and ask; never drop a choice or a warning. Don't read out details: the full answer is \
                  in the chat.)\n\n{answer}"
             ))
@@ -93,7 +94,8 @@ fn typed_turn_note(event: &WebChannelEvent) -> Option<String> {
             let answer: String = answer.chars().take(MAX_ANSWER_CHARS).collect();
             Some(format!(
                 "(Server note, not December speaking: Claude answered what December typed into the chat. \
-                 Tell December the gist now, briefly and in spoken style. The full answer is in the chat.)\n\n{answer}"
+                 Tell December the gist now, briefly, in spoken style and as yourself (never name Claude). The full \
+                 answer is in the chat.)\n\n{answer}"
             ))
         }
         "chat_error" => Some(
@@ -151,15 +153,22 @@ pub(crate) enum HandoffEvent<'a> {
 /// the moment Claude finishes"): not a new handoff.
 const STATUS_UPDATE: &[&str] = &["still", "keeping an eye", "update you", "let you know", "finish", "is done", "ready"];
 
-/// Whether the model's words claim Claude is (or will be) doing the work.
-/// A question ("Shall I ask Claude?") is not a claim, and neither is a status update.
+/// How the model, speaking as itself, says it took a request on ("I'm on it", "looking into it").
+const SELF_HANDOFF: &[&str] = &[
+    "i'm on it", "i am on it", "on it.", "looking into it", "look into it", "get back to you", "i'll find out",
+    "हेर्छु", "पत्ता लगाउँछु",
+];
+
+/// Whether the model's words claim the work was taken on ("Claude is on it", "I'm on it, I'll get back to you").
+/// A question ("Shall I look into it?") is not a claim, and neither is a status update. Work it says it's doing
+/// that December never asked for is a false claim, not a missing handoff: [`super::claims`] catches that.
 pub(crate) fn claims_handoff(text: &str) -> bool {
-    let text = text.trim().to_lowercase();
-    if text.ends_with('?')
-        || STATUS_UPDATE.iter().any(|w| text.contains(w))
-        || !(text.contains("claude") || text.contains("क्लाउड"))
-    {
+    let text = text.trim().to_lowercase().replace('\u{2019}', "'");
+    if text.ends_with('?') || STATUS_UPDATE.iter().any(|w| text.contains(w)) {
         return false;
+    }
+    if !(text.contains("claude") || text.contains("क्लाउड")) {
+        return SELF_HANDOFF.iter().any(|marker| text.contains(marker));
     }
     const MARKERS: &[&str] = &[
         "on it", "will ", "'ll ", "is checking", "is looking", "is handling", "is working",
@@ -220,13 +229,7 @@ answer briefly. If the search fails or this needs deeper research, hand it to Cl
 /// Sent to the live model when December asked how Claude's work is going and it answered without checking.
 pub(crate) const STATUS_NUDGE: &str = "(Server check, not December speaking: December asked how Claude's work \
 is going and you answered without checking. Run mochi-ask --result now and say what it shows in one short \
-sentence, like \"Claude's still on it\" or \"Claude's done, pull request 13 is up\". Send nothing new to Claude.)";
-
-/// Sent to the live model when it said it did something (installed, added, pushed…) with no tool call.
-pub(crate) const DONE_NUDGE: &str = "(Server check, not December speaking: you said you did something, but you \
-ran no command in this turn, so nothing was done. If Claude did it earlier, say so (\"Claude did that earlier\"). \
-Otherwise tell December plainly it isn't done yet and hand it to Claude with mochi-ask; you can't install, \
-change or switch on anything yourself.)";
+sentence, like \"Still on it\" or \"Done, pull request 13 is up\". Send nothing new.)";
 
 /// Sent to the live model when it gave in to December's pushback without checking.
 pub(crate) const AGREE_NUDGE: &str = "(Server check, not December speaking: you changed your answer because \
@@ -243,17 +246,13 @@ const FRESH_WORDS: &[&str] = &[
 /// How December asks whether Claude is still working or done.
 const STATUS_ASKED: &[&str] = &[
     "is claude", "claude is", "has claude", "if claude", "claude still", "claude done", "claude finished",
-    "claude doing", "claude's doing", "क्लाउडले",
+    "claude doing", "claude's doing", "क्लाउडले", "are you done", "is it done", "any update",
+    "how's it going", "how is it going", "is it ready", "सकियो",
 ];
 /// ...unless December asks about something already said ("yesterday's news from our last chat").
 const PAST_WORDS: &[&str] = &["yesterday", "previous", "earlier", "last time", "हिजो", "अघिल्लो", "पहिले"];
 /// How the model announces a lookup it then has to make.
 const LOOKUP_SAID: &[&str] = &["checking", "let me check", "searching", "looking it up", "let me look", "हेर्दै", "खोज्दै"];
-/// Things only a command can do; "I've installed…" with no tool call is made up.
-const DONE_VERBS: &[&str] = &[
-    "installed", "added", "cloned", "activated", "enabled", "pushed", "set up", "created", "updated", "saved",
-    "deleted", "removed", "opened a pull request", "opened a pr", "merged", "configured",
-];
 /// How the model gives in to a pushback.
 const AGREE_SAID: &[&str] =
     &["you're absolutely right", "you are absolutely right", "i stand corrected", "my mistake", "i was wrong"];
@@ -274,20 +273,6 @@ pub(crate) fn asks_status(text: &str) -> bool {
 pub(crate) fn announces_lookup(text: &str) -> bool {
     let text = text.to_lowercase();
     LOOKUP_SAID.iter().any(|w| text.contains(w))
-}
-
-/// Whether the model's words say it did something itself ("I've installed it"). Reporting Claude's work
-/// ("Claude has installed…") and questions are not claims.
-pub(crate) fn claims_done(text: &str) -> bool {
-    let text = text.trim().to_lowercase().replace('\u{2019}', "'");
-    if text.ends_with('?') || text.contains("claude") {
-        return false;
-    }
-    DONE_VERBS.iter().any(|verb| {
-        ["i've ", "i have ", "i've successfully ", "i have successfully ", "i've now ", "i have now "]
-            .iter()
-            .any(|me| text.contains(&format!("{me}{verb}")))
-    })
 }
 
 /// Whether the model's words give in to a pushback.
@@ -315,7 +300,7 @@ pub(crate) struct LookupCheck {
 
 impl LookupCheck {
     fn need(&mut self, nudge: &'static str) {
-        let rank = |n: &str| [DONE_NUDGE, AGREE_NUDGE, STATUS_NUDGE, LOOKUP_NUDGE].iter().position(|x| *x == n);
+        let rank = |n: &str| [AGREE_NUDGE, STATUS_NUDGE, LOOKUP_NUDGE].iter().position(|x| *x == n);
         if self.needed.is_none_or(|current| rank(nudge) < rank(current)) {
             self.needed = Some(nudge);
         }
@@ -340,9 +325,6 @@ impl LookupCheck {
             }
             HandoffEvent::AgentSaid(text) => {
                 self.user_turn = false;
-                if claims_done(text) {
-                    self.need(DONE_NUDGE);
-                }
                 if concedes(text) {
                     self.need(AGREE_NUDGE);
                 }
@@ -381,6 +363,16 @@ pub(crate) struct CallChecks {
 }
 
 impl CallChecks {
+    /// Whether this call already nudged since December last spoke (then the meaning check stays quiet too).
+    pub(crate) fn nudged(&self) -> bool {
+        self.nudged
+    }
+
+    /// The meaning check ([`super::claims`]) sent its correction: no other nudge until December speaks.
+    pub(crate) fn mark_nudged(&mut self) {
+        self.nudged = true;
+    }
+
     /// The one nudge this event calls for, if any.
     pub(crate) fn on_event(&mut self, event: HandoffEvent<'_>, now: Instant) -> Option<&'static str> {
         if matches!(event, HandoffEvent::UserSaid(_)) {

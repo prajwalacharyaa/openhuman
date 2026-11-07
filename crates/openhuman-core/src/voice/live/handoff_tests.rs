@@ -8,6 +8,13 @@ fn recognises_claims_but_not_questions() {
     assert!(!claims_handoff("That needs Claude. Shall I ask Claude?"));
     assert!(!claims_handoff("Claude is still working on opening the website for you."));
     assert!(!claims_handoff("Today is Kartik 16, 2083."));
+    // speaking as itself (2026-11-07: December asked it never to name Claude)
+    assert!(claims_handoff("Sure, I'm on it."));
+    assert!(claims_handoff("Looking into it, I'll get back to you."));
+    assert!(!claims_handoff("Shall I look into it?"));
+    assert!(!claims_handoff("I'm still on it, I'll let you know when it's ready."));
+    // work nobody asked for is a false claim for the meaning check, not a handoff to make
+    assert!(!claims_handoff("I'm working on the backend filters and the frontend toggle."));
 }
 
 #[test]
@@ -146,26 +153,17 @@ fn stays_quiet_when_it_looked_or_nothing_current_was_asked() {
 }
 
 #[test]
-fn knows_made_up_actions_and_giving_in() {
-    assert!(claims_done("I have successfully installed Graphify on your server."));
-    assert!(claims_done("Understood, I’ve activated Ponytail mode."));
-    assert!(!claims_done("Claude has installed Graphify and updated the rules."));
-    assert!(!claims_done("Shall I have it installed?"));
-    assert!(!claims_done("The plugin installs globally."));
+fn knows_giving_in() {
     assert!(concedes("You're absolutely right, and I apologize. I stand corrected."));
     assert!(!concedes("Right now it is sunny."));
     assert!(asks_fresh("Also check if this project was actually awarded number one."));
 }
 
 #[test]
-fn nudges_a_made_up_action_first() {
+fn nudges_giving_in_without_a_check() {
     let t0 = std::time::Instant::now();
     let later = |s: u64| t0 + std::time::Duration::from_secs(s);
     let mut check = LookupCheck::default();
-    check.on_event(HandoffEvent::UserSaid("Okay, let's add it to our portfolio site then."), t0);
-    check.on_event(HandoffEvent::AgentSaid("Checking… I have successfully installed Graphify."), later(1));
-    assert_eq!(check.on_event(HandoffEvent::TurnComplete, later(2)), Some(DONE_NUDGE));
-
     check.on_event(HandoffEvent::UserSaid("No, I mean an Anthropic hackathon."), later(60));
     check.on_event(HandoffEvent::AgentSaid("You're absolutely right, it won. I stand corrected."), later(61));
     assert_eq!(check.on_event(HandoffEvent::TurnComplete, later(62)), Some(AGREE_NUDGE));
@@ -197,6 +195,8 @@ fn knows_status_questions_and_updates() {
     assert!(asks_status("Can you check if Claude is making edit in portfolio site?"));
     assert!(asks_status("Is Claude still working?"));
     assert!(!asks_status("Ask Claude to fix the footer."));
+    assert!(asks_status("Are you done with the footer?"));
+    assert!(asks_status("Any update on the pull request?"));
     assert!(!claims_handoff("I am keeping an eye on the progress and will update you the moment Claude finishes the edits."));
     assert!(!claims_handoff("Claude's answer is ready."));
 }
@@ -223,4 +223,19 @@ fn a_status_question_gets_one_status_nudge_only() {
     checks.on_event(HandoffEvent::UserSaid("Fix the footer too."), later(60));
     checks.on_event(HandoffEvent::AgentSaid("Claude will do it."), later(61));
     assert_eq!(checks.on_event(HandoffEvent::TurnComplete, later(62)), Some(NUDGE));
+}
+
+#[test]
+fn the_meaning_check_shares_the_one_nudge() {
+    let t0 = std::time::Instant::now();
+    let mut checks = CallChecks::default();
+    checks.on_event(HandoffEvent::UserSaid("Where should the toggle go?"), t0);
+    assert!(!checks.nudged());
+    checks.mark_nudged();
+    assert!(checks.nudged());
+    // a word-list nudge now stays quiet until December speaks
+    checks.on_event(HandoffEvent::AgentSaid("Sure, Claude is on it."), t0);
+    assert_eq!(checks.on_event(HandoffEvent::TurnComplete, t0), None);
+    checks.on_event(HandoffEvent::UserSaid("Thanks."), t0);
+    assert!(!checks.nudged());
 }
