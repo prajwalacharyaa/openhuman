@@ -41,9 +41,25 @@ jobs:
         with:
           distribution: temurin
           java-version: "17"
+      # Gradle itself, checked against its official SHA-256: from Gradle's servers, else a mirror (Gradle's servers
+      # pass downloads on to GitHub release files, which kept returning 504s on 2026-11-08)
+      - name: Gradle 8.11.1
+        run: |
+          sum=f397b287023acdba1e9f6fc5ea72d22dd63669d59ed4a289a29b1a76eee151c6
+          zip="$RUNNER_TEMP/gradle.zip"
+          for url in https://services.gradle.org/distributions/gradle-8.11.1-bin.zip \
+                     https://downloads.gradle.org/distributions/gradle-8.11.1-bin.zip \
+                     https://mirrors.cloud.tencent.com/gradle/gradle-8.11.1-bin.zip; do
+            for try in 1 2 3; do
+              curl -fsSL --retry 3 --max-time 300 -o "$zip" "$url" && echo "$sum  $zip" | sha256sum -c --quiet && break 2
+              rm -f "$zip"; sleep 10
+            done
+          done
+          [ -f "$zip" ] || { echo "::error title=Gradle::couldn't download Gradle 8.11.1 with the right checksum"; exit 1; }
+          unzip -q "$zip" -d "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/gradle-8.11.1/bin" >> "$GITHUB_PATH"
       - uses: gradle/actions/setup-gradle@v4
         with:
-          gradle-version: "8.11.1"
           # save the download cache from this branch too (by default only the default branch writes it), so builds
           # don't fetch Gradle and every library again each time
           cache-read-only: false
