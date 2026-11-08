@@ -1,5 +1,6 @@
 # Mochi phone
 
+The look (colours, type, spacing, Mochi the mascot) and the rules every screen follows: [DESIGN.md](DESIGN.md).
 A small Android app (Android 12 or newer) for Mochi, December's assistant on the xarvis-core server.
 
 - **Mochi calls you.** When Mochi hits a major decision, it rings your phone like a normal incoming
