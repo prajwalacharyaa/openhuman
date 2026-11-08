@@ -27,7 +27,6 @@
     <uses-permission android:name="android.permission.SEND_SMS" />
     <uses-permission android:name="android.permission.CALL_PHONE" />
     <uses-permission android:name="android.permission.READ_PHONE_STATE" />
-    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
 
     <application
         android:label="Mochi"
@@ -123,11 +122,6 @@
                 <action android:name="android.service.quicksettings.action.QS_TILE" />
             </intent-filter>
         </service>
-
-        <service
-            android:name=".WakeService"
-            android:exported="false"
-            android:foregroundServiceType="microphone" />
 
         <service
             android:name=".MochiNotifications"

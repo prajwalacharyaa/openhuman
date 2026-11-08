@@ -125,7 +125,7 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         RingService.start(this)
-        WakeService.start(this) // listening for "Mochi" again after a reboot, if it's on
+        Mochi.forgetWakeWord(this) // the old Picovoice wake word is gone: its saved key and keyword file go too
     }
 
     companion object {
@@ -262,7 +262,7 @@ private fun HomeScreen(go: (String) -> Unit) {
                     val lines = tokens.entries.filter { it.value.total > 0 }.sortedByDescending { it.value.total }
                         .map { "${it.key.replaceFirstChar { ch -> ch.uppercase() }} ${Doing.fmt(it.value.total)}" } +
                         (if (gemini > 0) listOf("Gemini ≈${Doing.fmt(gemini)}") else emptyList())
-                    if (lines.isNotEmpty()) Text("Today\n" + lines.joinToString("\n"), style = Type.small.copy(fontSize = 10.sp,
+                    if (lines.isNotEmpty()) Text(lines.joinToString("\n"), style = Type.small.copy(fontSize = 10.sp,
                         lineHeight = 13.sp), color = c.muted, textAlign = TextAlign.Center)
                 }
             }
@@ -474,7 +474,7 @@ private fun SetupCard(onSaved: () -> Unit) {
                 }
             }
         }
-        Text("Wake word, phone abilities and more are under Phone abilities.", style = Type.small, color = c.muted)
+        Text("Phone abilities (texts, notifications, assistant) are under Phone abilities.", style = Type.small, color = c.muted)
     }
 }
 

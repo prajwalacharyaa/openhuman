@@ -60,6 +60,4 @@ dependencies {
     implementation("androidx.activity:activity-compose:1.9.3")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
-    // the "Mochi" wake word, on the phone only (Picovoice Porcupine; needs December's free access key)
-    implementation("ai.picovoice:porcupine-android:4.0.2")
 }

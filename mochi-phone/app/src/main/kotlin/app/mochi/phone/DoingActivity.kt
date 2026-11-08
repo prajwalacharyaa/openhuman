@@ -128,6 +128,9 @@ private fun laneInk(c: MochiColors, lane: String) = when (lane) {
     else -> c.muted
 }
 
+/** The server's card for a call itself (mochi-activity), not shown here. */
+private const val CALL_TASK = "Call with Mochi"
+
 /** What Mochi says while a call is starting. */
 private val CALL_HINTS = listOf("Calling Mochi…", "Connecting over Tailscale…", "Waking Gemini up…", "Say hi when Mochi answers")
 
@@ -211,8 +214,18 @@ private fun DoingScreen(onBack: () -> Unit) {
                     onBack()
                 }
             }
-            // a new request comes in at the top: follow it unless December scrolled far down to read
-            LaunchedEffect(tasks.firstOrNull()?.at) { if (list.firstVisibleItemIndex <= 3) list.animateScrollToItem(0) }
+            // the call's own card ("Call with Mochi") is left out: it kept jumping to the top during a call
+            // (the live call line above already says what the call is doing); requests asked on it still show
+            val shown = tasks.filter { it.task?.text != CALL_TASK }.mapNotNull { t ->
+                val steps = if (filter == null) t.steps else t.steps.filter { laneOf(it.step) == filter }
+                if (filter != null && steps.isEmpty()) null else t.copy(steps = steps)
+            }
+            // something new: bring the newest card into view (just under the Stop / details line), unless December
+            // scrolled far down to read older ones
+            LaunchedEffect(shown.firstOrNull()?.at) {
+                val bar = if (Call.active) 2 else 1
+                if (shown.isNotEmpty() && list.firstVisibleItemIndex <= bar + 1) list.animateScrollToItem(bar)
+            }
             LazyColumn(state = list, contentPadding = PaddingValues(start = Space.l, end = Space.l, bottom = 96.dp),
                 verticalArrangement = Arrangement.spacedBy(Space.s)) {
                 item("hero") {
@@ -263,10 +276,6 @@ private fun DoingScreen(onBack: () -> Unit) {
                             io(scope, { Mochi.cancel(ctx, stopThread) }) {}
                         }
                     }
-                }
-                val shown = tasks.mapNotNull { t ->
-                    val steps = if (filter == null) t.steps else t.steps.filter { laneOf(it.step) == filter }
-                    if (filter != null && steps.isEmpty()) null else t.copy(steps = steps)
                 }
                 if (shown.isEmpty()) item("empty") {
                     Text("Nothing here yet.", style = Type.body, color = c.muted, modifier = Modifier.padding(Space.l))

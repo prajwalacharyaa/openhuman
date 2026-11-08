@@ -109,7 +109,6 @@ object Call {
             main.post { listener?.onEnded() }
             return
         }
-        WakeService.pauseNow() // the wake word lets go of the microphone for the call
         active = true
         answered = false
         muted = false
@@ -159,7 +158,6 @@ object Call {
             }.start()
         }
         app.stopService(Intent(app, CallService::class.java))
-        WakeService.resume(app) // listen for "Mochi" again, if that's on
         main.post { listener?.onEnded(); MochiWidget.update(app, force = true) }
     }
 
@@ -410,7 +408,6 @@ object Call {
                     n += got
                 }
                 if (n == FRAME_BYTES) {
-                    if (frozen) Unfreeze.feed(buf)
                     socket.send((if (muted || frozen) silence else buf).toByteString())
                     sentBytes += buf.size
                 }

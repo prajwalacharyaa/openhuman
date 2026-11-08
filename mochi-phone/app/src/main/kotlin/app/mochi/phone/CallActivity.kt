@@ -40,6 +40,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import app.mochi.phone.ui.LocalMochi
 import app.mochi.phone.ui.Mascot
@@ -183,20 +184,25 @@ class CallActivity : ComponentActivity(), Call.Listener {
         }
         Column(Modifier.fillMaxSize().background(c.bg).systemBarsPadding().padding(Space.l),
             horizontalAlignment = Alignment.CenterHorizontally) {
-            // back to Home (the call goes on; Home shows "Back to call")
-            Row(Modifier.fillMaxWidth()) { RoundButton(Icons2.Back, "Back to Home", c.field, c.ink, 44.dp) { finish() } }
-            Mascot(Modifier.size(160.dp), mood = mood, onTap = { DoingActivity.open(this@CallActivity) })
-            Text("Tap Mochi to see what it's doing", style = Type.small, color = c.muted)
-            // this call's tokens: Claude's exact (from the server's feed), Gemini's estimated from the audio
-            if (Call.active && !incoming) Text("This call · Claude ${Doing.fmt(Doing.claudeSince(Call.startedAtMs).total)}" +
-                " · Gemini ≈${Doing.fmt(Call.geminiTokens)}", style = Type.small, color = c.muted)
-            Text("Mochi", style = Type.display, color = c.ink, modifier = Modifier.padding(top = Space.m))
-            Text(when {
-                    Call.silent && !incoming -> "$status · silent: Mochi answers in text"
-                    mood == Mood.Sleepy && !Call.frozen && !incoming -> "Listening (quiet for a while)"
-                    else -> status
-                },
-                style = Type.body, color = c.muted, textAlign = TextAlign.Center)
+            // top: back to Home (the call goes on; Home shows "Back to call"), with "Mochi", what it's doing and
+            // this call's tokens beside it (like the "What Mochi is doing" header)
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(Space.m)) {
+                RoundButton(Icons2.Back, "Back to Home", c.field, c.ink, 44.dp) { finish() }
+                Column(Modifier.weight(1f)) {
+                    Text("Mochi", style = Type.title, color = c.ink)
+                    Text(when {
+                            Call.silent && !incoming -> "$status · silent: Mochi answers in text"
+                            mood == Mood.Sleepy && !Call.frozen && !incoming -> "Listening (quiet for a while)"
+                            else -> status
+                        }, style = Type.small, color = c.muted, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    // this call's tokens: Claude's exact (from the server's feed), Gemini's estimated from the audio
+                    if (Call.active && !incoming) Text("Claude ${Doing.fmt(Doing.claudeSince(Call.startedAtMs).total)}" +
+                        " · Gemini ≈${Doing.fmt(Call.geminiTokens)} tokens", style = Type.small, color = c.muted, maxLines = 1)
+                }
+            }
+            // Mochi (a tap opens "What Mochi is doing"), then the conversation
+            Mascot(Modifier.padding(top = Space.s).size(96.dp), mood = mood, onTap = { DoingActivity.open(this@CallActivity) })
             LazyColumn(state = list, modifier = Modifier.weight(1f).fillMaxWidth(),
                 contentPadding = PaddingValues(vertical = Space.l), verticalArrangement = Arrangement.spacedBy(Space.m)) {
                 if (incoming && question.isNotBlank()) item { Bubble(false, question, true) }

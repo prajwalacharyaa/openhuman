@@ -32,9 +32,7 @@ object Mochi {
     const val NOTIFY_RING = 2
     const val NOTIFY_ONGOING = 3
     const val NOTIFY_APPROVALS = 5
-    const val NOTIFY_WAKE = 7
     private const val FRESH_AFTER_MS = 30 * 60_000L
-    const val NOTIFY_WAKE_PROMPT = 8
     const val NOTIFY_NOTICE_BASE = 100
     private const val CLIENT_ID = "mochi-phone"
     private val JSON = "application/json".toMediaType()
@@ -69,11 +67,11 @@ object Mochi {
     /** The current conversation was just used (a call or a typed message). */
     fun touchThread(c: Context) = prefs(c).edit().putLong("thread_at", System.currentTimeMillis()).apply()
 
-    /** "Mochi" wake word: on/off, and the Picovoice access key it needs (the keyword file is in filesDir). */
-    fun wakeEnabled(c: Context) = prefs(c).getBoolean("wake", false)
-    fun setWakeEnabled(c: Context, on: Boolean) = prefs(c).edit().putBoolean("wake", on).apply()
-    fun wakeKey(c: Context): String = prefs(c).getString("wake_key", "") ?: ""
-    fun setWakeKey(c: Context, key: String) = prefs(c).edit().putString("wake_key", key).apply()
+    /** The Picovoice wake word was removed: drop its saved access key, switch and keyword file (once, harmless after). */
+    fun forgetWakeWord(c: Context) {
+        if (prefs(c).contains("wake_key") || prefs(c).contains("wake")) prefs(c).edit().remove("wake_key").remove("wake").apply()
+        java.io.File(c.filesDir, "mochi.ppn").delete()
+    }
     fun setThread(c: Context, id: String?) =
         prefs(c).edit().putString("thread", id).putLong("thread_at", System.currentTimeMillis()).apply()
 
