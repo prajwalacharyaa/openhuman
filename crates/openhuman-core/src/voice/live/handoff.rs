@@ -12,8 +12,6 @@
 //! question about something current (news, prices, weather, "the latest")
 //! answered from the model's own knowledge, which is about a year old, and
 //! giving in to a pushback ("you're right, I stand corrected") without checking.
-//! Claims of work or facts nothing backs ("I've installed it", "I'm working on
-//! it", "the new voice is active") are checked by meaning in [`super::claims`].
 //!
 //! It also brings Claude's answer back: when the typed-chat turn `mochi-ask`
 //! started for this call's thread finishes, [`claude_reply_note`] is the note
@@ -107,11 +105,18 @@ fn typed_turn_note(event: &WebChannelEvent) -> Option<String> {
     }
 }
 
-/// Holds server notes (Claude's answers) while the model is speaking: a note sent mid-sentence is taken as new
-/// input, so the model cuts itself off and starts its answer again. Notes go out when its turn is over.
+/// How long after December's last heard words a note still waits: a note sent while December is mid-sentence
+/// is answered instead of December (2026-11-08: Claude's answer arrived while December was asking the next
+/// question, and the reply mixed the two).
+pub(crate) const QUIET_AFTER_USER: Duration = Duration::from_millis(1500);
+
+/// Holds server notes (Claude's answers) while the model is speaking or December is talking: a note sent
+/// mid-sentence is taken as new input, so the model cuts itself off or talks over December. Notes go out when
+/// the model's turn is over and December is quiet ([`Self::turn_over`], else [`Self::tick`]).
 #[derive(Debug, Default)]
 pub(crate) struct NoteGate {
     speaking: bool,
+    heard_at: Option<Instant>,
     waiting: Vec<String>,
 }
 
@@ -121,20 +126,41 @@ impl NoteGate {
         self.speaking = true;
     }
 
-    /// A note to pass to the model: now, or `None` while it's speaking (then on [`Self::turn_over`]).
-    pub(crate) fn offer(&mut self, note: String) -> Option<String> {
-        if self.speaking {
-            self.waiting.push(note);
-            None
-        } else {
-            Some(note)
-        }
+    /// December's words were heard (any transcript, partial or final).
+    pub(crate) fn heard(&mut self, now: Instant) {
+        self.heard_at = Some(now);
     }
 
-    /// The model finished (or was interrupted): the notes that waited, as one.
-    pub(crate) fn turn_over(&mut self) -> Option<String> {
+    fn user_quiet(&self, now: Instant) -> bool {
+        self.heard_at.is_none_or(|at| now.duration_since(at) >= QUIET_AFTER_USER)
+    }
+
+    fn release(&mut self, now: Instant) -> Option<String> {
+        (!self.speaking && self.user_quiet(now) && !self.waiting.is_empty())
+            .then(|| std::mem::take(&mut self.waiting).join("\n\n"))
+    }
+
+    /// A note to pass to the model: now, or `None` while it waits.
+    pub(crate) fn offer(&mut self, note: String, now: Instant) -> Option<String> {
+        self.waiting.push(note);
+        self.release(now)
+    }
+
+    /// The model finished or was interrupted: the notes that waited, as one, unless December is talking.
+    pub(crate) fn turn_over(&mut self, now: Instant) -> Option<String> {
         self.speaking = false;
-        (!self.waiting.is_empty()).then(|| std::mem::take(&mut self.waiting).join("\n\n"))
+        self.release(now)
+    }
+
+    /// December cut the model off: it stopped, and December is talking now.
+    pub(crate) fn interrupted(&mut self, now: Instant) {
+        self.speaking = false;
+        self.heard_at = Some(now);
+    }
+
+    /// Called about once a second: notes that waited for December to finish.
+    pub(crate) fn tick(&mut self, now: Instant) -> Option<String> {
+        self.release(now)
     }
 }
 
@@ -160,8 +186,7 @@ const SELF_HANDOFF: &[&str] = &[
 ];
 
 /// Whether the model's words claim the work was taken on ("Claude is on it", "I'm on it, I'll get back to you").
-/// A question ("Shall I look into it?") is not a claim, and neither is a status update. Work it says it's doing
-/// that December never asked for is a false claim, not a missing handoff: [`super::claims`] catches that.
+/// A question ("Shall I look into it?") is not a claim, and neither is a status update.
 pub(crate) fn claims_handoff(text: &str) -> bool {
     let text = text.trim().to_lowercase().replace('\u{2019}', "'");
     if text.ends_with('?') || STATUS_UPDATE.iter().any(|w| text.contains(w)) {
@@ -363,16 +388,6 @@ pub(crate) struct CallChecks {
 }
 
 impl CallChecks {
-    /// Whether this call already nudged since December last spoke (then the meaning check stays quiet too).
-    pub(crate) fn nudged(&self) -> bool {
-        self.nudged
-    }
-
-    /// The meaning check ([`super::claims`]) sent its correction: no other nudge until December speaks.
-    pub(crate) fn mark_nudged(&mut self) {
-        self.nudged = true;
-    }
-
     /// The one nudge this event calls for, if any.
     pub(crate) fn on_event(&mut self, event: HandoffEvent<'_>, now: Instant) -> Option<&'static str> {
         if matches!(event, HandoffEvent::UserSaid(_)) {

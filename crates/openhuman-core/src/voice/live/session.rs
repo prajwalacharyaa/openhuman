@@ -10,7 +10,8 @@
 //! The prompt gives the voice what a typed turn gets: the workspace persona
 //! and role files, the same date stamp in the user's zone, and a memory pack
 //! recalled when the session starts. The speaking
-//! guidance comes from the workspace's `VOICE.md` when it has one, else the
+//! guidance comes from the workspace's `VOICE.md` when it has one (then
+//! `ROLE.md`, the typed agent's job description, is left out), else the
 //! built-in `prompt.md`.
 
 use std::path::Path;
@@ -58,6 +59,10 @@ const BASE_PROMPT: &str = include_str!("prompt.md");
 pub(crate) const VOICE_PROMPT_FILE: &str = "VOICE.md";
 /// Workspace files a typed orchestrator turn carries, in the same order.
 pub(crate) const PERSONA_FILES: [&str; 3] = ["SOUL.md", "IDENTITY.md", "ROLE.md"];
+/// With a workspace `VOICE.md`, the voice carries only who it is: `ROLE.md` is the typed agent's job
+/// description (projects, browser, research habits), and in a call it read as things the voice itself could
+/// do, so it claimed work it couldn't do (2026-11-08). `VOICE.md` says what the voice does.
+pub(crate) const VOICE_PERSONA_FILES: [&str; 2] = ["SOUL.md", "IDENTITY.md"];
 /// What the opening memory recall is ranked around when the thread has no
 /// user message yet.
 const DEFAULT_RECALL_FOCUS: &str =
@@ -116,7 +121,12 @@ pub(crate) fn system_prompt(
     let mut prompt = guidance.to_string();
 
     let mut persona = String::new();
-    for file in PERSONA_FILES {
+    let files: &[&str] = if custom.as_deref().is_some_and(|text| !text.trim().is_empty()) {
+        &VOICE_PERSONA_FILES
+    } else {
+        &PERSONA_FILES
+    };
+    for file in files.iter().copied() {
         inject_workspace_file(&mut persona, workspace_dir, file);
     }
     if !persona.trim().is_empty() {

@@ -85,13 +85,41 @@ fn passes_back_only_this_calls_claude_answers() {
 
 #[test]
 fn notes_wait_until_the_model_stops_speaking() {
+    let t0 = std::time::Instant::now();
     let mut gate = NoteGate::default();
-    assert_eq!(gate.offer("first".into()), Some("first".into()), "quiet: straight through");
+    assert_eq!(gate.offer("first".into(), t0), Some("first".into()), "quiet: straight through");
     gate.agent_audio();
-    assert_eq!(gate.offer("second".into()), None, "mid-sentence: held");
-    assert_eq!(gate.offer("third".into()), None);
-    assert_eq!(gate.turn_over(), Some("second\n\nthird".into()));
-    assert_eq!(gate.turn_over(), None);
+    assert_eq!(gate.offer("second".into(), t0), None, "mid-sentence: held");
+    assert_eq!(gate.offer("third".into(), t0), None);
+    assert_eq!(gate.turn_over(t0), Some("second\n\nthird".into()));
+    assert_eq!(gate.turn_over(t0), None);
+}
+
+#[test]
+fn notes_wait_while_december_is_talking() {
+    let t0 = std::time::Instant::now();
+    let at = |ms: u64| t0 + std::time::Duration::from_millis(ms);
+    let mut gate = NoteGate::default();
+    gate.heard(t0);
+    assert_eq!(gate.offer("answer".into(), at(200)), None, "December mid-sentence: held");
+    gate.heard(at(1000));
+    assert_eq!(gate.tick(at(2000)), None, "still within the quiet gap");
+    // the model answers December first; its turn ends while December is quiet: the note goes then
+    gate.agent_audio();
+    assert_eq!(gate.tick(at(3000)), None, "never while the model speaks");
+    assert_eq!(gate.turn_over(at(3500)), Some("answer".into()));
+
+    // December spoke but the model stayed silent (noise): the tick lets it out once December is quiet
+    gate.heard(at(4000));
+    assert_eq!(gate.offer("later".into(), at(4100)), None);
+    assert_eq!(gate.tick(at(4000) + QUIET_AFTER_USER), Some("later".into()));
+    assert_eq!(gate.tick(at(9000)), None);
+
+    // December cuts the model off: nothing goes out until December has finished
+    gate.agent_audio();
+    gate.interrupted(at(10_000));
+    assert_eq!(gate.offer("after".into(), at(10_100)), None);
+    assert_eq!(gate.tick(at(10_000) + QUIET_AFTER_USER), Some("after".into()));
 }
 
 #[test]
@@ -223,19 +251,4 @@ fn a_status_question_gets_one_status_nudge_only() {
     checks.on_event(HandoffEvent::UserSaid("Fix the footer too."), later(60));
     checks.on_event(HandoffEvent::AgentSaid("Claude will do it."), later(61));
     assert_eq!(checks.on_event(HandoffEvent::TurnComplete, later(62)), Some(NUDGE));
-}
-
-#[test]
-fn the_meaning_check_shares_the_one_nudge() {
-    let t0 = std::time::Instant::now();
-    let mut checks = CallChecks::default();
-    checks.on_event(HandoffEvent::UserSaid("Where should the toggle go?"), t0);
-    assert!(!checks.nudged());
-    checks.mark_nudged();
-    assert!(checks.nudged());
-    // a word-list nudge now stays quiet until December speaks
-    checks.on_event(HandoffEvent::AgentSaid("Sure, Claude is on it."), t0);
-    assert_eq!(checks.on_event(HandoffEvent::TurnComplete, t0), None);
-    checks.on_event(HandoffEvent::UserSaid("Thanks."), t0);
-    assert!(!checks.nudged());
 }

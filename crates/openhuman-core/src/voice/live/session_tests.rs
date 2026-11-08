@@ -77,6 +77,17 @@ fn the_prompt_carries_persona_files_like_a_typed_turn() {
 }
 
 #[test]
+fn a_workspace_voice_file_leaves_out_the_typed_role() {
+    let ws = tempfile::tempdir().unwrap();
+    std::fs::write(ws.path().join("SOUL.md"), "# Soul\nWarm and direct.").unwrap();
+    std::fs::write(ws.path().join("ROLE.md"), "# Role\nOpen the browser for pages.").unwrap();
+    std::fs::write(ws.path().join(VOICE_PROMPT_FILE), "You are Mochi on a call.").unwrap();
+    let prompt = system_prompt(ws.path(), None, &[], None, None);
+    assert!(prompt.contains("Warm and direct."), "who it is stays");
+    assert!(!prompt.contains("Open the browser for pages."), "the typed job description doesn't");
+}
+
+#[test]
 fn a_workspace_voice_file_replaces_the_built_in_guidance() {
     let ws = tempfile::tempdir().unwrap();
     std::fs::write(ws.path().join(VOICE_PROMPT_FILE), "You are Tiny on a radio show.").unwrap();
