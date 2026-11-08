@@ -2,4 +2,7 @@
 <resources>
     <color name="icon_bg">#FFF4E5</color>
     <color name="window_bg">#FFFFFF</color>
+    <color name="widget_bg">#FFFFFF</color>
+    <color name="widget_ink">#111111</color>
+    <color name="widget_muted">#5F6368</color>
 </resources>

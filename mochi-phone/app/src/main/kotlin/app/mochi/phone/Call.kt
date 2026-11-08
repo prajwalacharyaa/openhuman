@@ -61,6 +61,8 @@ object Call {
     @Volatile var muted = false
     var speaker = true
         private set
+    /** Silent: Mochi's voice isn't played; its words still appear on the call screen (December keeps talking). */
+    @Volatile var silent = false
     var status = ""
         private set
 
@@ -96,6 +98,7 @@ object Call {
         active = true
         answered = false
         muted = false
+        silent = false
         quiet = false
         frozen = false
         call = mochiCall
@@ -109,6 +112,7 @@ object Call {
         setSpeaker(true)
         status("Connecting…")
         ws = Mochi.http.newWebSocket(request, Socket())
+        main.post { MochiWidget.update(app, force = true) }
     }
 
     @Synchronized
@@ -137,7 +141,7 @@ object Call {
         }
         app.stopService(Intent(app, CallService::class.java))
         WakeService.resume(app) // listen for "Mochi" again, if that's on
-        main.post { listener?.onEnded() }
+        main.post { listener?.onEnded(); MochiWidget.update(app, force = true) }
     }
 
     /** Back from "Mochi, freeze": the mic is sent again and Mochi says it's there. */
@@ -255,7 +259,11 @@ object Call {
                         listener?.onTranscript(role, line, final)
                     }
                 }
-                "tool_started" -> if (!frozen) status("Checking (${f.optString("name")})…")
+                "tool_started" -> {
+                    Doing.voiceTool(f.optString("name"), f.optJSONObject("args"))
+                    main.postDelayed({ MochiWidget.update(app) }, 300)
+                    if (!frozen) status("Checking (${f.optString("name")})…")
+                }
                 "tool_finished", "turn_complete" -> if (!frozen) status("Listening")
                 "interrupted" -> { playback.clear(); flushPlayback = true }
                 "error" -> { status("Error: ${f.optString("message")}"); if (f.optBoolean("fatal")) end() }
@@ -400,7 +408,7 @@ object Call {
                     track.pause(); track.flush(); track.play()
                 }
                 val chunk = playback.poll(200, TimeUnit.MILLISECONDS) ?: continue
-                if (!flushPlayback) track.write(chunk, 0, chunk.size)
+                if (!flushPlayback && !silent) track.write(chunk, 0, chunk.size)
             }
         } finally {
             runCatching { track.stop() }

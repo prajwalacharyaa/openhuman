@@ -96,6 +96,12 @@ class RingService : Service() {
                                     runCatching { Mochi.phoneResult(this, id, result) }
                                 }.start()
                             }
+                            line.startsWith("data: ") && event == "activity" -> {
+                                runCatching { JSONObject(line.removePrefix("data: ")) }.getOrNull()?.let {
+                                    Doing.add(it)
+                                    main.postDelayed({ MochiWidget.update(this) }, 300)
+                                }
+                            }
                             line.startsWith("data: ") && event == "notice" -> {
                                 val notice = runCatching { JSONObject(line.removePrefix("data: ")) }.getOrNull()
                                 val id = notice?.optString("id").orEmpty()

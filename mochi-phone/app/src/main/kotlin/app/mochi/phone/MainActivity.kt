@@ -46,6 +46,7 @@ import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.SnackbarResult
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -80,6 +81,7 @@ import app.mochi.phone.ui.LineIcon
 import app.mochi.phone.ui.LocalMochi
 import app.mochi.phone.ui.Mascot
 import app.mochi.phone.ui.MochiTheme
+import app.mochi.phone.ui.Mood
 import app.mochi.phone.ui.Pill
 import app.mochi.phone.ui.RoundButton
 import app.mochi.phone.ui.Space
@@ -202,7 +204,11 @@ private fun HomeScreen(go: (String) -> Unit) {
     var updateError by remember { mutableStateOf("") }
     var onCall by remember { mutableStateOf(Call.active) }
     var muted by remember { mutableStateOf(Call.muted) }
-    LaunchedEffect(Unit) { while (true) { onCall = Call.active; muted = Call.muted || Call.frozen; delay(1_000) } }
+    var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(Unit) {
+        io(scope, { Doing.backfill(ctx) }) {}
+        while (true) { onCall = Call.active; muted = Call.muted || Call.frozen; now = System.currentTimeMillis(); delay(1_000) }
+    }
 
     fun refresh() {
         if (!Mochi.configured(ctx)) return
@@ -241,6 +247,19 @@ private fun HomeScreen(go: (String) -> Unit) {
                 Text(f.label, style = Type.small.copy(fontWeight = Type.strong), color = c.amberInk,
                     modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(c.amberBg)
                         .clickable(role = Role.Button) { ctx.startActivity(f.intent) }.padding(Space.l))
+            }
+            // Mochi at work: the latest step; a tap shows everything it's doing
+            Doing.steps.lastOrNull()?.takeIf { Doing.busy(now) }?.let { step ->
+                Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp)).background(c.blueBg)
+                    .clickable(role = Role.Button) { DoingActivity.open(ctx) }.padding(horizontal = Space.l, vertical = Space.m),
+                    verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Space.m)) {
+                    Mascot(Modifier.size(32.dp), mood = Mood.Thinking)
+                    Column(Modifier.weight(1f)) {
+                        Text("Mochi is working", style = Type.small.copy(fontWeight = Type.strong), color = c.blueInk)
+                        Text(step.text, style = Type.small, color = c.ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    }
+                    Text("See all ›", style = Type.small, color = c.blueInk)
+                }
             }
             // a new version of this app, from the server over Tailscale
             update?.let { u ->

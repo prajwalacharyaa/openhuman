@@ -247,7 +247,7 @@ fun ChatScreen(initialThread: String?, newChat: Boolean, initialText: String?, s
             RoundButton(Icons2.Back, "Back", c.field, c.ink, 44.dp, onBack)
             Text(title, style = Type.title, color = c.ink, maxLines = 1, overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.weight(1f).padding(horizontal = Space.m))
-            Mascot(Modifier.size(44.dp), mood = when {
+            Mascot(Modifier.size(44.dp), onTap = { DoingActivity.open(ctx) }, mood = when {
                 streaming.isNotEmpty() -> Mood.Speaking
                 busy -> Mood.Thinking
                 else -> Mood.Idle

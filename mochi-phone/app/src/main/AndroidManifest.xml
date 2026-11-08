@@ -85,6 +85,10 @@
             android:windowSoftInputMode="adjustResize" />
 
         <activity
+            android:name=".DoingActivity"
+            android:exported="false" />
+
+        <activity
             android:name=".AbilitiesActivity"
             android:exported="false"
             android:windowSoftInputMode="adjustResize" />
@@ -142,6 +146,20 @@
             android:name=".CallService"
             android:exported="false"
             android:foregroundServiceType="microphone" />
+
+        <receiver
+            android:name=".MochiWidget"
+            android:exported="true"
+            android:label="@string/widget_label">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data android:name="android.appwidget.provider" android:resource="@xml/widget_mochi" />
+        </receiver>
+
+        <receiver
+            android:name=".WidgetActions"
+            android:exported="false" />
 
         <receiver
             android:name=".InstallReceiver"

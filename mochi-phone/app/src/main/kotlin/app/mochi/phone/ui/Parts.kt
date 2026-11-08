@@ -83,6 +83,10 @@ object Icons2 {
         moveTo(4f, 9f); horizontalLineTo(8f); lineTo(13f, 5f); verticalLineTo(19f); lineTo(8f, 15f); horizontalLineTo(4f); close()
         moveTo(16.5f, 8.5f); arcTo(5f, 5f, 0f, false, true, 16.5f, 15.5f); moveTo(19f, 6f); arcTo(8.5f, 8.5f, 0f, false, true, 19f, 18f)
     }
+    val Muted = line("muted") {
+        moveTo(4f, 9f); horizontalLineTo(8f); lineTo(13f, 5f); verticalLineTo(19f); lineTo(8f, 15f); horizontalLineTo(4f); close()
+        moveTo(16f, 9f); lineTo(22f, 15f); moveTo(22f, 9f); lineTo(16f, 15f)
+    }
     val Earpiece = line("earpiece") {
         moveTo(8f, 3f); horizontalLineTo(16f); arcTo(1f, 1f, 0f, false, true, 17f, 4f); verticalLineTo(20f)
         arcTo(1f, 1f, 0f, false, true, 16f, 21f); horizontalLineTo(8f); arcTo(1f, 1f, 0f, false, true, 7f, 20f)

@@ -3,4 +3,6 @@
     <string name="shortcut_call">Call Mochi</string>
     <string name="shortcut_chat">New chat</string>
     <string name="tile_label">Call Mochi</string>
+    <string name="widget_label">Mochi</string>
+    <string name="widget_about">What Mochi is doing, and call or hang up</string>
 </resources>

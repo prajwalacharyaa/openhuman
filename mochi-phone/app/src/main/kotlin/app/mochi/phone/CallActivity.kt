@@ -53,6 +53,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import app.mochi.phone.ui.Icons2
+import app.mochi.phone.ui.RoundButton
 import app.mochi.phone.ui.LineIcon
 import kotlinx.coroutines.delay
 import org.json.JSONObject
@@ -182,9 +183,16 @@ class CallActivity : ComponentActivity(), Call.Listener {
         }
         Column(Modifier.fillMaxSize().background(c.bg).systemBarsPadding().padding(Space.l),
             horizontalAlignment = Alignment.CenterHorizontally) {
-            Mascot(Modifier.padding(top = Space.xl).size(160.dp), mood = mood, onTap = {})
+            // back to Home (the call goes on; Home shows "Back to call")
+            Row(Modifier.fillMaxWidth()) { RoundButton(Icons2.Back, "Back to Home", c.field, c.ink, 44.dp) { finish() } }
+            Mascot(Modifier.size(160.dp), mood = mood, onTap = { DoingActivity.open(this@CallActivity) })
+            Text("Tap Mochi to see what it's doing", style = Type.small, color = c.muted)
             Text("Mochi", style = Type.display, color = c.ink, modifier = Modifier.padding(top = Space.m))
-            Text(if (mood == Mood.Sleepy && !Call.frozen && !incoming) "Listening (quiet for a while)" else status,
+            Text(when {
+                    Call.silent && !incoming -> "$status · silent: Mochi answers in text"
+                    mood == Mood.Sleepy && !Call.frozen && !incoming -> "Listening (quiet for a while)"
+                    else -> status
+                },
                 style = Type.body, color = c.muted, textAlign = TextAlign.Center)
             LazyColumn(state = list, modifier = Modifier.weight(1f).fillMaxWidth(),
                 contentPadding = PaddingValues(vertical = Space.l), verticalArrangement = Arrangement.spacedBy(Space.m)) {
@@ -208,9 +216,21 @@ class CallActivity : ComponentActivity(), Call.Listener {
                             if (Call.frozen) Call.unfreeze() else Call.muted = !Call.muted
                             showControls()
                         }
-                        CallButton(if (Call.speaker) Icons2.Speaker else Icons2.Earpiece,
-                            if (Call.speaker) "Speaker on: switch to earpiece" else "Earpiece: switch to speaker",
-                            c.field, c.ink) { Call.setSpeaker(!Call.speaker); showControls() }
+                        // Speaker → Earpiece → Silent (Mochi's words only as text) → Speaker
+                        val sound = when { Call.silent -> "silent"; Call.speaker -> "speaker"; else -> "earpiece" }
+                        CallButton(when (sound) { "silent" -> Icons2.Muted; "speaker" -> Icons2.Speaker; else -> Icons2.Earpiece },
+                            when (sound) {
+                                "silent" -> "Silent: Mochi answers in text. Switch to speaker"
+                                "speaker" -> "Speaker: switch to earpiece"
+                                else -> "Earpiece: switch to silent"
+                            }, if (sound == "silent") c.ink else c.field, if (sound == "silent") c.bg else c.ink) {
+                            when (sound) {
+                                "speaker" -> Call.setSpeaker(false)
+                                "earpiece" -> Call.silent = true
+                                else -> { Call.silent = false; Call.setSpeaker(true) }
+                            }
+                            showControls()
+                        }
                         CallButton(Icons2.HangUp, "Hang up", c.danger, Color.White) { if (Call.active) Call.end() else finish() }
                     }
                 }
