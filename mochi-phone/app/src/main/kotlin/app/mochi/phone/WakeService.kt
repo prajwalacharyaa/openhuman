@@ -39,7 +39,7 @@ class WakeService : Service() {
         Mochi.createChannels(this)
         val open = PendingIntent.getActivity(this, 11, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE)
         val n = Notification.Builder(this, Mochi.CHANNEL_LISTENING)
-            .setSmallIcon(R.drawable.ic_mochi)
+            .setSmallIcon(R.drawable.ic_stat_mochi)
             .setContentTitle("Listening for \"Mochi\"")
             .setContentText("On the phone only. Turn it off in the Mochi app.")
             .setContentIntent(open)
@@ -121,7 +121,7 @@ class WakeService : Service() {
     private fun offerCall(call: Intent) {
         val open = PendingIntent.getActivity(this, 12, call, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
         val n = Notification.Builder(this, Mochi.CHANNEL_NOTICES)
-            .setSmallIcon(R.drawable.ic_mochi)
+            .setSmallIcon(R.drawable.ic_stat_mochi)
             .setContentTitle("Mochi heard you: tap to talk")
             .setFullScreenIntent(open, true)
             .setContentIntent(open)

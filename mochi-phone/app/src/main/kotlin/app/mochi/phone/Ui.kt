@@ -19,14 +19,14 @@ import android.widget.TextView
  * keyboard. Without that the status bar was white-on-white and the newest messages hid behind the keyboard.
  */
 object Ui {
-    val BG = Color.parseColor("#F6F5F2")
-    val CARD = Color.WHITE
-    val TEXT = Color.parseColor("#1D1D1F")
-    val MUTED = Color.parseColor("#6B6B70")
-    const val BLUE = "#3B6FD8"
-    const val GREEN = "#2E9D5B"
+    val BG = Color.parseColor("#FFFFFF")
+    val CARD = Color.parseColor("#F7F7F8")
+    val TEXT = Color.parseColor("#111111")
+    val MUTED = Color.parseColor("#5F6368")
+    const val BLUE = "#2A55AE"
+    const val GREEN = "#1E7A45"
     const val RED = "#B4472C"
-    const val GREY = "#55555C"
+    const val GREY = "#3C4043"
 
     /** A screen: [root] holds everything; [right] is the header's right-hand slot (status, RAM, a button). */
     class Screen(val root: LinearLayout, val right: LinearLayout)

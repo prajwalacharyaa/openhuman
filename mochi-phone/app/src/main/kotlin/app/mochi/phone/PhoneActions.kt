@@ -172,7 +172,7 @@ object PhoneActions {
         val tap = PendingIntent.getActivity(c, url.hashCode(), view, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
         val maps = url.startsWith("https://www.google.com/maps")
         val n = Notification.Builder(c, Mochi.CHANNEL_NOTICES)
-            .setSmallIcon(R.drawable.ic_mochi)
+            .setSmallIcon(R.drawable.ic_stat_mochi)
             .setContentTitle(if (maps) "Directions from Mochi: tap to open Maps" else "Link from Mochi: tap to open")
             .setContentText(android.net.Uri.parse(url).getQueryParameter("destination") ?: url)
             .setContentIntent(tap)
@@ -348,7 +348,7 @@ object PhoneActions {
             val open = PendingIntent.getActivity(c, id.hashCode(), intent,
                 PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
             val n = Notification.Builder(c, Mochi.CHANNEL_NOTICES)
-                .setSmallIcon(R.drawable.ic_mochi)
+                .setSmallIcon(R.drawable.ic_stat_mochi)
                 .setContentTitle(if (kind == "call") "Call $name?" else "Text $name?")
                 .setContentText(if (kind == "call") number else text)
                 .setFullScreenIntent(open, true)

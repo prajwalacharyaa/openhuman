@@ -31,7 +31,7 @@ class RingService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         Mochi.createChannels(this)
         val n = Notification.Builder(this, Mochi.CHANNEL_LISTENING)
-            .setSmallIcon(R.drawable.ic_mochi)
+            .setSmallIcon(R.drawable.ic_stat_mochi)
             .setContentTitle("Mochi can call you")
             .setContentIntent(PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java),
                 PendingIntent.FLAG_IMMUTABLE))
@@ -156,7 +156,7 @@ class RingService : Service() {
                 Intent(c, DeclineReceiver::class.java).putExtra(CallActivity.EXTRA_CALL, call.toString()),
                 PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
             val n = Notification.Builder(c, Mochi.CHANNEL_CALLS)
-                .setSmallIcon(R.drawable.ic_mochi)
+                .setSmallIcon(R.drawable.ic_stat_mochi)
                 .setContentText(call.optString("question"))
                 .setStyle(Notification.CallStyle.forIncomingCall(mochi, decline, answerNow))
                 .setFullScreenIntent(full, true)
@@ -176,10 +176,11 @@ class RingService : Service() {
          */
         fun showNotice(c: Context, notice: JSONObject) {
             if (notice.has("url")) return approvalNotice(c, notice.optString("body"))
+            Mochi.addToInbox(c, notice)
             val open = withHome(c, 7 + notices % 50, Intent(c, ChatActivity::class.java))
             val body = notice.optString("body")
             val n = Notification.Builder(c, Mochi.CHANNEL_NOTICES)
-                .setSmallIcon(R.drawable.ic_mochi)
+                .setSmallIcon(R.drawable.ic_stat_mochi)
                 .setContentTitle(notice.optString("title"))
                 .setContentText(body)
                 .setStyle(Notification.BigTextStyle().bigText(body))
@@ -202,9 +203,10 @@ class RingService : Service() {
          */
         fun approvalNotice(c: Context, latest: String) {
             waiting++
-            val open = withHome(c, 6, Intent(c, ApprovalsActivity::class.java))
+            val open = PendingIntent.getActivity(c, 6, Intent(c, MainActivity::class.java),
+                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
             val n = Notification.Builder(c, Mochi.CHANNEL_NOTICES)
-                .setSmallIcon(R.drawable.ic_mochi)
+                .setSmallIcon(R.drawable.ic_stat_mochi)
                 .setContentTitle(if (waiting == 1) "Mochi needs you" else "Mochi needs you: $waiting things waiting")
                 .setContentText(latest)
                 .setStyle(Notification.BigTextStyle().bigText(latest))

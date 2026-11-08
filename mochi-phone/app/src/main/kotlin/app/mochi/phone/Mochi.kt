@@ -99,30 +99,6 @@ object Mochi {
         quick.newCall(req).execute().use { r -> return "RAM ${JSONObject(r.body?.string() ?: "{}").getInt("ram")}%" }
     }
 
-    /**
-     * Keeps [label] showing the server's RAM, every 10 s, while the screen is open: call the returned
-     * function's start in onResume and stop in onPause.
-     */
-    fun ramWatcher(c: Context, label: android.widget.TextView): Pair<() -> Unit, () -> Unit> {
-        val main = android.os.Handler(android.os.Looper.getMainLooper())
-        val busy = java.util.concurrent.atomic.AtomicBoolean(false)
-        val tick = object : Runnable {
-            override fun run() {
-                if (busy.compareAndSet(false, true)) {
-                    Thread {
-                        val text = runCatching { ramLabel(c) }.getOrDefault("")
-                        busy.set(false)
-                        main.post { label.text = text }
-                    }.start()
-                }
-                main.postDelayed(this, 10_000)
-            }
-        }
-        val start: () -> Unit = { main.removeCallbacks(tick); main.post(tick) }
-        val stop: () -> Unit = { main.removeCallbacks(tick) }
-        return Pair(start, stop)
-    }
-
     /** What waits for December (mochi-ring GET /approvals), newest first. Blocking. */
     fun approvals(c: Context): List<JSONObject> {
         val req = Request.Builder().url("${ringUrl(c)}/approvals").header("Authorization", "Bearer ${token(c)}").build()
@@ -181,15 +157,87 @@ object Mochi {
      * Send a typed message, exactly like the desktop chat: Claude answers it in the thread. `followup`: wait for
      * a turn Claude is still working on instead of cancelling it.
      */
-    fun send(c: Context, threadId: String, text: String, followup: Boolean = false) {
+    fun send(c: Context, threadId: String, text: String, followup: Boolean = false, model: String? = null) {
         val message = JSONObject().put("id", "phone-" + UUID.randomUUID()).put("content", text)
             .put("type", "text").put("extraMetadata", JSONObject()).put("sender", "user")
             .put("createdAt", Instant.now().toString())
-        rpc(c, "openhuman.threads_message_append", JSONObject().put("thread_id", threadId).put("message", message))
+        // the append saves any attachment originals and hands back the compact text the turn should use
+        val saved = data(rpc(c, "openhuman.threads_message_append",
+            JSONObject().put("thread_id", threadId).put("message", message)))
+        val compact = saved.optJSONObject("message")?.optString("content")?.takeIf { it.isNotBlank() }
+            ?: saved.optString("content").takeIf { it.isNotBlank() } ?: text
         if (threadId == thread(c)) touchThread(c)
-        val chat = JSONObject().put("client_id", CLIENT_ID).put("thread_id", threadId).put("message", text)
+        val chat = JSONObject().put("client_id", CLIENT_ID).put("thread_id", threadId).put("message", compact)
         if (followup) chat.put("queue_mode", "followup")
+        if (model != null) chat.put("model_override", model)
         rpc(c, "openhuman.channel_web_chat", chat)
+    }
+
+    /** Stop the reply Mochi is writing in this conversation. */
+    fun cancel(c: Context, threadId: String) {
+        rpc(c, "openhuman.channel_web_cancel", JSONObject().put("client_id", CLIENT_ID).put("thread_id", threadId))
+    }
+
+    /** December's conversations (not worker threads), newest first. */
+    fun threads(c: Context): List<JSONObject> {
+        val reply = data(rpc(c, "openhuman.threads_list", JSONObject()))
+        val arr = reply.optJSONArray("threads") ?: reply.optJSONArray("items") ?: JSONArray()
+        return (0 until arr.length()).map { arr.getJSONObject(it) }
+            .filter { it.isNull("parentThreadId") || it.optString("parentThreadId").isEmpty() }
+            .sortedByDescending { it.optString("lastMessageAt") }
+    }
+
+    fun deleteThread(c: Context, threadId: String) {
+        rpc(c, "openhuman.threads_delete",
+            JSONObject().put("thread_id", threadId).put("deleted_at", Instant.now().toString()))
+        if (thread(c) == threadId) prefs(c).edit().remove("thread").apply()
+    }
+
+    /** What Mochi remembers: matches for [query], or the newest items when it's blank. */
+    fun memories(c: Context, query: String): List<JSONObject> {
+        val result = if (query.isBlank()) {
+            data(rpc(c, "openhuman.memory_items_list", JSONObject().put("limit", 50).put("preview", true)))
+        } else {
+            data(rpc(c, "openhuman.memory_fetch", JSONObject().put("query", query).put("limit", 30)))
+        }
+        val arr = result.optJSONArray("items") ?: result.optJSONArray("hits") ?: result.optJSONArray("results")
+            ?: JSONArray()
+        return (0 until arr.length()).mapNotNull { arr.optJSONObject(it) }
+    }
+
+    fun forget(c: Context, id: String) {
+        rpc(c, "openhuman.memory_forget", JSONObject().put("ids", JSONArray().put(id)))
+    }
+
+    /** Teach Mochi something directly ("My sister's birthday is 3 March"). */
+    fun learn(c: Context, text: String) {
+        rpc(c, "openhuman.memory_learn", JSONObject().put("text", text).put("kind", "fact"))
+    }
+
+    /** Notices and reminders that reached the phone, newest first (kept on the phone, last 100). */
+    fun inbox(c: Context): List<JSONObject> {
+        val arr = runCatching { JSONArray(prefs(c).getString("inbox", "[]")) }.getOrDefault(JSONArray())
+        return (0 until arr.length()).mapNotNull { arr.optJSONObject(it) }.reversed()
+    }
+
+    fun addToInbox(c: Context, notice: JSONObject) {
+        val arr = runCatching { JSONArray(prefs(c).getString("inbox", "[]")) }.getOrDefault(JSONArray())
+        arr.put(JSONObject().put("title", notice.optString("title")).put("body", notice.optString("body"))
+            .put("at", System.currentTimeMillis()))
+        val kept = JSONArray()
+        for (i in maxOf(0, arr.length() - 100) until arr.length()) kept.put(arr.get(i))
+        prefs(c).edit().putString("inbox", kept.toString()).apply()
+    }
+
+    fun clearInbox(c: Context) = prefs(c).edit().putString("inbox", "[]").apply()
+
+    /** The chat mode chosen on the phone: null = automatic, else a Claude Code model for model_override. */
+    fun mode(c: Context): String = prefs(c).getString("mode", "normal") ?: "normal"
+    fun setMode(c: Context, mode: String) = prefs(c).edit().putString("mode", mode).apply()
+    fun modelFor(mode: String): String? = when (mode) {
+        "quick" -> "claude-code:haiku"
+        "deep" -> "claude-code:opus"
+        else -> null
     }
 
     /**

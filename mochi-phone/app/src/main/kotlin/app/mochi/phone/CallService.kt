@@ -25,7 +25,7 @@ class CallService : Service() {
         val open = PendingIntent.getActivity(this, 6,
             Intent(this, CallActivity::class.java).putExtra(CallActivity.EXTRA_ANSWER, true), PendingIntent.FLAG_IMMUTABLE)
         val n = Notification.Builder(this, Mochi.CHANNEL_ONGOING)
-            .setSmallIcon(R.drawable.ic_mochi)
+            .setSmallIcon(R.drawable.ic_stat_mochi)
             .setStyle(Notification.CallStyle.forOngoingCall(Person.Builder().setName("Mochi").build(), hangUp))
             .setContentIntent(open)
             .setCategory(Notification.CATEGORY_CALL)

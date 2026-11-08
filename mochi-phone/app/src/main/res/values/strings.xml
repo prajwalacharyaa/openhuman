@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="shortcut_call">Call Mochi</string>
+    <string name="shortcut_chat">New chat</string>
+    <string name="tile_label">Call Mochi</string>
+</resources>
