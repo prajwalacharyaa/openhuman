@@ -64,6 +64,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.Role
@@ -118,6 +119,10 @@ class MainActivity : ComponentActivity() {
         const val EXTRA_TAB = "tab"
 
         fun callMochi(c: Context) {
+            if (Call.active) { // already on a call: back to it, never a second one
+                c.startActivity(Intent(c, CallActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                return
+            }
             if (Mochi.configured(c)) {
                 c.startActivity(Intent(c, CallActivity::class.java).putExtra(CallActivity.EXTRA_ANSWER, true)
                     .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
@@ -195,6 +200,9 @@ private fun HomeScreen(go: (String) -> Unit) {
     var update by remember { mutableStateOf<JSONObject?>(null) }
     var updating by remember { mutableStateOf(-1f) } // download progress, -1 = not downloading
     var updateError by remember { mutableStateOf("") }
+    var onCall by remember { mutableStateOf(Call.active) }
+    var muted by remember { mutableStateOf(Call.muted) }
+    LaunchedEffect(Unit) { while (true) { onCall = Call.active; muted = Call.muted || Call.frozen; delay(1_000) } }
 
     fun refresh() {
         if (!Mochi.configured(ctx)) return
@@ -352,12 +360,32 @@ private fun HomeScreen(go: (String) -> Unit) {
                 }
                 RoundButton(Icons2.Plus, "Attach photo or file", c.field, c.ink) { pick.launch("*/*") }
             }
-            Box(Modifier.fillMaxWidth().height(56.dp).clip(RoundedCornerShape(28.dp)).background(c.coral)
-                .clickable(role = Role.Button) { MainActivity.callMochi(ctx) }.semantics { contentDescription = "Call Mochi" },
-                contentAlignment = Alignment.Center) {
+            if (onCall) {
+                // a call is on: go back to it (not a second call), with mute and hang up right here
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Space.s)) {
-                    LineIcon(Icons2.Mic, androidx.compose.ui.graphics.Color.White)
-                    Text("Call Mochi", style = Type.title, color = androidx.compose.ui.graphics.Color.White)
+                    Box(Modifier.weight(1f).height(56.dp).clip(RoundedCornerShape(28.dp)).background(Color(0xFF2E9D5B))
+                        .clickable(role = Role.Button) { ctx.startActivity(Intent(ctx, CallActivity::class.java)) }
+                        .semantics { contentDescription = "Back to the call" }, contentAlignment = Alignment.Center) {
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Space.s)) {
+                            LineIcon(Icons2.Phone, Color.White)
+                            Text("Back to call", style = Type.title, color = Color.White)
+                        }
+                    }
+                    RoundButton(if (muted) Icons2.MicOff else Icons2.Mic, if (muted) "Unmute" else "Mute",
+                        if (muted) c.ink else c.field, if (muted) c.bg else c.ink, 56.dp) {
+                        if (Call.frozen) Call.unfreeze() else Call.muted = !Call.muted
+                        muted = Call.muted || Call.frozen
+                    }
+                    RoundButton(Icons2.HangUp, "Hang up", c.danger, Color.White, 56.dp) { Call.end(); onCall = false }
+                }
+            } else {
+                Box(Modifier.fillMaxWidth().height(56.dp).clip(RoundedCornerShape(28.dp)).background(c.coral)
+                    .clickable(role = Role.Button) { MainActivity.callMochi(ctx) }.semantics { contentDescription = "Call Mochi" },
+                    contentAlignment = Alignment.Center) {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Space.s)) {
+                        LineIcon(Icons2.Mic, Color.White)
+                        Text("Call Mochi", style = Type.title, color = Color.White)
+                    }
                 }
             }
         }

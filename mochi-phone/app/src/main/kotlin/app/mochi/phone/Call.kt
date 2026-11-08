@@ -43,6 +43,19 @@ object Call {
     private val main = Handler(Looper.getMainLooper())
 
     var listener: Listener? = null
+
+    /** One line said on the call. */
+    data class Said(val role: String, val text: String, val final: Boolean)
+
+    /**
+     * What's been said on this call, kept for the whole call (not by the screen), so going Home and back to the
+     * call shows it all, including what was said meanwhile. Changed on the main thread only; cleared at a new call.
+     */
+    val said = androidx.compose.runtime.mutableStateListOf<Said>()
+
+    /** When anyone last spoke (ms): Mochi gets sleepy after a long silence. */
+    @Volatile var lastSpoke = 0L
+        private set
     @Volatile var active = false
         private set
     @Volatile var muted = false
@@ -87,6 +100,8 @@ object Call {
         frozen = false
         call = mochiCall
         startedAt = java.time.Instant.now()
+        lastSpoke = System.currentTimeMillis()
+        main.post { said.clear() }
         threadId = mochiCall?.optString("thread_id")?.takeIf { it.isNotEmpty() } ?: Mochi.callThread(app)
         playback.clear()
         val am = app.getSystemService(AudioManager::class.java)
@@ -232,7 +247,13 @@ object Call {
                             status("Quiet. Say something when you want Mochi again.")
                         }
                     }
-                    if (role == "user" || !quiet) main.post { listener?.onTranscript(role, line, final) }
+                    if (role == "user" || !quiet) main.post {
+                        lastSpoke = System.currentTimeMillis()
+                        val i = said.indexOfLast { it.role == role && !it.final }
+                        val entry = Said(role, line, final)
+                        if (i >= 0) said[i] = entry else said.add(entry)
+                        listener?.onTranscript(role, line, final)
+                    }
                 }
                 "tool_started" -> if (!frozen) status("Checking (${f.optString("name")})…")
                 "tool_finished", "turn_complete" -> if (!frozen) status("Listening")

@@ -32,7 +32,6 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
-import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -48,6 +47,14 @@ import app.mochi.phone.ui.MochiTheme
 import app.mochi.phone.ui.Mood
 import app.mochi.phone.ui.Space
 import app.mochi.phone.ui.Type
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import app.mochi.phone.ui.Icons2
+import app.mochi.phone.ui.LineIcon
+import kotlinx.coroutines.delay
 import org.json.JSONObject
 
 /**
@@ -55,13 +62,10 @@ import org.json.JSONObject
  * thinking and talking, what's being said, and Mute, Speaker, Hang up. Also used when December calls Mochi.
  */
 class CallActivity : ComponentActivity(), Call.Listener {
-    /** One line said on the call. */
-    data class Line(val role: String, val text: String, val final: Boolean)
-
-    private val lines = mutableStateListOf<Line>()
     private var status by mutableStateOf("")
     private var incoming by mutableStateOf(false)
-    private var speaking by mutableStateOf(false)
+    private var ended by mutableStateOf(false)
+    private var question by mutableStateOf("") // what Mochi is calling about, while it rings
     private var tick by mutableIntStateOf(0) // redraws the buttons after mute/speaker changes
     private var call: JSONObject? = null
 
@@ -105,8 +109,7 @@ class CallActivity : ComponentActivity(), Call.Listener {
         // missed (45 s) or declined from the notification: this screen goes too
         RingService.onRingStopped = { if (!Call.active) finish() }
         status = "Mochi is calling"
-        lines.clear()
-        call?.optString("question")?.takeIf { it.isNotBlank() }?.let { lines.add(Line("agent", it, true)) }
+        question = call?.optString("question").orEmpty()
         incoming = true
     }
 
@@ -117,6 +120,7 @@ class CallActivity : ComponentActivity(), Call.Listener {
         }
         RingService.onRingStopped = null
         RingService.stopRinging(this)
+        question = ""; ended = false
         startForegroundService(Intent(this, CallService::class.java).putExtra(EXTRA_CALL, call?.toString()))
         showControls()
     }
@@ -143,16 +147,12 @@ class CallActivity : ComponentActivity(), Call.Listener {
         tick++
     }
 
-    override fun onTranscript(role: String, text: String, final: Boolean) {
-        val i = lines.indexOfLast { it.role == role && !it.final }
-        val line = Line(role, text, final)
-        if (i >= 0) lines[i] = line else lines.add(line)
-        speaking = role != "user" && !final
-    }
+    // the transcript itself is kept by Call (Call.said), for the whole call
+    override fun onTranscript(role: String, text: String, final: Boolean) = Unit
 
     override fun onEnded() {
         status = "Call ended"
-        speaking = false
+        ended = true
         window.decorView.postDelayed({ finish() }, 1_200)
     }
 
@@ -165,51 +165,53 @@ class CallActivity : ComponentActivity(), Call.Listener {
     private fun CallScreen() {
         val c = LocalMochi.current
         val list = rememberLazyListState()
+        val lines = Call.said
+        var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
+        LaunchedEffect(Unit) { while (true) { delay(1_000); now = System.currentTimeMillis() } }
         LaunchedEffect(lines.size) { if (lines.isNotEmpty()) list.animateScrollToItem(lines.size - 1) }
+        val last = lines.lastOrNull()
         val mood = when {
-            speaking -> Mood.Speaking
-            incoming -> Mood.Idle
-            status.contains("connect", ignoreCase = true) || status.contains("think", ignoreCase = true) -> Mood.Thinking
+            ended || status.startsWith("Error") -> Mood.Sad
+            incoming -> Mood.Surprised
+            Call.frozen -> Mood.Sleepy
+            last != null && last.role != "user" && !last.final -> Mood.Speaking
+            last != null && last.role == "user" && !last.final -> Mood.Listening
+            status.contains("connect", ignoreCase = true) || status.startsWith("Checking") -> Mood.Thinking
+            now - Call.lastSpoke > SLEEPY_AFTER_MS -> Mood.Sleepy
             else -> Mood.Listening
         }
         Column(Modifier.fillMaxSize().background(c.bg).systemBarsPadding().padding(Space.l),
             horizontalAlignment = Alignment.CenterHorizontally) {
             Mascot(Modifier.padding(top = Space.xl).size(160.dp), mood = mood, onTap = {})
             Text("Mochi", style = Type.display, color = c.ink, modifier = Modifier.padding(top = Space.m))
-            Text(status, style = Type.body, color = c.muted, textAlign = TextAlign.Center)
+            Text(if (mood == Mood.Sleepy && !Call.frozen && !incoming) "Listening (quiet for a while)" else status,
+                style = Type.body, color = c.muted, textAlign = TextAlign.Center)
             LazyColumn(state = list, modifier = Modifier.weight(1f).fillMaxWidth(),
                 contentPadding = PaddingValues(vertical = Space.l), verticalArrangement = Arrangement.spacedBy(Space.m)) {
-                items(lines) { l ->
-                    val user = l.role == "user"
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = if (user) Arrangement.End else Arrangement.Start) {
-                        Text(l.text, style = Type.body,
-                            color = (if (user) c.onUserBubble else c.ink).copy(alpha = if (l.final) 1f else 0.65f),
-                            modifier = Modifier.widthIn(max = 320.dp).clip(RoundedCornerShape(22.dp))
-                                .background(if (user) c.userBubble else c.card).padding(horizontal = Space.l, vertical = Space.m))
-                    }
-                }
+                if (incoming && question.isNotBlank()) item { Bubble(false, question, true) }
+                items(lines) { l -> Bubble(l.role == "user", l.text, l.final) }
             }
             key(tick) {
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(Space.m)) {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly,
+                    verticalAlignment = Alignment.CenterVertically) {
                     if (incoming) {
-                        CallButton("Decline", c.danger, Color.White, Modifier.weight(1f)) { decline() }
-                        CallButton("Answer", Color(0xFF2E9D5B), Color.White, Modifier.weight(1f)) { answer() }
+                        CallButton(Icons2.HangUp, "Decline", c.danger, Color.White) { decline() }
+                        CallButton(Icons2.Phone, "Answer", Color(0xFF2E9D5B), Color.White) { answer() }
                     } else {
-                        val mute = when {
+                        val muteLabel = when {
                             Call.frozen -> "Unfreeze"
                             Call.muted -> "Unmute"
                             else -> "Mute"
                         }
-                        CallButton(mute, c.field, c.ink, Modifier.weight(1f)) {
+                        CallButton(if (Call.muted || Call.frozen) Icons2.MicOff else Icons2.Mic, muteLabel,
+                            if (Call.muted || Call.frozen) c.ink else c.field, if (Call.muted || Call.frozen) c.bg else c.ink) {
                             if (Call.frozen) Call.unfreeze() else Call.muted = !Call.muted
                             showControls()
                         }
-                        CallButton(if (Call.speaker) "Earpiece" else "Speaker", c.field, c.ink, Modifier.weight(1f)) {
-                            Call.setSpeaker(!Call.speaker); showControls()
-                        }
-                        CallButton("Hang up", c.danger, Color.White, Modifier.weight(1f)) {
-                            if (Call.active) Call.end() else finish()
-                        }
+                        CallButton(if (Call.speaker) Icons2.Speaker else Icons2.Earpiece,
+                            if (Call.speaker) "Speaker on: switch to earpiece" else "Earpiece: switch to speaker",
+                            c.field, c.ink) { Call.setSpeaker(!Call.speaker); showControls() }
+                        CallButton(Icons2.HangUp, "Hang up", c.danger, Color.White) { if (Call.active) Call.end() else finish() }
                     }
                 }
             }
@@ -217,14 +219,28 @@ class CallActivity : ComponentActivity(), Call.Listener {
     }
 
     @Composable
-    private fun CallButton(label: String, bg: Color, fg: Color, modifier: Modifier, onClick: () -> Unit) {
-        Box(modifier.height(64.dp).clip(RoundedCornerShape(32.dp)).background(bg)
-            .clickable(role = Role.Button, onClick = onClick), contentAlignment = Alignment.Center) {
-            Text(label, style = Type.title, color = fg)
+    private fun Bubble(user: Boolean, text: String, final: Boolean) {
+        val c = LocalMochi.current
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = if (user) Arrangement.End else Arrangement.Start) {
+            Text(text, style = Type.body, color = (if (user) c.onUserBubble else c.ink).copy(alpha = if (final) 1f else 0.65f),
+                modifier = Modifier.widthIn(max = 320.dp).clip(RoundedCornerShape(22.dp))
+                    .background(if (user) c.userBubble else c.card).padding(horizontal = Space.l, vertical = Space.m))
+        }
+    }
+
+    /** A round icon call button, 72 dp (named for TalkBack). */
+    @Composable
+    private fun CallButton(icon: androidx.compose.ui.graphics.vector.ImageVector, label: String, bg: Color, fg: Color,
+                           onClick: () -> Unit) {
+        Box(Modifier.size(72.dp).clip(CircleShape).background(bg).clickable(role = Role.Button, onClick = onClick)
+            .semantics { contentDescription = label }, contentAlignment = Alignment.Center) {
+            LineIcon(icon, fg, 30.dp)
         }
     }
 
     companion object {
+        /** Quiet this long on a call and Mochi dozes off (wakes the moment anyone speaks). */
+        private const val SLEEPY_AFTER_MS = 25_000L
         const val EXTRA_CALL = "call"
         const val EXTRA_ANSWER = "answer"
     }

@@ -73,6 +73,25 @@ object Icons2 {
         moveTo(4f, 7f); horizontalLineTo(20f); moveTo(9f, 7f); verticalLineTo(4f); horizontalLineTo(15f); verticalLineTo(7f)
         moveTo(6f, 7f); lineTo(7f, 20f); horizontalLineTo(17f); lineTo(18f, 7f)
     }
+    val MicOff = line("mic-off") {
+        moveTo(15f, 10f); verticalLineTo(6f); arcTo(3f, 3f, 0f, false, false, 9.4f, 4.6f)
+        moveTo(9f, 9f); verticalLineTo(12f); arcTo(3f, 3f, 0f, false, false, 14.1f, 14.1f)
+        moveTo(19f, 11f); arcTo(7f, 7f, 0f, false, true, 17.6f, 15.2f); moveTo(5f, 11f); arcTo(7f, 7f, 0f, false, false, 15.5f, 17.1f)
+        moveTo(12f, 18f); verticalLineTo(21f); moveTo(3f, 3f); lineTo(21f, 21f)
+    }
+    val Speaker = line("speaker") {
+        moveTo(4f, 9f); horizontalLineTo(8f); lineTo(13f, 5f); verticalLineTo(19f); lineTo(8f, 15f); horizontalLineTo(4f); close()
+        moveTo(16.5f, 8.5f); arcTo(5f, 5f, 0f, false, true, 16.5f, 15.5f); moveTo(19f, 6f); arcTo(8.5f, 8.5f, 0f, false, true, 19f, 18f)
+    }
+    val Earpiece = line("earpiece") {
+        moveTo(8f, 3f); horizontalLineTo(16f); arcTo(1f, 1f, 0f, false, true, 17f, 4f); verticalLineTo(20f)
+        arcTo(1f, 1f, 0f, false, true, 16f, 21f); horizontalLineTo(8f); arcTo(1f, 1f, 0f, false, true, 7f, 20f)
+        verticalLineTo(4f); arcTo(1f, 1f, 0f, false, true, 8f, 3f); close(); moveTo(10f, 6f); horizontalLineTo(14f)
+    }
+    val HangUp = line("hang-up") {
+        moveTo(3f, 14f); curveTo(3f, 12f, 7f, 9f, 12f, 9f); curveTo(17f, 9f, 21f, 12f, 21f, 14f); lineTo(20f, 16f)
+        lineTo(16f, 15f); lineTo(15.5f, 12.5f); curveTo(13.5f, 12f, 10.5f, 12f, 8.5f, 12.5f); lineTo(8f, 15f); lineTo(4f, 16f); close()
+    }
     val Map = line("map") {
         moveTo(6f, 6f); lineTo(12f, 12f); lineTo(18f, 7f); moveTo(12f, 12f); lineTo(16f, 18f); moveTo(12f, 12f); lineTo(6f, 17f)
         moveTo(8f, 6f); arcTo(2f, 2f, 0f, true, true, 4f, 6f); arcTo(2f, 2f, 0f, true, true, 8f, 6f)
