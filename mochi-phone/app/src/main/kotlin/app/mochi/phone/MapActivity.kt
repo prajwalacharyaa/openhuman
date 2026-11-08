@@ -133,13 +133,40 @@ class ProjectMap(val parts: Map<String, Part>, val links: Map<String, List<Link>
                 links.getOrPut(t) { mutableListOf() }.add(Link(s, rel, false))
             }
             val byArea = parts.values.groupBy { it.area }
-            val areas = byArea.map { (id, members) ->
+            val named = byArea.map { (id, members) ->
                 val ids = members.map { it.id }.sortedByDescending { links[it]?.size ?: 0 }
-                // Graphify names an area after its main file; a name like "_" says nothing: use its biggest part
-                val name = names[id]?.takeIf { it.trim().length > 1 } ?: parts[ids.first()]?.label ?: "Area ${id + 1}"
-                Area(id, name, ids)
+                val main = names[id]?.takeIf { it.trim().length > 1 } ?: parts[ids.first()]?.label ?: "Area ${id + 1}"
+                Triple(id, ids, folderName(members) to tidy(main))
+            }
+            // the folder most of an area's parts share is its name ("Chat", "Restaurants"); where two areas share one,
+            // or there's no common folder, the area's main file says which (all on the phone, no AI)
+            val counts = named.groupingBy { it.third.first }.eachCount()
+            val areas = named.map { (id, ids, n) ->
+                val (folder, main) = n
+                Area(id, when {
+                    folder == null -> main
+                    (counts[folder] ?: 0) > 1 -> "$folder · $main"
+                    else -> folder
+                }, ids)
             }.sortedByDescending { it.parts.size }
             return ProjectMap(parts, links, areas)
+        }
+
+        private val GENERIC = setOf("src", "lib", "app", "client", "server", "components", "component", "pages", "features",
+            "screens", "widgets", "utils", "models", "services", "core", "common", "shared", "ui", "main", "kotlin", "java")
+
+        /** "ChatThreadScreen.tsx", "chat_thread-screen.dart" → "Chat thread screen". */
+        fun tidy(name: String): String = name.substringAfterLast('/').replace(Regex("""\.[A-Za-z0-9]{1,5}$"""), "")
+            .replace(Regex("[_\\-]+"), " ").replace(Regex("([a-z])([A-Z])"), "$1 $2").trim().lowercase()
+            .replaceFirstChar { it.uppercase() }.ifBlank { name }
+
+        /** The folder at least 40% of [members] are in, as a name ("lib/features/chat" → "Chat"), or null. */
+        private fun folderName(members: List<Part>): String? {
+            val dirs = members.mapNotNull { p -> p.file.substringBeforeLast('/', "").takeIf { it.isNotBlank() } }
+            val (dir, n) = dirs.groupingBy { it }.eachCount().maxByOrNull { it.value }?.toPair() ?: return null
+            if (n < members.size * 0.4) return null
+            val words = dir.split('/').filter { it.isNotBlank() && it.lowercase() !in GENERIC }
+            return words.takeLast(2).takeIf { it.isNotEmpty() }?.joinToString(" · ") { tidy(it) }
         }
     }
 }
