@@ -119,9 +119,11 @@ pub(super) fn try_create_claude_code_chat_model_from_string(
         config.action_dir.clone(),
     ) {
         // each chat's session is kept small: see `claude_session_cap`
+        // the default Sonnet brain picks a model per chat; coding (opus) and memory (haiku) keep theirs
         Ok(model) => Arc::new(super::claude_session_cap::SessionCap::new(
             Arc::new(model.with_mcp_provider(Arc::new(OpenHumanMcpEndpoint))),
             &workspace,
+            model_override.is_none() && configured_model == super::claude_session_cap::NORMAL,
         )) as Arc<dyn ChatModel<()>>,
         Err(error) => return Some(Err(error)),
     };

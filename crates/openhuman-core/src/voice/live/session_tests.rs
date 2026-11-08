@@ -53,7 +53,8 @@ fn the_prompt_carries_voice_guidance_time_and_recent_messages() {
     let prompt = system_prompt(ws.path(), None, &recent, None, None);
     assert!(prompt.contains("The conversation so far"));
     assert!(!prompt.contains("m0\n"), "older messages are dropped");
-    assert!(prompt.contains("User: m10"));
+    assert!(prompt.contains("User: m16"));
+    assert!(!prompt.contains("You: m15"), "only the last CONTEXT_MESSAGES are kept");
     assert!(prompt.contains("You: m19"));
     let line = |c: char| prompt.lines().find(|l| l.contains(c.to_string().repeat(50).as_str())).unwrap().len();
     assert_eq!(line('o'), "You: ".len() + CONTEXT_CHARS + 50, "second-latest kept whole");

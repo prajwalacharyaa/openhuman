@@ -14,7 +14,7 @@ use std::path::Path;
 use crate::threads::store::ConversationMessage;
 
 /// Most voice messages carried into one typed turn.
-const MAX_MESSAGES: usize = 24;
+const MAX_MESSAGES: usize = 8;
 /// Characters kept per voice message.
 const MAX_CHARS: usize = 600;
 

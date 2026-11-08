@@ -16,3 +16,32 @@ fn a_call_runs_only_mochis_helpers() {
     assert!(voice_may_run("mochi-ask \"Is NEPSE above $2,000? It's December's question\""));
     assert!(!voice_may_run(""), "nothing to run is not a helper either");
 }
+
+#[test]
+fn a_calls_cat_reads_only_the_workspace() {
+    assert!(voice_may_run("cat /home/openhuman/OpenHuman/workspace/youtube/report.md"));
+    assert!(voice_may_run("mochi-phone contacts \"mum\" | cat"), "stdin is fine");
+    assert!(!voice_may_run("cat /home/openhuman/OpenHuman/claude-auth.conf"), "keys live outside the workspace");
+    assert!(!voice_may_run("cat /proc/1/status"));
+    assert!(!voice_may_run("cat /home/openhuman/OpenHuman/workspace/../core-auth.conf"));
+    assert!(!voice_may_run("cat ~/OpenHuman/core-auth.conf"));
+    assert!(!voice_may_run("cat /home/openhuman/OpenHuman/workspace/*"));
+    assert!(!voice_may_run("cat report.md"), "relative paths are refused");
+}
+
+#[cfg(unix)]
+#[test]
+fn a_workspace_link_out_of_it_is_refused() {
+    let dir = tempfile::tempdir().unwrap();
+    let outside = dir.path().join("secret");
+    std::fs::write(&outside, "x").unwrap();
+    let root = workspace_root();
+    // only meaningful where the default workspace exists (the server); elsewhere the lexical check covers it
+    if std::fs::create_dir_all(&root).is_ok() {
+        let link = root.join(format!("link-test-{}", std::process::id()));
+        if std::os::unix::fs::symlink(&outside, &link).is_ok() {
+            assert!(!voice_may_run(&format!("cat {}", link.display())));
+            let _ = std::fs::remove_file(&link);
+        }
+    }
+}

@@ -107,3 +107,60 @@ fn a_fresh_session_opens_with_recent_messages_only() {
     resumed.messages = (0..50).map(|i| Message::user(format!("m{i}"))).collect();
     assert_eq!(cap.rekey(resumed).messages.len(), 50);
 }
+
+fn said(thread: &str, words: &str) -> ModelRequest {
+    let mut request = request(Some(thread));
+    request.messages = vec![tinyinference_llm::Message::user(format!(
+        "{words}\n\n{}\nDecember asked to take your time last week{}",
+        crate::memory::lifecycle::hooks::OPEN_TAG,
+        crate::memory::lifecycle::hooks::CLOSE_TAG
+    ))];
+    request
+}
+
+#[test]
+fn december_picks_the_model_in_words() {
+    assert_eq!(asked_model("quick mode: what's the time in tokyo"), Some(QUICK));
+    assert_eq!(asked_model("can you do it fast"), Some(QUICK));
+    assert_eq!(asked_model("take your time and plan the redesign"), Some(DEEP));
+    assert_eq!(asked_model("back to normal mode"), Some(NORMAL));
+    assert_eq!(asked_model("what's on my calendar"), None);
+    let request = said("t", "hello mochi");
+    assert_eq!(latest_user_words(&request), "hello mochi", "the memory pack is not December's words");
+}
+
+#[test]
+fn small_talk_is_light_and_work_is_not() {
+    assert!(is_light("good morning mochi"));
+    assert!(is_light("remind me at 5 to call mum"));
+    assert!(!is_light("fix the bug in the portfolio repo"));
+    assert!(!is_light("latest news from nepal"));
+    assert!(!is_light(&"a".repeat(LIGHT_CHARS + 1)));
+}
+
+#[test]
+fn a_chat_is_routed_and_switches_only_with_a_fresh_session() {
+    let (dir, cap) = setup(&[call(40_000)]);
+    let cap = cap.routed(true);
+    // a new chat opening with small talk runs on Haiku
+    let first = cap.rekey(said("thread-new", "hi mochi"));
+    assert_eq!(first.model.as_deref(), Some(QUICK));
+    // the existing small session keeps its model while nothing asks for another one
+    let _ = std::fs::write(
+        dir.path().join("ws/claude-session-model.json"),
+        r#"{"thread-1": {"model": "sonnet", "chosen": false}}"#,
+    );
+    let same = cap.rekey(said("thread-1", "and what about tomorrow"));
+    assert_eq!(same.model.as_deref(), Some(NORMAL));
+    assert_eq!(key(&same), Some("thread-1"));
+    // December asks for depth: Opus, on a fresh session
+    let deep = cap.rekey(said("thread-1", "take your time with this one"));
+    assert_eq!(deep.model.as_deref(), Some(DEEP));
+    assert_eq!(key(&deep), Some("thread-1~1"));
+}
+
+#[test]
+fn routing_is_off_unless_turned_on() {
+    let (_dir, cap) = setup(&[call(40_000)]);
+    assert_eq!(cap.rekey(said("thread-1", "quick mode")).model, None);
+}

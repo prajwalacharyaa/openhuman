@@ -35,7 +35,7 @@ use crate::threads::store::{ConversationMessage, CreateConversationThread};
 /// The agent a live session borrows its tools from.
 pub(crate) const LIVE_AGENT_ID: &str = "orchestrator";
 /// How many recent thread messages are summarised into the prompt.
-pub(crate) const CONTEXT_MESSAGES: usize = 12;
+pub(crate) const CONTEXT_MESSAGES: usize = 6;
 /// Characters kept per message in that summary.
 pub(crate) const CONTEXT_CHARS: usize = 600;
 /// The latest messages are kept nearly whole, so "summarize that" right after

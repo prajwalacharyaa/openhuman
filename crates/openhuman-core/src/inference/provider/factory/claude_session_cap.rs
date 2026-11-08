@@ -9,6 +9,13 @@
 //! sees (`<thread>~<n>`), also when the session's transcript was cleaned up: a new key is a new CLI session, and the provider seeds it with the chat's recent
 //! messages ([`FRESH_HISTORY`] of them), so recent context carries over; old tool output and file reads don't.
 //! Memory recall covers older parts of the chat.
+//!
+//! It also picks each chat's model (routing, on the default Sonnet brain only): December's own words choose
+//! one ("quick mode", "do it fast" → Haiku; "take your time", "think hard" → Opus; "normal mode" → Sonnet),
+//! and that holds for the chat until changed or the session goes fresh. Otherwise a chat that opens with a
+//! short, simple message runs on Haiku and anything else on Sonnet; a Haiku chat that gets real work moves
+//! up to Sonnet. The model only ever changes together with a fresh session: switching inside a session would
+//! throw away its prompt cache and cost more than it saves.
 
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
@@ -17,12 +24,35 @@ use std::time::{Duration, SystemTime};
 use tinyinference_llm::{ChatModel, InputModality, InputSource, ModelRequest, ModelResponse, ModelStream};
 
 /// A session whose last call read more than this many tokens starts fresh on the next turn.
-pub(crate) const MAX_CONTEXT_TOKENS: u64 = 150_000;
+pub(crate) const MAX_CONTEXT_TOKENS: u64 = 100_000;
 /// A session unused this long starts fresh (the old one's details are stale anyway).
 pub(crate) const IDLE_FRESH: Duration = Duration::from_secs(6 * 3600);
 /// Chat messages a fresh session is opened with (the provider folds them into its first message). OpenHuman
 /// sends the whole chat, which on a long day is itself tens of thousands of tokens; memory recall covers older.
-pub(crate) const FRESH_HISTORY: usize = 20;
+pub(crate) const FRESH_HISTORY: usize = 6;
+/// Claude Code model aliases a chat is routed between.
+pub(crate) const QUICK: &str = "haiku";
+pub(crate) const NORMAL: &str = "sonnet";
+pub(crate) const DEEP: &str = "opus";
+/// December's words that pick a model, checked in this order (most specific first).
+const NORMAL_WORDS: &[&str] = &["normal mode", "back to normal", "use sonnet"];
+const DEEP_WORDS: &[&str] = &[
+    "take your time", "take time", "think hard", "think deeply", "think carefully", "think it through",
+    "deep mode", "deep dive", "use opus", "समय लिएर",
+];
+const QUICK_WORDS: &[&str] = &[
+    "quick mode", "fast mode", "be quick", "quickly", "do it fast", "make it fast", "quick question",
+    "quick one", "use haiku", "छिटो",
+];
+/// Words that mark real work (code, projects, research, writing): never a Haiku chat on its own.
+const WORK_WORDS: &[&str] = &[
+    "code", "fix", "bug", "build", "repo", "github", "pull request", "deploy", "install", "server", "project",
+    "research", "analy", "plan", "design", "write", "draft", "compare", "debug", "error", "script", "config",
+    "review", "explain", "why ", "how do", "how does", "how to", "report", "browse", "website", "portfolio",
+    "redesign", "graphify", "jigubites", "test", "decide", "decision",
+];
+/// Longest message (characters) that can open a Haiku chat on its own.
+const LIGHT_CHARS: usize = 160;
 /// How much of a session transcript's end is read to find its last call's size.
 const TAIL_BYTES: u64 = 1 << 20;
 
@@ -35,13 +65,23 @@ pub(crate) struct SessionCap {
     fresh_file: PathBuf,
     /// Where the CLI keeps session transcripts (`~/.claude/projects`).
     transcripts: PathBuf,
+    /// thread → the model its current session runs on and whether December chose it.
+    routes_file: PathBuf,
+    /// Pick a model per chat (only for the default Sonnet brain; coding and memory roles keep theirs).
+    route: bool,
     lock: Mutex<()>,
 }
 
 impl SessionCap {
-    pub(crate) fn new(inner: Arc<dyn ChatModel<()>>, workspace: &Path) -> Self {
+    pub(crate) fn new(inner: Arc<dyn ChatModel<()>>, workspace: &Path, route: bool) -> Self {
         let home = std::env::var_os("HOME").map(PathBuf::from).unwrap_or_default();
-        Self::with_paths(inner, workspace, home.join(".claude").join("projects"))
+        Self::with_paths(inner, workspace, home.join(".claude").join("projects")).routed(route)
+    }
+
+    /// Turns per-chat model routing on or off.
+    pub(crate) fn routed(mut self, route: bool) -> Self {
+        self.route = route;
+        self
     }
 
     pub(crate) fn with_paths(inner: Arc<dyn ChatModel<()>>, workspace: &Path, transcripts: PathBuf) -> Self {
@@ -50,6 +90,8 @@ impl SessionCap {
             sessions_file: workspace.join("claude-code-sessions.json"),
             fresh_file: workspace.join("claude-session-fresh.json"),
             transcripts,
+            routes_file: workspace.join("claude-session-model.json"),
+            route: false,
             lock: Mutex::new(()),
         }
     }
@@ -71,6 +113,14 @@ impl SessionCap {
         // no transcripts folder at all (another HOME): leave sessions as they are
         let stale = self.transcripts.is_dir()
             && session.as_deref().is_some_and(|id| self.transcript(id).is_none_or(|transcript| needs_fresh(&transcript)));
+        // the model this chat should run on; a different one than its session's needs a fresh session
+        let route = self.route.then(|| self.pick_model(&thread, &request, session.is_none() || stale));
+        let switch = route.as_ref().is_some_and(|r| r.switch) && session.is_some();
+        let stale = stale || switch;
+        if let Some(route) = route {
+            tracing::info!(thread = %thread, model = route.model, chosen = route.chosen, "[claude-code] chat model");
+            request.model = Some(route.model.to_string());
+        }
         // too big, idle, or its transcript was cleaned up (resuming it would fail)
         if session.is_none() || stale {
             keep_recent(&mut request.messages, FRESH_HISTORY);
@@ -93,6 +143,29 @@ impl SessionCap {
         request
     }
 
+    /// Chooses the chat's model and saves it. `new_session`: the session is starting fresh anyway.
+    fn pick_model(&self, thread: &str, request: &ModelRequest, new_session: bool) -> Route {
+        let text = latest_user_words(request);
+        let mut routes = read_json(&self.routes_file);
+        let current = routes.get(thread).and_then(|r| r.get("model")).and_then(serde_json::Value::as_str);
+        let current = [QUICK, NORMAL, DEEP].into_iter().find(|m| Some(*m) == current);
+        // December's choice holds until the session goes fresh
+        let was_chosen = !new_session && routes.get(thread).and_then(|r| r.get("chosen")).and_then(serde_json::Value::as_bool) == Some(true);
+        let (model, chosen) = match (asked_model(&text), current) {
+            (Some(asked), _) => (asked, true),
+            (None, Some(current)) if !new_session && was_chosen => (current, true),
+            (None, Some(QUICK)) if !new_session => (if is_light(&text) { QUICK } else { NORMAL }, false),
+            (None, Some(current)) if !new_session => (current, false),
+            (None, _) => (if is_light(&text) { QUICK } else { NORMAL }, false),
+        };
+        let switch = !new_session && current.is_some_and(|c| c != model);
+        routes[thread] = serde_json::json!({ "model": model, "chosen": chosen });
+        if let Err(error) = write_json(&self.routes_file, &routes) {
+            tracing::warn!(%error, "[claude-code] couldn't save the chat's model");
+        }
+        Route { model, chosen, switch }
+    }
+
     fn transcript(&self, session: &str) -> Option<PathBuf> {
         let name = format!("{session}.jsonl");
         std::fs::read_dir(&self.transcripts)
@@ -101,6 +174,50 @@ impl SessionCap {
             .map(|dir| dir.path().join(&name))
             .find(|path| path.is_file())
     }
+}
+
+/// A chat's model for this turn.
+struct Route {
+    model: &'static str,
+    /// December asked for it in words.
+    chosen: bool,
+    /// Differs from the model the chat's session runs on.
+    switch: bool,
+}
+
+/// December's own words in the latest user message: the memory pack OpenHuman appends is not theirs.
+pub(crate) fn latest_user_words(request: &ModelRequest) -> String {
+    let text = request
+        .messages
+        .iter()
+        .rev()
+        .find(|m| matches!(m, tinyinference_llm::Message::User(_)))
+        .map(tinyinference_llm::Message::text)
+        .unwrap_or_default();
+    let own = text.split(crate::memory::lifecycle::hooks::OPEN_TAG).next().unwrap_or_default();
+    own.trim().to_lowercase()
+}
+
+/// The model December asked for in so many words, if any.
+pub(crate) fn asked_model(words: &str) -> Option<&'static str> {
+    let says = |list: &[&str]| list.iter().any(|w| words.contains(w));
+    if says(NORMAL_WORDS) {
+        Some(NORMAL)
+    } else if says(DEEP_WORDS) {
+        Some(DEEP)
+    } else if says(QUICK_WORDS) {
+        Some(QUICK)
+    } else {
+        None
+    }
+}
+
+/// A short, simple message (a greeting, a quick fact, a reminder) that Haiku answers as well as Sonnet.
+pub(crate) fn is_light(words: &str) -> bool {
+    !words.is_empty()
+        && words.chars().count() <= LIGHT_CHARS
+        && !words.contains("```")
+        && !WORK_WORDS.iter().any(|w| words.contains(w))
 }
 
 /// Keeps the system messages and the last `keep` others: what a new session is opened with.

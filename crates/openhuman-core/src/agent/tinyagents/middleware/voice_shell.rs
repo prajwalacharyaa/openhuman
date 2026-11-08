@@ -13,6 +13,7 @@ use tinyinference_llm::tool::ToolCall as TaToolCall;
 use tinytools::ToolResult as TaToolResult;
 
 /// Commands a call's shell may run: Mochi's helpers and quick reads.
+/// `cat` reads only Mochi's workspace (see [`cat_reads_only_workspace`]).
 pub(crate) const VOICE_COMMANDS: &[&str] = &[
     "cat", "date", "mochi-ask", "mochi-phone", "mochi-remind", "mochi-watch", "mochi-mail", "mochi-notify",
     "mochi-call",
@@ -44,6 +45,42 @@ pub(crate) fn voice_may_run(command: &str) -> bool {
     quote.is_none()
         && !programs.is_empty()
         && programs.iter().all(|program| VOICE_COMMANDS.contains(&program.rsplit('/').next().unwrap_or(program)))
+        && parts.iter().all(|part| cat_reads_only_workspace(part))
+}
+
+/// Mochi's workspace: the only place a call's `cat` may read (status and report files live there).
+fn workspace_root() -> std::path::PathBuf {
+    std::env::var_os("OPENHUMAN_WORKSPACE")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| std::path::PathBuf::from("/home/openhuman/OpenHuman/workspace"))
+}
+
+/// A `cat` reads only files inside [`workspace_root`] (or stdin): never keys, `/proc` or other users' files,
+/// which a misheard or injected request could otherwise read out loud. Paths with `..`, `~`, variables or
+/// wildcards are refused, and a symlink counts by where it points.
+fn cat_reads_only_workspace(part: &str) -> bool {
+    let mut words = part.split_whitespace();
+    let Some(program) = words.next() else { return true };
+    if program.rsplit('/').next() != Some("cat") {
+        return true;
+    }
+    let root = workspace_root();
+    let real_root = std::fs::canonicalize(&root).unwrap_or_else(|_| root.clone());
+    words.filter(|word| !word.starts_with('-')).all(|word| {
+        let path = word.trim_matches(|c| c == '"' || c == '\'');
+        if path.contains("..") || path.contains(['~', '$', '*', '?', '[']) {
+            return false;
+        }
+        let path = std::path::Path::new(path);
+        if !path.starts_with(&root) {
+            return false;
+        }
+        // a link inside the workspace must not lead out of it
+        match std::fs::canonicalize(path) {
+            Ok(real) => real.starts_with(&real_root),
+            Err(_) => true, // missing: cat fails on its own
+        }
+    })
 }
 
 /// `wrap_tool`: refuse a shell command outside [`VOICE_COMMANDS`]. Installed on live (voice) harnesses only.

@@ -252,3 +252,21 @@ fn a_status_question_gets_one_status_nudge_only() {
     checks.on_event(HandoffEvent::AgentSaid("Claude will do it."), later(61));
     assert_eq!(checks.on_event(HandoffEvent::TurnComplete, later(62)), Some(NUDGE));
 }
+
+#[test]
+fn checks_memory_for_questions_about_before() {
+    assert!(asks_recall("Do you remember what I said about the portfolio?"));
+    assert!(asks_recall("What do I have on Monday?"));
+    assert!(!asks_recall("What's the weather?"));
+    let t0 = std::time::Instant::now();
+    let later = |s: u64| t0 + std::time::Duration::from_secs(s);
+    let mut check = LookupCheck::default();
+    check.on_event(HandoffEvent::UserSaid("What did I say about the meeting?"), t0);
+    check.on_event(HandoffEvent::AgentSaid("You said it was on Friday."), later(1));
+    assert_eq!(check.on_event(HandoffEvent::TurnComplete, later(2)), Some(MEMORY_NUDGE));
+    // a memory search answers it: no nudge
+    check.on_event(HandoffEvent::UserSaid("What was my plan for Sunday?"), later(60));
+    check.on_event(HandoffEvent::ToolStarted("memory_search"), later(61));
+    check.on_event(HandoffEvent::AgentSaid("A hike with friends."), later(62));
+    assert_eq!(check.on_event(HandoffEvent::TurnComplete, later(63)), None);
+}

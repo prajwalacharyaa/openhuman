@@ -262,6 +262,20 @@ December pushed back, without checking anything. Check now: search with your web
 Claude with mochi-ask if it's about December's own server, projects or code. If your first answer stands, say \
 so politely; agree only with what the check shows.)";
 
+/// Sent to the live model when December asked about something from before and it answered without memory.
+pub(crate) const MEMORY_NUDGE: &str = "(Server check, not December speaking: December asked about something from \
+before (their plans, an earlier talk, something they told you) and you answered without searching memory. If \
+your answer came from the memory notes you were given at the start of this call, say nothing. Otherwise search \
+memory now with memory_search and answer only from what it shows; if it has nothing, say you don't have that \
+saved. Never guess.)";
+
+/// How December asks about something only memory knows (their own plans, earlier talks).
+const RECALL_ASKED: &[&str] = &[
+    "do you remember", "remember when", "did i tell you", "did i say", "what did i", "what did we",
+    "when did i", "where did i", "what was my", "my plan", "my schedule", "what do i have", "when is my",
+    "मैले भनेको", "सम्झ",
+];
+
 /// Words in December's request that only a fresh lookup can answer.
 const FRESH_WORDS: &[&str] = &[
     "news", "headline", "latest", "price", "score", "weather", "nepse", "share market", "stock market",
@@ -292,6 +306,12 @@ pub(crate) fn asks_fresh(text: &str) -> bool {
 pub(crate) fn asks_status(text: &str) -> bool {
     let text = text.to_lowercase().replace('\u{2019}', "'");
     STATUS_ASKED.iter().any(|w| text.contains(w))
+}
+
+/// Whether December asks about something from before that memory holds.
+pub(crate) fn asks_recall(text: &str) -> bool {
+    let text = text.to_lowercase().replace('\u{2019}', "'");
+    RECALL_ASKED.iter().any(|w| text.contains(w))
 }
 
 /// Whether the model's words say it is looking something up.
@@ -325,7 +345,7 @@ pub(crate) struct LookupCheck {
 
 impl LookupCheck {
     fn need(&mut self, nudge: &'static str) {
-        let rank = |n: &str| [AGREE_NUDGE, STATUS_NUDGE, LOOKUP_NUDGE].iter().position(|x| *x == n);
+        let rank = |n: &str| [AGREE_NUDGE, STATUS_NUDGE, LOOKUP_NUDGE, MEMORY_NUDGE].iter().position(|x| *x == n);
         if self.needed.is_none_or(|current| rank(nudge) < rank(current)) {
             self.needed = Some(nudge);
         }
@@ -346,6 +366,8 @@ impl LookupCheck {
                     self.need(STATUS_NUDGE);
                 } else if asks_fresh(text) {
                     self.need(LOOKUP_NUDGE);
+                } else if asks_recall(text) {
+                    self.need(MEMORY_NUDGE);
                 }
             }
             HandoffEvent::AgentSaid(text) => {
