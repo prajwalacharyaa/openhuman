@@ -122,6 +122,8 @@ private fun MapScreen(repo: String, onBack: () -> Unit) {
         val json = graph
         if (json != null) {
             AndroidView(modifier = Modifier.fillMaxSize(), factory = { context ->
+                // TEMPORARY while the blank-map bug is found: lets Chrome's devtools attach over USB (adb). Remove after.
+                WebView.setWebContentsDebuggingEnabled(true)
                 WebView(context).apply {
                     settings.javaScriptEnabled = true
                     settings.allowContentAccess = false

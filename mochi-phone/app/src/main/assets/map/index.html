@@ -72,7 +72,7 @@ function mainPoints() {
   add(top);
   if (net) {
     net.stabilize(150);  // lay it out now (fires stabilizationIterationsDone → fit) instead of drifting for seconds
-    setTimeout(() => { if (!touched) net.fit({ animation: { duration: 300 } }); }, 2500);  // and fit again, in any case
+    setTimeout(() => { if (!touched) net.fit({ animation: false }); report('after 2.5 s'); }, 2500);  // fit again, in any case
   }
 }
 function details(id) {
@@ -103,11 +103,25 @@ function find(text) {
 // and fitted in a 0x0 box ends up off-screen. Until December moves or zooms it, it re-fits when its size changes.
 const box = document.getElementById('map');
 let net = null, touched = false;
+function report(what) {
+  // progress for the phone's log (adb logcat -s MochiMap): where the map is and what it shows
+  try {
+    const pos = Object.values(net.getPositions());
+    const xs = pos.map(p => p.x), ys = pos.map(p => p.y);
+    const canvas = box.querySelector('canvas');
+    console.log('map ' + what + ': box ' + box.clientWidth + 'x' + box.clientHeight + ', canvas ' +
+      (canvas ? canvas.width + 'x' + canvas.height : 'none') + ', dpr ' + devicePixelRatio + ', scale ' + net.getScale().toFixed(3) +
+      ', view ' + JSON.stringify(net.getViewPosition()) + ', nodes ' + pos.length + ', x ' + Math.min(...xs).toFixed(0) +
+      '..' + Math.max(...xs).toFixed(0) + ', y ' + Math.min(...ys).toFixed(0) + '..' + Math.max(...ys).toFixed(0));
+  } catch (e) { console.log('map report failed: ' + e); }
+}
 function settled() {
   net.setOptions({ physics: { enabled: false } }); // physics only while a layout settles (it costs battery)
-  if (fitWhenSettled) { fitWhenSettled = false; net.fit({ animation: { duration: 300 } }); }
+  if (fitWhenSettled) { fitWhenSettled = false; net.fit({ animation: false }); }
+  report('settled');
 }
 function start() {
+  console.log('map start: box ' + box.clientWidth + 'x' + box.clientHeight + ', ' + g.nodes.length + ' nodes');
   net = new vis.Network(box, { nodes, edges }, {
     nodes: { scaling: { min: 6, max: 34, label: { enabled: true, min: 14, max: 26, drawThreshold: 5 } } },
     physics: { solver: 'barnesHut', barnesHut: { gravitationalConstant: -2500, centralGravity: 0.9, springLength: 110, avoidOverlap: 0.4 },
@@ -124,8 +138,10 @@ function start() {
   Android.ready(String(g.nodes.length), String(links.length));
 }
 let lastW = 0, lastH = 0;
+console.log('map page loaded: box ' + box.clientWidth + 'x' + box.clientHeight + ', window ' + innerWidth + 'x' + innerHeight);
 new ResizeObserver(() => {
   const w = box.clientWidth, h = box.clientHeight;
+  console.log('map resize: ' + w + 'x' + h);
   if (w < 10 || h < 10) return;
   if (!net) { lastW = w; lastH = h; start(); return; }
   if (Math.abs(w - lastW) + Math.abs(h - lastH) > 20) {
