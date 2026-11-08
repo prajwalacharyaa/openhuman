@@ -50,6 +50,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
@@ -82,7 +83,9 @@ class DoingActivity : ComponentActivity() {
     }
 
     companion object {
-        fun open(c: Context) = c.startActivity(Intent(c, DoingActivity::class.java))
+        /** Opens the page, or brings it back to the front if it's already open (never a second copy). */
+        fun open(c: Context) = c.startActivity(Intent(c, DoingActivity::class.java)
+            .addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT))
     }
 }
 
@@ -137,6 +140,10 @@ private fun DoingScreen(onBack: () -> Unit) {
                     else -> "Nothing yet. Steps show up here as Mochi works."
                 }, style = Type.small, color = c.muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
+            RoundButton(Icons2.Home, "Mochi home", c.field, c.ink, 44.dp) {
+                ctx.startActivity(Intent(ctx, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP))
+                onBack()
+            }
         }
         // Mochi and its helpers
         BoxWithConstraints(Modifier.padding(horizontal = Space.l).fillMaxWidth().aspectRatio(1f).clip(RoundedCornerShape(28.dp))
@@ -167,6 +174,12 @@ private fun DoingScreen(onBack: () -> Unit) {
                     Box(Modifier.size(10.dp).clip(CircleShape).background(lane.ink))
                     Column(Modifier.weight(1f)) {
                         Text(s.text, style = Type.body, color = c.ink, maxLines = 3, overflow = TextOverflow.Ellipsis)
+                        // the specifics: the command, the search, the address, the file, the helper's task
+                        if (s.detail.isNotBlank() && s.detail != s.text) Text(s.detail,
+                            style = Type.small.copy(fontFamily = FontFamily.Monospace), color = c.muted, maxLines = 4,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.padding(top = 2.dp).fillMaxWidth().clip(RoundedCornerShape(8.dp))
+                                .background(c.codeBg).padding(horizontal = Space.s, vertical = 4.dp))
                         Text(listOf(s.who, s.repo.takeIf { it.isNotBlank() }, DateUtils.getRelativeTimeSpanString(s.at).toString())
                             .filterNotNull().joinToString(" · "), style = Type.small, color = c.muted, maxLines = 1)
                     }

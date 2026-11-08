@@ -86,7 +86,8 @@
 
         <activity
             android:name=".DoingActivity"
-            android:exported="false" />
+            android:exported="false"
+            android:launchMode="singleTop" />
 
         <activity
             android:name=".AbilitiesActivity"

@@ -99,6 +99,16 @@ import java.time.Instant
  * bottom. Also the first-time setup (server + Mochi's token) and the permissions a ringing phone needs.
  */
 class MainActivity : ComponentActivity() {
+    /** Which screen Home shows; a widget or notification tap switches it (Home is one instance, never stacked). */
+    private val tab = mutableStateOf("home")
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        if (intent.action == ACTION_CALL) callMochi(this)
+        tab.value = intent.getStringExtra(EXTRA_TAB) ?: "home"
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
@@ -106,8 +116,8 @@ class MainActivity : ComponentActivity() {
             requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS, Manifest.permission.RECORD_AUDIO), 1)
         }
         if (savedInstanceState == null && intent.action == ACTION_CALL) callMochi(this)
-        val start = intent.getStringExtra(EXTRA_TAB) ?: "home"
-        setContent { MochiTheme { App(start) } }
+        if (savedInstanceState == null) tab.value = intent.getStringExtra(EXTRA_TAB) ?: "home"
+        setContent { MochiTheme { App(tab.value) { tab.value = it } } }
     }
 
     override fun onResume() {
@@ -143,15 +153,14 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
-private fun App(start: String) {
-    var tab by remember { mutableStateOf(start) }
-    BackHandler(enabled = tab != "home") { tab = "home" }
+private fun App(tab: String, setTab: (String) -> Unit) {
+    BackHandler(enabled = tab != "home") { setTab("home") }
     when (tab) {
-        "chats" -> ChatsScreen { tab = "home" }
-        "memory" -> MemoryScreen { tab = "home" }
-        "inbox" -> InboxScreen { tab = "home" }
-        "maps" -> MapsScreen { tab = "home" }
-        else -> HomeScreen { tab = it }
+        "chats" -> ChatsScreen { setTab("home") }
+        "memory" -> MemoryScreen { setTab("home") }
+        "inbox" -> InboxScreen { setTab("home") }
+        "maps" -> MapsScreen { setTab("home") }
+        else -> HomeScreen { setTab(it) }
     }
 }
 
@@ -194,6 +203,7 @@ private fun HomeScreen(go: (String) -> Unit) {
     var approvals by remember { mutableStateOf<List<JSONObject>>(emptyList()) }
     var latest by remember { mutableStateOf<JSONObject?>(null) }
     var notice by remember { mutableStateOf(Mochi.inbox(ctx).firstOrNull()) }
+    var unread by remember { mutableIntStateOf(Mochi.unreadInbox(ctx)) }
     var ram by remember { mutableStateOf("") }
     var ask by remember { mutableStateOf("") }
     var fixList by remember { mutableStateOf(fixes(ctx)) }
@@ -216,6 +226,7 @@ private fun HomeScreen(go: (String) -> Unit) {
         io(scope, { Mochi.threads(ctx).firstOrNull() }) { latest = it }
         io(scope, { Mochi.ramLabel(ctx) }) { ram = it }
         notice = Mochi.inbox(ctx).firstOrNull()
+        unread = Mochi.unreadInbox(ctx)
         fixList = fixes(ctx)
         if (updating < 0) io(scope, { Updater.available(ctx) }) { update = it }
     }
@@ -349,8 +360,14 @@ private fun HomeScreen(go: (String) -> Unit) {
                 for ((key, label, bg) in listOf(Triple("memory", "Memory", c.violetBg), Triple("inbox", "Inbox", c.field),
                         Triple("maps", "Maps", c.blueBg))) {
                     Tile(bg, Modifier.weight(1f), onClick = { go(key) }) {
-                        LineIcon(when (key) { "memory" -> Icons2.Memory; "inbox" -> Icons2.Bell; else -> Icons2.Map },
-                            when (key) { "memory" -> c.violetInk; "maps" -> c.blueInk; else -> c.ink }, 22.dp)
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            LineIcon(when (key) { "memory" -> Icons2.Memory; "inbox" -> Icons2.Bell; else -> Icons2.Map },
+                                when (key) { "memory" -> c.violetInk; "maps" -> c.blueInk; else -> c.ink }, 22.dp)
+                            val count = if (key == "inbox") unread else 0
+                            if (count > 0) Text(if (count > 9) "9+" else "$count", style = Type.small.copy(fontWeight = Type.strong),
+                                color = Color.White, modifier = Modifier.padding(start = Space.s).clip(RoundedCornerShape(10.dp))
+                                    .background(c.danger).padding(horizontal = 6.dp, vertical = 1.dp))
+                        }
                         Text(label, style = Type.body.copy(fontWeight = Type.strong), color = c.ink)
                     }
                 }
@@ -720,6 +737,7 @@ private fun InboxScreen(onBack: () -> Unit) {
     val ctx = LocalContext.current
     val c = LocalMochi.current
     var notices by remember { mutableStateOf(Mochi.inbox(ctx)) }
+    LaunchedEffect(Unit) { Mochi.markInboxSeen(ctx); MochiWidget.update(ctx, force = true) }
     Screen("Inbox", onBack, action = {
         if (notices.isNotEmpty()) Text("Clear", style = Type.small, color = c.muted,
             modifier = Modifier.clip(RoundedCornerShape(8.dp)).clickable(role = Role.Button) {

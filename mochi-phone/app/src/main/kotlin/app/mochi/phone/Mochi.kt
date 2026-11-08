@@ -260,6 +260,14 @@ object Mochi {
 
     fun clearInbox(c: Context) = prefs(c).edit().putString("inbox", "[]").apply()
 
+    /** Notices that came in since December last opened the Inbox (the red count). */
+    fun unreadInbox(c: Context): Int {
+        val seen = prefs(c).getLong("inbox_seen", 0)
+        return inbox(c).count { it.optLong("at") > seen }
+    }
+
+    fun markInboxSeen(c: Context) = prefs(c).edit().putLong("inbox_seen", System.currentTimeMillis()).apply()
+
     /** The chat mode chosen on the phone: null = automatic, else a Claude Code model for model_override. */
     fun mode(c: Context): String = prefs(c).getString("mode", "normal") ?: "normal"
     fun setMode(c: Context, mode: String) = prefs(c).edit().putString("mode", mode).apply()

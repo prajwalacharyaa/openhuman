@@ -15,7 +15,8 @@ import org.json.JSONObject
  */
 object Doing {
     /** One step. [lane]: voice, brain, helper, memory, web, server, phone, github. */
-    data class Step(val id: String, val at: Long, val lane: String, val who: String, val text: String, val repo: String)
+    data class Step(val id: String, val at: Long, val lane: String, val who: String, val text: String, val repo: String,
+                    val detail: String = "")
 
     val steps = mutableStateListOf<Step>()
     private val main = Handler(Looper.getMainLooper())
@@ -25,7 +26,8 @@ object Doing {
 
     fun add(e: JSONObject) {
         val step = Step(e.optString("id").ifEmpty { "${System.nanoTime()}" }, e.optLong("at", System.currentTimeMillis() / 1000) * 1000,
-            e.optString("lane", "brain"), e.optString("who", "Mochi"), e.optString("text"), e.optString("repo"))
+            e.optString("lane", "brain"), e.optString("who", "Mochi"), e.optString("text"), e.optString("repo"),
+            e.optString("detail"))
         if (step.text.isBlank()) return
         main.post {
             if (steps.any { it.id == step.id }) return@post
@@ -64,7 +66,8 @@ object Doing {
             name == "shell" -> "server" to "Running a helper on the server"
             else -> "voice" to name.replace('_', ' ').replaceFirstChar { it.uppercase() }
         }
-        add(JSONObject().put("lane", lane).put("who", "Mochi (voice)").put("text", text)
+        val detail = if (lane == "phone") "" else (args?.optString("query")?.takeIf { it.isNotBlank() } ?: command)
+        add(JSONObject().put("lane", lane).put("who", "Mochi (voice)").put("text", text).put("detail", detail.take(300))
             .put("at", System.currentTimeMillis() / 1000))
     }
 }

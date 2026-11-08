@@ -46,43 +46,131 @@
     </LinearLayout>
     <LinearLayout
         android:layout_width="match_parent"
-        android:layout_height="40dp"
-        android:layout_marginTop="10dp"
-        android:orientation="horizontal">
-        <TextView
-            android:id="@+id/widget_call"
+        android:layout_height="48dp"
+        android:layout_marginTop="8dp"
+        android:orientation="horizontal"
+        android:gravity="center_vertical">
+        <FrameLayout
+            android:id="@+id/widget_call_box"
             android:layout_width="0dp"
-            android:layout_height="match_parent"
-            android:layout_weight="1"
-            android:background="@drawable/widget_btn_coral"
-            android:gravity="center"
-            android:text="Call Mochi"
-            android:textColor="#FFFFFF"
-            android:textSize="14sp"
-            android:textStyle="bold" />
-        <TextView
-            android:id="@+id/widget_mute"
+            android:layout_height="48dp"
+            android:layout_weight="1">
+            <ImageView
+                android:id="@+id/widget_call"
+                android:layout_width="44dp"
+                android:layout_height="44dp"
+                android:layout_gravity="center"
+                android:padding="10dp"
+                android:src="@drawable/ic_w_phone"
+                android:background="@drawable/widget_circle_coral"
+                android:contentDescription="Call Mochi" />
+        </FrameLayout>
+        <FrameLayout
+            android:id="@+id/widget_mute_box"
             android:layout_width="0dp"
-            android:layout_height="match_parent"
+            android:layout_height="48dp"
             android:layout_weight="1"
-            android:layout_marginEnd="8dp"
-            android:background="@drawable/widget_btn_field"
-            android:gravity="center"
-            android:text="Mute"
-            android:textColor="#111111"
-            android:textSize="14sp"
-            android:visibility="gone" />
-        <TextView
-            android:id="@+id/widget_hangup"
+            android:visibility="gone">
+            <ImageView
+                android:id="@+id/widget_mute"
+                android:layout_width="44dp"
+                android:layout_height="44dp"
+                android:layout_gravity="center"
+                android:padding="10dp"
+                android:src="@drawable/ic_w_mic"
+                android:background="@drawable/widget_circle_grey"
+                android:contentDescription="Mute" />
+        </FrameLayout>
+        <FrameLayout
+            android:id="@+id/widget_hangup_box"
             android:layout_width="0dp"
-            android:layout_height="match_parent"
+            android:layout_height="48dp"
             android:layout_weight="1"
-            android:background="@drawable/widget_btn_red"
-            android:gravity="center"
-            android:text="Hang up"
-            android:textColor="#FFFFFF"
-            android:textSize="14sp"
-            android:textStyle="bold"
-            android:visibility="gone" />
+            android:visibility="gone">
+            <ImageView
+                android:id="@+id/widget_hangup"
+                android:layout_width="44dp"
+                android:layout_height="44dp"
+                android:layout_gravity="center"
+                android:padding="10dp"
+                android:src="@drawable/ic_w_hangup"
+                android:background="@drawable/widget_circle_red"
+                android:contentDescription="Hang up" />
+        </FrameLayout>
+        <FrameLayout
+            android:id="@+id/widget_new_box"
+            android:layout_width="0dp"
+            android:layout_height="48dp"
+            android:layout_weight="1">
+            <ImageView
+                android:id="@+id/widget_new"
+                android:layout_width="44dp"
+                android:layout_height="44dp"
+                android:layout_gravity="center"
+                android:padding="10dp"
+                android:src="@drawable/ic_w_plus"
+                android:background="@drawable/widget_circle_grey"
+                android:contentDescription="New chat" />
+        </FrameLayout>
+        <FrameLayout
+            android:id="@+id/widget_approvals_box"
+            android:layout_width="0dp"
+            android:layout_height="48dp"
+            android:layout_weight="1">
+            <ImageView
+                android:id="@+id/widget_approvals"
+                android:layout_width="44dp"
+                android:layout_height="44dp"
+                android:layout_gravity="center"
+                android:padding="10dp"
+                android:src="@drawable/ic_w_approvals"
+                android:background="@drawable/widget_circle_grey"
+                android:contentDescription="Approvals" />
+            <TextView
+                android:id="@+id/widget_approvals_count"
+                android:layout_width="wrap_content"
+                android:layout_height="18dp"
+                android:minWidth="18dp"
+                android:layout_gravity="top|center_horizontal"
+                android:layout_marginStart="16dp"
+                android:paddingStart="4dp"
+                android:paddingEnd="4dp"
+                android:gravity="center"
+                android:background="@drawable/widget_badge"
+                android:textColor="#FFFFFF"
+                android:textSize="10sp"
+                android:textStyle="bold"
+                android:visibility="gone" />
+        </FrameLayout>
+        <FrameLayout
+            android:id="@+id/widget_inbox_box"
+            android:layout_width="0dp"
+            android:layout_height="48dp"
+            android:layout_weight="1">
+            <ImageView
+                android:id="@+id/widget_inbox"
+                android:layout_width="44dp"
+                android:layout_height="44dp"
+                android:layout_gravity="center"
+                android:padding="10dp"
+                android:src="@drawable/ic_w_bell"
+                android:background="@drawable/widget_circle_grey"
+                android:contentDescription="Notifications" />
+            <TextView
+                android:id="@+id/widget_inbox_count"
+                android:layout_width="wrap_content"
+                android:layout_height="18dp"
+                android:minWidth="18dp"
+                android:layout_gravity="top|center_horizontal"
+                android:layout_marginStart="16dp"
+                android:paddingStart="4dp"
+                android:paddingEnd="4dp"
+                android:gravity="center"
+                android:background="@drawable/widget_badge"
+                android:textColor="#FFFFFF"
+                android:textSize="10sp"
+                android:textStyle="bold"
+                android:visibility="gone" />
+        </FrameLayout>
     </LinearLayout>
 </LinearLayout>

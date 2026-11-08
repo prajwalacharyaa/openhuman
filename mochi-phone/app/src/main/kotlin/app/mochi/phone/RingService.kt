@@ -183,6 +183,7 @@ class RingService : Service() {
         fun showNotice(c: Context, notice: JSONObject) {
             if (notice.has("url")) return approvalNotice(c, notice.optString("body"))
             Mochi.addToInbox(c, notice)
+            MochiWidget.update(c, force = true) // the red count
             val open = withHome(c, 7 + notices % 50, Intent(c, ChatActivity::class.java))
             val body = notice.optString("body")
             val n = Notification.Builder(c, Mochi.CHANNEL_NOTICES)
