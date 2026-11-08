@@ -134,8 +134,10 @@ class ProjectMap(val parts: Map<String, Part>, val links: Map<String, List<Link>
             }
             val byArea = parts.values.groupBy { it.area }
             val areas = byArea.map { (id, members) ->
-                Area(id, names[id] ?: "Area ${id + 1}",
-                    members.map { it.id }.sortedByDescending { links[it]?.size ?: 0 })
+                val ids = members.map { it.id }.sortedByDescending { links[it]?.size ?: 0 }
+                // Graphify names an area after its main file; a name like "_" says nothing: use its biggest part
+                val name = names[id]?.takeIf { it.trim().length > 1 } ?: parts[ids.first()]?.label ?: "Area ${id + 1}"
+                Area(id, name, ids)
             }.sortedByDescending { it.parts.size }
             return ProjectMap(parts, links, areas)
         }
