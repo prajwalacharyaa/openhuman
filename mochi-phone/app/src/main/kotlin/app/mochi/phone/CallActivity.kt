@@ -122,7 +122,7 @@ class CallActivity : ComponentActivity(), Call.Listener {
     }
 
     @Deprecated("Deprecated in Java")
-    override fun onRequestPermissionsResult(code: Int, permissions: Array<out String>, results: IntArray) {
+    override fun onRequestPermissionsResult(code: Int, permissions: Array<String>, results: IntArray) {
         @Suppress("DEPRECATION") super.onRequestPermissionsResult(code, permissions, results)
         if (results.firstOrNull() == PackageManager.PERMISSION_GRANTED) {
             answer()
