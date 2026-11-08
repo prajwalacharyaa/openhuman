@@ -270,3 +270,24 @@ fn checks_memory_for_questions_about_before() {
     check.on_event(HandoffEvent::AgentSaid("A hike with friends."), later(62));
     assert_eq!(check.on_event(HandoffEvent::TurnComplete, later(63)), None);
 }
+
+#[test]
+fn plans_need_a_memory_search_and_claims_need_a_real_check() {
+    assert!(asks_recall("Do I have any reminders for tomorrow?"));
+    assert!(!asks_recall("Remind me at 5 to call mum"), "setting a reminder isn't asking about plans");
+    assert!(asks_fresh("Check the current state, do the proper research"));
+    assert!(claims_memory("I checked the memory as well, nothing there"));
+    let t0 = std::time::Instant::now();
+    let later = |s: u64| t0 + std::time::Duration::from_secs(s);
+    // reminders were checked (a shell helper), memory wasn't: one memory nudge
+    let mut check = LookupCheck::default();
+    check.on_event(HandoffEvent::UserSaid("Do I have any reminders for tomorrow?"), t0);
+    check.on_event(HandoffEvent::ToolStarted("shell"), later(1));
+    check.on_event(HandoffEvent::AgentSaid("No reminders for tomorrow."), later(2));
+    assert_eq!(check.on_event(HandoffEvent::TurnComplete, later(3)), Some(MEMORY_NUDGE));
+    // "my research shows" with no tool at all: a lookup nudge
+    let mut check = LookupCheck::default();
+    check.on_event(HandoffEvent::UserSaid("Why is everything falling?"), t0);
+    check.on_event(HandoffEvent::AgentSaid("My research shows money is moving to cash."), later(1));
+    assert_eq!(check.on_event(HandoffEvent::TurnComplete, later(2)), Some(LOOKUP_NUDGE));
+}

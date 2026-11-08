@@ -273,13 +273,17 @@ saved. Never guess.)";
 const RECALL_ASKED: &[&str] = &[
     "do you remember", "remember when", "did i tell you", "did i say", "what did i", "what did we",
     "when did i", "where did i", "what was my", "my plan", "my schedule", "what do i have", "when is my",
+    "any reminder", "reminders", "my reminder", "any plans", "plans for", "do i have", "anything planned", "my meeting",
     "मैले भनेको", "सम्झ",
 ];
+/// ...unless December is asking to set something, not asking what's there ("remind me at 5").
+const SETTING_WORDS: &[&str] = &["remind me", "set a", "add a", "create a", "make a", "schedule a"];
 
 /// Words in December's request that only a fresh lookup can answer.
 const FRESH_WORDS: &[&str] = &[
     "news", "headline", "latest", "price", "score", "weather", "nepse", "share market", "stock market",
     "check if", "verify", "is it true", "is that true", "are you sure", "genuine",
+    "current", "right now", "research", "look up", "look it up", "search for", "find out",
     "समाचार", "न्युज", "खबर", "ताजा", "मौसम", "सेयर",
 ];
 /// How December asks whether Claude is still working or done.
@@ -291,7 +295,15 @@ const STATUS_ASKED: &[&str] = &[
 /// ...unless December asks about something already said ("yesterday's news from our last chat").
 const PAST_WORDS: &[&str] = &["yesterday", "previous", "earlier", "last time", "हिजो", "अघिल्लो", "पहिले"];
 /// How the model announces a lookup it then has to make.
-const LOOKUP_SAID: &[&str] = &["checking", "let me check", "searching", "looking it up", "let me look", "हेर्दै", "खोज्दै"];
+const LOOKUP_SAID: &[&str] = &[
+    "checking", "let me check", "searching", "looking it up", "let me look", "हेर्दै", "खोज्दै",
+    // a finished check it may not have made: answered only if a tool really ran this turn
+    "my research", "research shows", "i checked", "i've checked", "i have checked", "i looked", "i've looked",
+    "i searched", "i've searched", "according to my search",
+];
+/// How the model says it looked in memory (a memory search must back it, not some other tool).
+const MEMORY_SAID: &[&str] = &["checked the memory", "checked your memory", "checked memory", "memory confirms",
+    "in your memory", "in my memory", "memory shows"];
 /// How the model gives in to a pushback.
 const AGREE_SAID: &[&str] =
     &["you're absolutely right", "you are absolutely right", "i stand corrected", "my mistake", "i was wrong"];
@@ -311,7 +323,13 @@ pub(crate) fn asks_status(text: &str) -> bool {
 /// Whether December asks about something from before that memory holds.
 pub(crate) fn asks_recall(text: &str) -> bool {
     let text = text.to_lowercase().replace('\u{2019}', "'");
-    RECALL_ASKED.iter().any(|w| text.contains(w))
+    RECALL_ASKED.iter().any(|w| text.contains(w)) && !SETTING_WORDS.iter().any(|w| text.contains(w))
+}
+
+/// Whether the model's words say it looked in memory.
+pub(crate) fn claims_memory(text: &str) -> bool {
+    let text = text.to_lowercase();
+    MEMORY_SAID.iter().any(|w| text.contains(w))
 }
 
 /// Whether the model's words say it is looking something up.
@@ -339,6 +357,8 @@ pub(crate) struct LookupCheck {
     user_turn: bool,
     asked_at: Option<Instant>,
     last_tool: Option<Instant>,
+    /// When a memory tool last ran: only that answers a question about December's own plans.
+    last_memory: Option<Instant>,
     /// Already nudged since December last spoke.
     nudged: bool,
 }
@@ -375,19 +395,28 @@ impl LookupCheck {
                 if concedes(text) {
                     self.need(AGREE_NUDGE);
                 }
-                if announces_lookup(text) {
+                if claims_memory(text) {
+                    self.need(MEMORY_NUDGE);
+                } else if announces_lookup(text) {
                     self.need(LOOKUP_NUDGE);
                 }
             }
-            HandoffEvent::ToolStarted(_) => self.last_tool = Some(now),
+            HandoffEvent::ToolStarted(name) => {
+                self.last_tool = Some(now);
+                if name.contains("memory") {
+                    self.last_memory = Some(now);
+                }
+            }
             HandoffEvent::TurnComplete => {
                 self.user_turn = false;
-                let looked = match (self.last_tool, self.asked_at) {
+                let needed = self.needed.take();
+                // a question about December's plans needs a memory search (reminders alone don't answer it)
+                let tool = if needed == Some(MEMORY_NUDGE) { self.last_memory } else { self.last_tool };
+                let looked = match (tool, self.asked_at) {
                     (Some(tool), Some(asked)) => tool + LOOKUP_GRACE >= asked,
                     (tool, None) => tool.is_some(),
                     (None, _) => false,
                 };
-                let needed = self.needed.take();
                 if !looked && !self.nudged {
                     if let Some(nudge) = needed {
                         self.nudged = true;
