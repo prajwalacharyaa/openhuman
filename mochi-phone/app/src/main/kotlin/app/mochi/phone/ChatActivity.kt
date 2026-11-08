@@ -145,6 +145,16 @@ fun ChatScreen(initialThread: String?, newChat: Boolean, initialText: String?, s
     var live by remember { mutableStateOf<Live?>(null) }
     var attachMenu by remember { mutableStateOf(false) }
     val list = rememberLazyListState()
+    // the call state isn't Compose state: look again every second (for the Call / Silent button)
+    var onThisCall by remember { mutableStateOf(false) }
+    var silent by remember { mutableStateOf(Call.silent) }
+    LaunchedEffect(thread) {
+        while (true) {
+            onThisCall = Call.active && thread != null && Call.thread == thread
+            silent = Call.silent
+            delay(1_000)
+        }
+    }
 
     fun reload() {
         val id = thread ?: return
@@ -298,6 +308,19 @@ fun ChatScreen(initialThread: String?, newChat: Boolean, initialText: String?, s
                         }
                     }
                 } else {
+                    // on this chat's call: Silent (Mochi answers in text only); otherwise: call Mochi in this chat
+                    if (onThisCall) {
+                        RoundButton(if (silent) Icons2.Muted else Icons2.Speaker,
+                            if (silent) "Silent: Mochi answers in text. Tap for voice" else "Mochi talks. Tap for silent",
+                            if (silent) c.ink else c.field, if (silent) c.bg else c.ink) {
+                            Call.silent = !Call.silent; silent = Call.silent
+                        }
+                    } else if (thread != null) {
+                        RoundButton(Icons2.Phone, "Call Mochi in this chat", c.field, c.ink) {
+                            thread?.let { Mochi.setThread(ctx, it) }
+                            MainActivity.callMochi(ctx)
+                        }
+                    }
                     RoundButton(Icons2.Send, "Send", c.ink, c.bg) { send(input) }
                 }
             }

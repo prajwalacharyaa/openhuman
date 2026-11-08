@@ -61,6 +61,21 @@ object Call {
     @Volatile var muted = false
     var speaker = true
         private set
+    /** When this call started (ms): its Claude tokens are the ones used since. */
+    @Volatile var startedAtMs = 0L
+        private set
+    /** The chat this call is in (the chat screen shows Silent there instead of Call). */
+    val thread: String? get() = threadId
+    @Volatile private var sentBytes = 0L
+    @Volatile private var heardBytes = 0L
+    @Volatile private var outRate = 24_000
+
+    /**
+     * This call's Gemini tokens, estimated: Google counts audio at about 32 tokens a second, for what the phone sent
+     * (16 kHz PCM16, silence included: Gemini still receives it) and what Mochi said (PCM16 at the output rate).
+     */
+    val geminiTokens: Long get() = ((sentBytes / 32_000.0 + heardBytes / (outRate * 2.0)) * 32).toLong()
+
     /** Silent: Mochi's voice isn't played; its words still appear on the call screen (December keeps talking). */
     @Volatile var silent = false
     var status = ""
@@ -103,6 +118,9 @@ object Call {
         frozen = false
         call = mochiCall
         startedAt = java.time.Instant.now()
+        startedAtMs = System.currentTimeMillis()
+        sentBytes = 0
+        heardBytes = 0
         lastSpoke = System.currentTimeMillis()
         main.post { said.clear() }
         threadId = mochiCall?.optString("thread_id")?.takeIf { it.isNotEmpty() } ?: Mochi.callThread(app)
@@ -119,6 +137,7 @@ object Call {
     fun end() {
         if (!active) return
         active = false
+        Doing.addGeminiToday(app, geminiTokens)
         frozen = false
         Unfreeze.stop()
         ws?.let { runCatching { it.send("""{"type":"stop"}"""); it.close(1000, "hang up") } }
@@ -280,6 +299,7 @@ object Call {
         }
 
         override fun onMessage(webSocket: WebSocket, bytes: ByteString) {
+            if (webSocket === ws) heardBytes += bytes.size
             if (webSocket === ws && !quiet) playback.offer(bytes.toByteArray())
         }
 
@@ -335,6 +355,7 @@ object Call {
         "shut up", "hush", "pause", "enough", "chup", "chup lag", "chup basa", "चुप", "चुप लाग", "चुप बस", "रोक")
 
     private fun startAudio(socket: WebSocket, outRate: Int) {
+        this.outRate = outRate
         Thread({ record(socket) }, "mochi-mic").start()
         Thread({ play(socket, outRate) }, "mochi-speaker").start()
     }
@@ -376,6 +397,7 @@ object Call {
                     rec.stop()
                     while (Unfreeze.needsMic && active && ws === socket) {
                         socket.send(silence.toByteString())
+                        sentBytes += silence.size
                         Thread.sleep(100)
                     }
                     rec.startRecording()
@@ -390,6 +412,7 @@ object Call {
                 if (n == FRAME_BYTES) {
                     if (frozen) Unfreeze.feed(buf)
                     socket.send((if (muted || frozen) silence else buf).toByteString())
+                    sentBytes += buf.size
                 }
             }
         } finally {

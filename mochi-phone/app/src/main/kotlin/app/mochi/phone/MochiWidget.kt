@@ -49,7 +49,7 @@ class MochiWidget : AppWidgetProvider() {
             val ids = manager.getAppWidgetIds(ComponentName(c, MochiWidget::class.java))
             if (ids.isEmpty()) return
             refreshApprovals(c)
-            val step = Doing.steps.lastOrNull()
+            val step = Doing.latestStep()
             val busy = Doing.busy()
             val status = when {
                 Call.active -> "On a call" + (if (busy && step != null) " · ${step.text}" else if (Call.muted) " · muted" else "")

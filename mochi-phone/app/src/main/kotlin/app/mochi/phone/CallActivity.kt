@@ -187,6 +187,9 @@ class CallActivity : ComponentActivity(), Call.Listener {
             Row(Modifier.fillMaxWidth()) { RoundButton(Icons2.Back, "Back to Home", c.field, c.ink, 44.dp) { finish() } }
             Mascot(Modifier.size(160.dp), mood = mood, onTap = { DoingActivity.open(this@CallActivity) })
             Text("Tap Mochi to see what it's doing", style = Type.small, color = c.muted)
+            // this call's tokens: Claude's exact (from the server's feed), Gemini's estimated from the audio
+            if (Call.active && !incoming) Text("This call · Claude ${Doing.fmt(Doing.claudeSince(Call.startedAtMs).total)}" +
+                " · Gemini ≈${Doing.fmt(Call.geminiTokens)}", style = Type.small, color = c.muted)
             Text("Mochi", style = Type.display, color = c.ink, modifier = Modifier.padding(top = Space.m))
             Text(when {
                     Call.silent && !incoming -> "$status · silent: Mochi answers in text"

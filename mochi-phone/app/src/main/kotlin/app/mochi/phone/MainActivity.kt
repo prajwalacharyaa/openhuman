@@ -74,6 +74,8 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.sp
 import app.mochi.phone.ui.Field
 import app.mochi.phone.ui.Icons2
 import app.mochi.phone.ui.Label
@@ -215,6 +217,7 @@ private fun HomeScreen(go: (String) -> Unit) {
     var onCall by remember { mutableStateOf(Call.active) }
     var muted by remember { mutableStateOf(Call.muted) }
     var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
+    var tokens by remember { mutableStateOf<Map<String, Doing.Tokens>>(emptyMap()) }
     LaunchedEffect(Unit) {
         io(scope, { Doing.backfill(ctx) }) {}
         while (true) { onCall = Call.active; muted = Call.muted || Call.frozen; now = System.currentTimeMillis(); delay(1_000) }
@@ -225,6 +228,7 @@ private fun HomeScreen(go: (String) -> Unit) {
         io(scope, { Mochi.approvals(ctx) }) { approvals = it }
         io(scope, { Mochi.threads(ctx).firstOrNull() }) { latest = it }
         io(scope, { Mochi.ramLabel(ctx) }) { ram = it }
+        io(scope, { Doing.today(ctx) }) { tokens = it }
         notice = Mochi.inbox(ctx).firstOrNull()
         unread = Mochi.unreadInbox(ctx)
         fixList = fixes(ctx)
@@ -251,7 +255,16 @@ private fun HomeScreen(go: (String) -> Unit) {
                     }, style = Type.small, color = c.muted)
                     Text(greeting(), style = Type.display, color = c.ink)
                 }
-                Mascot(Modifier.size(72.dp), onTap = {})
+                // Mochi, with today's tokens per model under it (Gemini is estimated from the call audio)
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Mascot(Modifier.size(72.dp), onTap = {})
+                    val gemini = Doing.geminiToday(ctx) + (if (onCall) Call.geminiTokens else 0)
+                    val lines = tokens.entries.filter { it.value.total > 0 }.sortedByDescending { it.value.total }
+                        .map { "${it.key.replaceFirstChar { ch -> ch.uppercase() }} ${Doing.fmt(it.value.total)}" } +
+                        (if (gemini > 0) listOf("Gemini ≈${Doing.fmt(gemini)}") else emptyList())
+                    if (lines.isNotEmpty()) Text("Today\n" + lines.joinToString("\n"), style = Type.small.copy(fontSize = 10.sp,
+                        lineHeight = 13.sp), color = c.muted, textAlign = TextAlign.Center)
+                }
             }
             if (!configured || showSetup) SetupCard { configured = true; showSetup = false }
             for (f in fixList) {
@@ -260,7 +273,7 @@ private fun HomeScreen(go: (String) -> Unit) {
                         .clickable(role = Role.Button) { ctx.startActivity(f.intent) }.padding(Space.l))
             }
             // Mochi at work: the latest step; a tap shows everything it's doing
-            Doing.steps.lastOrNull()?.takeIf { Doing.busy(now) }?.let { step ->
+            Doing.latestStep()?.takeIf { Doing.busy(now) }?.let { step ->
                 Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp)).background(c.blueBg)
                     .clickable(role = Role.Button) { DoingActivity.open(ctx) }.padding(horizontal = Space.l, vertical = Space.m),
                     verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Space.m)) {
