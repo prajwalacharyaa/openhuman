@@ -106,6 +106,9 @@ pub(super) fn try_create_claude_code_chat_model_from_string(
         .map(std::path::Path::to_path_buf)
         .unwrap_or_else(|| config.workspace_dir.clone());
     let effective_model = model_override.unwrap_or(&configured_model).to_string();
+    // route only the default Sonnet brain: the turn path always passes its model as an override (even the default),
+    // so look at the model it ends up with; a phone mode chip (Haiku / Opus) or the coding/memory roles keep theirs
+    let route = effective_model == super::claude_session_cap::NORMAL;
     emit_inference_egress(
         role,
         &format!(
@@ -123,7 +126,7 @@ pub(super) fn try_create_claude_code_chat_model_from_string(
         Ok(model) => Arc::new(super::claude_session_cap::SessionCap::new(
             Arc::new(model.with_mcp_provider(Arc::new(OpenHumanMcpEndpoint))),
             &workspace,
-            model_override.is_none() && configured_model == super::claude_session_cap::NORMAL,
+            route,
         )) as Arc<dyn ChatModel<()>>,
         Err(error) => return Some(Err(error)),
     };
