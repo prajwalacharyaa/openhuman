@@ -115,7 +115,9 @@ impl ToolMiddleware<(), crate::agent::tinyagents::host::OpenHumanRunContext> for
         call: TaToolCall,
         next: ToolHandler<'_, (), crate::agent::tinyagents::host::OpenHumanRunContext>,
     ) -> TaResult<MiddlewareToolOutcome> {
-        tracing::info!("[voice-live] tool {}: {}", call.name, step_detail(&call.name, &call.arguments));
+        let name = call.name.clone();
+        let detail = step_detail(&call.name, &call.arguments);
+        tracing::info!("[voice-live] tool {}: {}", name, detail);
         if call.name == "shell" {
             let command = call.arguments.get("command").and_then(|c| c.as_str()).unwrap_or_default();
             if !voice_may_run(command) {
@@ -128,8 +130,24 @@ impl ToolMiddleware<(), crate::agent::tinyagents::host::OpenHumanRunContext> for
                 )));
             }
         }
-        next.run(ctx, state, call).await
+        let outcome = next.run(ctx, state, call).await?;
+        if let MiddlewareToolOutcome::Result(result) = &outcome {
+            let text = super::tool_result_text(result);
+            tracing::info!("[voice-live] result {}: {}", name, result_line(&detail, &text, result.is_error));
+        }
+        Ok(outcome)
     }
+}
+
+/// The result of a voice tool call in one line for the "What Mochi is doing" step: its first line (failed ones say
+/// so). Phone results are never shown, only that it was done.
+pub(crate) fn result_line(detail: &str, text: &str, is_error: bool) -> String {
+    if detail == "mochi-phone" {
+        return if is_error { "failed".to_string() } else { "done".to_string() };
+    }
+    let first = text.lines().map(str::trim).find(|l| !l.is_empty()).unwrap_or("done");
+    let first: String = first.chars().take(200).collect();
+    if is_error { format!("failed: {first}") } else { first }
 }
 
 #[cfg(test)]

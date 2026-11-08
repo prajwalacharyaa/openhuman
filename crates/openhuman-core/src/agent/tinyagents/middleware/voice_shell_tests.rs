@@ -53,3 +53,10 @@ fn a_voice_step_shows_its_command_but_never_phone_details() {
     assert_eq!(step_detail("web_search_tool", &serde_json::json!({"query": "NEPSE today"})), "NEPSE today");
     assert_eq!(step_detail("memory_search", &serde_json::json!({})), "memory_search");
 }
+
+#[test]
+fn a_voice_result_is_one_line_and_never_phone_data() {
+    assert_eq!(result_line("mochi-ask \"x\"", "Sent. If you haven't said so\nmore", false), "Sent. If you haven't said so");
+    assert_eq!(result_line("mochi-phone", "Mum: 98…", false), "done");
+    assert_eq!(result_line("memory_search", "", true), "failed: done");
+}
