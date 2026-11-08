@@ -73,6 +73,13 @@ object Icons2 {
         moveTo(4f, 7f); horizontalLineTo(20f); moveTo(9f, 7f); verticalLineTo(4f); horizontalLineTo(15f); verticalLineTo(7f)
         moveTo(6f, 7f); lineTo(7f, 20f); horizontalLineTo(17f); lineTo(18f, 7f)
     }
+    val Map = line("map") {
+        moveTo(6f, 6f); lineTo(12f, 12f); lineTo(18f, 7f); moveTo(12f, 12f); lineTo(16f, 18f); moveTo(12f, 12f); lineTo(6f, 17f)
+        moveTo(8f, 6f); arcTo(2f, 2f, 0f, true, true, 4f, 6f); arcTo(2f, 2f, 0f, true, true, 8f, 6f)
+        moveTo(20f, 7f); arcTo(2f, 2f, 0f, true, true, 16f, 7f); arcTo(2f, 2f, 0f, true, true, 20f, 7f)
+        moveTo(18f, 18f); arcTo(2f, 2f, 0f, true, true, 14f, 18f); arcTo(2f, 2f, 0f, true, true, 18f, 18f)
+        moveTo(8f, 17f); arcTo(2f, 2f, 0f, true, true, 4f, 17f); arcTo(2f, 2f, 0f, true, true, 8f, 17f)
+    }
     val Check = line("check") { moveTo(5f, 12f); lineTo(10f, 17f); lineTo(19f, 7f) }
     val Close = line("close") { moveTo(6f, 6f); lineTo(18f, 18f); moveTo(18f, 6f); lineTo(6f, 18f) }
     val Phone = line("phone") {

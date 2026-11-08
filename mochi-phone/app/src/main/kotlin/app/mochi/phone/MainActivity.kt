@@ -40,6 +40,18 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.SnackbarDuration
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.SnackbarResult
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.snapshotFlow
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.material3.LinearProgressIndicator
+import app.mochi.phone.ui.SwipeRow
+import kotlinx.coroutines.launch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -131,6 +143,7 @@ private fun App(start: String) {
         "chats" -> ChatsScreen { tab = "home" }
         "memory" -> MemoryScreen { tab = "home" }
         "inbox" -> InboxScreen { tab = "home" }
+        "maps" -> MapsScreen { tab = "home" }
         else -> HomeScreen { tab = it }
     }
 }
@@ -179,6 +192,9 @@ private fun HomeScreen(go: (String) -> Unit) {
     var fixList by remember { mutableStateOf(fixes(ctx)) }
     var showSetup by remember { mutableStateOf(false) }
     var busy by remember { mutableStateOf(setOf<String>()) }
+    var update by remember { mutableStateOf<JSONObject?>(null) }
+    var updating by remember { mutableStateOf(-1f) } // download progress, -1 = not downloading
+    var updateError by remember { mutableStateOf("") }
 
     fun refresh() {
         if (!Mochi.configured(ctx)) return
@@ -187,6 +203,7 @@ private fun HomeScreen(go: (String) -> Unit) {
         io(scope, { Mochi.ramLabel(ctx) }) { ram = it }
         notice = Mochi.inbox(ctx).firstOrNull()
         fixList = fixes(ctx)
+        if (updating < 0) io(scope, { Updater.available(ctx) }) { update = it }
     }
     LaunchedEffect(configured) {
         while (true) { refresh(); delay(10_000) }
@@ -216,6 +233,26 @@ private fun HomeScreen(go: (String) -> Unit) {
                 Text(f.label, style = Type.small.copy(fontWeight = Type.strong), color = c.amberInk,
                     modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(c.amberBg)
                         .clickable(role = Role.Button) { ctx.startActivity(f.intent) }.padding(Space.l))
+            }
+            // a new version of this app, from the server over Tailscale
+            update?.let { u ->
+                Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(24.dp)).background(c.blueBg).padding(20.dp),
+                    verticalArrangement = Arrangement.spacedBy(Space.m)) {
+                    Text("Update ready", style = Type.small.copy(fontWeight = Type.strong), color = c.blueInk)
+                    Text("Mochi version ${u.optInt("version")} · ${u.optLong("size") / 1_000_000} MB", style = Type.title, color = c.ink)
+                    if (updating >= 0) LinearProgressIndicator(progress = { updating }, modifier = Modifier.fillMaxWidth(),
+                        color = c.blueInk, trackColor = c.bg)
+                    if (updateError.isNotEmpty()) Text(updateError, style = Type.small, color = c.danger)
+                    if (!Updater.allowed(ctx)) Text("First allow Mochi to install updates (once), then tap Update.",
+                        style = Type.small, color = c.muted)
+                    Pill(if (updating >= 0) "Downloading…" else "Update", true, Modifier.fillMaxWidth()) {
+                        if (updating >= 0) return@Pill
+                        if (!Updater.allowed(ctx)) { ctx.startActivity(Updater.allowIntent(ctx)); return@Pill }
+                        updating = 0f; updateError = ""
+                        io(scope, { Updater.install(ctx, u) { p -> scope.launch { updating = p } } },
+                            { updating = -1f; updateError = "Update failed: ${it.message}" }) { updating = -1f }
+                    }
+                }
             }
             // decisions, answered right here
             for (a in approvals) {
@@ -282,16 +319,12 @@ private fun HomeScreen(go: (String) -> Unit) {
                 }
             }
             Row(horizontalArrangement = Arrangement.spacedBy(Space.m)) {
-                Tile(c.violetBg, Modifier.weight(1f), onClick = { go("memory") }) {
-                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Space.m)) {
-                        LineIcon(Icons2.Memory, c.violetInk, 22.dp)
-                        Text("Memory", style = Type.body.copy(fontWeight = Type.strong), color = c.ink)
-                    }
-                }
-                Tile(c.field, Modifier.weight(1f), onClick = { go("inbox") }) {
-                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Space.m)) {
-                        LineIcon(Icons2.Bell, c.ink, 22.dp)
-                        Text("Inbox", style = Type.body.copy(fontWeight = Type.strong), color = c.ink)
+                for ((key, label, bg) in listOf(Triple("memory", "Memory", c.violetBg), Triple("inbox", "Inbox", c.field),
+                        Triple("maps", "Maps", c.blueBg))) {
+                    Tile(bg, Modifier.weight(1f), onClick = { go(key) }) {
+                        LineIcon(when (key) { "memory" -> Icons2.Memory; "inbox" -> Icons2.Bell; else -> Icons2.Map },
+                            when (key) { "memory" -> c.violetInk; "maps" -> c.blueInk; else -> c.ink }, 22.dp)
+                        Text(label, style = Type.body.copy(fontWeight = Type.strong), color = c.ink)
                     }
                 }
             }
@@ -384,55 +417,101 @@ private fun Screen(title: String, onBack: () -> Unit, action: (@Composable () ->
     }
 }
 
+/** Removes [items] from view now and deletes them after a few seconds unless Undo is tapped. */
+private fun <T> deleteWithUndo(scope: kotlinx.coroutines.CoroutineScope, snack: SnackbarHostState, label: String,
+                               items: List<T>, hide: (List<T>) -> Unit, restore: (List<T>) -> Unit,
+                               delete: (List<T>) -> Unit, failed: (Throwable) -> Unit) {
+    hide(items)
+    scope.launch {
+        snack.currentSnackbarData?.dismiss()
+        val undo = snack.showSnackbar(label, actionLabel = "Undo", duration = SnackbarDuration.Short) ==
+            SnackbarResult.ActionPerformed
+        if (undo) restore(items) else io(scope, { delete(items) }, { restore(items); failed(it) }) {}
+    }
+}
+
+/** The bar shown while selecting: how many, select all, delete, cancel. */
+@Composable
+private fun SelectionBar(count: Int, verb: String, onAll: () -> Unit, onDelete: () -> Unit, onCancel: () -> Unit) {
+    val c = LocalMochi.current
+    Row(Modifier.fillMaxWidth().padding(horizontal = Space.l, vertical = Space.s),
+        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Space.s)) {
+        RoundButton(Icons2.Close, "Stop selecting", c.field, c.ink, 44.dp, onCancel)
+        Text("$count selected", style = Type.title, color = c.ink, modifier = Modifier.weight(1f))
+        Text("All", style = Type.small, color = c.blueInk, modifier = Modifier.clip(RoundedCornerShape(8.dp))
+            .clickable(role = Role.Button, onClick = onAll).padding(Space.m))
+        Pill("$verb $count", true, height = 40.dp) { if (count > 0) onDelete() }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun ChatsScreen(onBack: () -> Unit) {
     val ctx = LocalContext.current
     val c = LocalMochi.current
     val scope = rememberCoroutineScope()
-    var all by remember { mutableStateOf<List<JSONObject>?>(null) }
+    val snack = remember { SnackbarHostState() }
+    val all = remember { mutableStateListOf<JSONObject>() }
+    var loaded by remember { mutableStateOf(false) }
     var query by remember { mutableStateOf("") }
     var error by remember { mutableStateOf("") }
-    var deleting by remember { mutableStateOf<JSONObject?>(null) }
-    fun load() = io(scope, { Mochi.threads(ctx) }, { error = "Can't reach Mochi. Is Tailscale on?" }) { all = it }
+    var selected by remember { mutableStateOf(setOf<String>()) }
+    var confirm by remember { mutableStateOf(false) }
+    val selecting = selected.isNotEmpty()
+    fun load() = io(scope, { Mochi.threads(ctx) }, { error = "Can't reach Mochi. Is Tailscale on?" }) {
+        all.clear(); all.addAll(it); loaded = true
+    }
+    fun remove(list: List<JSONObject>) = deleteWithUndo(scope, snack,
+        if (list.size == 1) "Chat deleted" else "${list.size} chats deleted", list,
+        hide = { l -> all.removeAll { t -> l.any { it.optString("id") == t.optString("id") } } },
+        restore = { all.addAll(it); all.sortByDescending { t -> t.optString("lastMessageAt") } },
+        delete = { l -> l.forEach { Mochi.deleteThread(ctx, it.optString("id")) } },
+        failed = { error = "Couldn't delete: ${it.message}" })
     LaunchedEffect(Unit) { load() }
-    Screen("All chats", onBack, action = {
-        RoundButton(Icons2.Plus, "New chat", c.ink, c.bg, 44.dp) { MainActivity.openChat(ctx, new = true) }
-    }) {
-        Field(query, { query = it }, "Search chats", Modifier.fillMaxWidth().padding(horizontal = Space.l), singleLine = true)
-        if (error.isNotEmpty()) Text(error, style = Type.small, color = c.danger, modifier = Modifier.padding(Space.l))
-        val shown = all.orEmpty().filter { query.isBlank() || it.optString("title").contains(query, ignoreCase = true) }
-        LazyColumn(contentPadding = PaddingValues(Space.l), verticalArrangement = Arrangement.spacedBy(Space.s)) {
-            if (all == null && error.isEmpty()) item { Text("Loading…", style = Type.body, color = c.muted) }
-            if (all != null && shown.isEmpty()) item {
-                Text(if (query.isBlank()) "No chats yet." else "No chat matches \"$query\".", style = Type.body, color = c.muted)
-            }
-            items(shown) { t ->
-                val current = t.optString("id") == Mochi.thread(ctx)
-                Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp)).background(if (current) c.blueBg else c.card)
-                    .clickable { MainActivity.openChat(ctx, t.optString("id")) }.padding(Space.l),
-                    verticalAlignment = Alignment.CenterVertically) {
-                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                        Text(t.optString("title").ifBlank { "Conversation" }, style = Type.body.copy(fontWeight = Type.strong),
-                            color = c.ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        Text(ago(t.optString("lastMessageAt")) + if (current) " · current" else "", style = Type.small, color = c.muted)
-                    }
-                    RoundButton(Icons2.Trash, "Delete chat", androidx.compose.ui.graphics.Color.Transparent, c.muted, 44.dp) {
-                        deleting = t
+    BackHandler(enabled = selecting) { selected = emptySet() }
+    val shown = all.filter { query.isBlank() || it.optString("title").contains(query, ignoreCase = true) }
+    Box(Modifier.fillMaxSize()) {
+        Screen("All chats", onBack, action = {
+            RoundButton(Icons2.Plus, "New chat", c.ink, c.bg, 44.dp) { MainActivity.openChat(ctx, new = true) }
+        }) {
+            if (selecting) SelectionBar(selected.size, "Delete", { selected = shown.map { it.optString("id") }.toSet() },
+                { confirm = true }, { selected = emptySet() })
+            else Field(query, { query = it }, "Search chats", Modifier.fillMaxWidth().padding(horizontal = Space.l), singleLine = true)
+            if (error.isNotEmpty()) Text(error, style = Type.small, color = c.danger, modifier = Modifier.padding(Space.l))
+            LazyColumn(contentPadding = PaddingValues(Space.l), verticalArrangement = Arrangement.spacedBy(Space.s)) {
+                if (!loaded && error.isEmpty()) item { Text("Loading…", style = Type.body, color = c.muted) }
+                if (loaded && shown.isEmpty()) item {
+                    Text(if (query.isBlank()) "No chats yet." else "No chat matches \"$query\".", style = Type.body, color = c.muted)
+                }
+                if (loaded && shown.isNotEmpty() && !selecting) item {
+                    Text("Swipe a chat to delete it, or hold one to pick several.", style = Type.small, color = c.muted)
+                }
+                items(shown, key = { it.optString("id") }) { t ->
+                    val id = t.optString("id")
+                    val current = id == Mochi.thread(ctx)
+                    SwipeRow(selecting, id in selected, "Delete", onDelete = { remove(listOf(t)) },
+                        onToggle = { selected = if (id in selected) selected - id else selected + id },
+                        onOpen = { MainActivity.openChat(ctx, id) }) {
+                        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                            Text(t.optString("title").ifBlank { "Conversation" }, style = Type.body.copy(fontWeight = Type.strong),
+                                color = c.ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text(ago(t.optString("lastMessageAt")) + if (current) " · current" else "", style = Type.small, color = c.muted)
+                        }
                     }
                 }
             }
         }
+        SnackbarHost(snack, Modifier.align(Alignment.BottomCenter).systemBarsPadding())
     }
-    deleting?.let { t ->
-        AlertDialog(onDismissRequest = { deleting = null },
-            title = { Text("Delete this chat?") },
-            text = { Text("\"${t.optString("title").ifBlank { "Conversation" }}\" and its messages are removed. Memory keeps what Mochi learned.") },
-            confirmButton = { TextButton({
-                deleting = null
-                io(scope, { Mochi.deleteThread(ctx, t.optString("id")) }, { error = "Couldn't delete: ${it.message}" }) { load() }
-            }) { Text("Delete", color = c.danger) } },
-            dismissButton = { TextButton({ deleting = null }) { Text("Keep") } })
-    }
+    if (confirm) AlertDialog(onDismissRequest = { confirm = false },
+        title = { Text("Delete ${selected.size} chats?") },
+        text = { Text("Their messages are removed. Memory keeps what Mochi learned from them.") },
+        confirmButton = { TextButton({
+            confirm = false
+            val list = all.filter { it.optString("id") in selected }
+            selected = emptySet(); remove(list)
+        }) { Text("Delete", color = c.danger) } },
+        dismissButton = { TextButton({ confirm = false }) { Text("Keep") } })
 }
 
 @Composable
@@ -440,50 +519,105 @@ private fun MemoryScreen(onBack: () -> Unit) {
     val ctx = LocalContext.current
     val c = LocalMochi.current
     val scope = rememberCoroutineScope()
+    val snack = remember { SnackbarHostState() }
+    var tab by remember { mutableStateOf("learning") }
     var query by remember { mutableStateOf("") }
-    var items by remember { mutableStateOf<List<JSONObject>?>(null) }
+    val items = remember { mutableStateListOf<JSONObject>() }
+    var cursor by remember { mutableStateOf<String?>(null) }
+    var end by remember { mutableStateOf(false) }
+    var loading by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf("") }
     var teach by remember { mutableStateOf(false) }
-    var forgetting by remember { mutableStateOf<JSONObject?>(null) }
-    fun load() = io(scope, { Mochi.memories(ctx, query) }, { error = "Can't reach Mochi's memory. (${it.message})" }) {
-        items = it; error = ""
-    }
-    LaunchedEffect(query) { delay(if (query.isEmpty()) 0 else 400); load() }
-    Screen("Memory", onBack, action = {
-        RoundButton(Icons2.Plus, "Teach Mochi something", c.ink, c.bg, 44.dp) { teach = true }
-    }) {
-        Field(query, { query = it }, "Search what Mochi remembers", Modifier.fillMaxWidth().padding(horizontal = Space.l),
-            singleLine = true)
-        Text(if (query.isBlank()) "Newest first. Wrong or outdated? Forget it, so Mochi won't repeat it."
-            else "Best matches", style = Type.small, color = c.muted, modifier = Modifier.padding(horizontal = Space.xl, vertical = Space.s))
-        if (error.isNotEmpty()) Text(error, style = Type.small, color = c.danger, modifier = Modifier.padding(horizontal = Space.l))
-        LazyColumn(contentPadding = PaddingValues(Space.l), verticalArrangement = Arrangement.spacedBy(Space.s)) {
-            if (items == null && error.isEmpty()) item { Text("Loading…", style = Type.body, color = c.muted) }
-            if (items?.isEmpty() == true) item { Text("Nothing found.", style = Type.body, color = c.muted) }
-            items(items.orEmpty()) { m ->
-                Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp)).background(c.card).padding(Space.l),
-                    verticalAlignment = Alignment.Top) {
-                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(Space.xs)) {
-                        Text(m.optString("kind").replace('_', ' ').ifBlank { "memory" }, style = Type.small, color = c.violetInk)
-                        Text(m.optString("text"), style = Type.body, color = c.ink, maxLines = 6, overflow = TextOverflow.Ellipsis)
-                    }
-                    RoundButton(Icons2.Trash, "Forget this", androidx.compose.ui.graphics.Color.Transparent, c.muted, 44.dp) {
-                        forgetting = m
-                    }
-                }
-            }
+    var selected by remember { mutableStateOf(setOf<String>()) }
+    var confirm by remember { mutableStateOf(false) }
+    var generation by remember { mutableIntStateOf(0) } // a new search/tab drops pages of the old one
+    val selecting = selected.isNotEmpty()
+    val list = rememberLazyListState()
+
+    fun more() {
+        if (loading || end) return
+        loading = true
+        val gen = generation
+        io(scope, { Mochi.memories(ctx, query, listOf(tab), cursor) },
+            { loading = false; error = "Can't reach Mochi's memory. (${it.message})" }) { page ->
+            if (gen != generation) return@io
+            loading = false; error = ""
+            val have = items.map { it.optString("id") }.toSet()
+            items.addAll(page.items.filter { it.optString("id") !in have })
+            cursor = page.next
+            end = page.next == null || page.items.isEmpty()
         }
     }
-    forgetting?.let { m ->
-        AlertDialog(onDismissRequest = { forgetting = null },
-            title = { Text("Forget this?") },
-            text = { Text(m.optString("text").take(240)) },
-            confirmButton = { TextButton({
-                forgetting = null
-                io(scope, { Mochi.forget(ctx, m.optString("id")) }, { error = "Couldn't forget: ${it.message}" }) { load() }
-            }) { Text("Forget", color = c.danger) } },
-            dismissButton = { TextButton({ forgetting = null }) { Text("Keep") } })
+    fun restart() { generation++; items.clear(); cursor = null; end = false; loading = false; selected = emptySet(); more() }
+    fun remove(l: List<JSONObject>) = deleteWithUndo(scope, snack,
+        if (l.size == 1) "Forgotten" else "${l.size} forgotten", l,
+        hide = { x -> items.removeAll { m -> x.any { it.optString("id") == m.optString("id") } } },
+        restore = { items.addAll(0, it) },
+        delete = { x -> Mochi.forget(ctx, x.map { it.optString("id") }) },
+        failed = { error = "Couldn't forget: ${it.message}" })
+
+    LaunchedEffect(query, tab) { delay(if (query.isEmpty()) 0 else 400); restart() }
+    // endless scroll: near the bottom, fetch the next page
+    LaunchedEffect(list) {
+        snapshotFlow { list.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0 }.collect { last ->
+            if (last >= items.size - 8) more()
+        }
     }
+    BackHandler(enabled = selecting) { selected = emptySet() }
+
+    Box(Modifier.fillMaxSize()) {
+        Screen("Memory", onBack, action = {
+            RoundButton(Icons2.Plus, "Teach Mochi something", c.ink, c.bg, 44.dp) { teach = true }
+        }) {
+            if (selecting) SelectionBar(selected.size, "Forget", { selected = items.map { it.optString("id") }.toSet() },
+                { confirm = true }, { selected = emptySet() })
+            else Column(Modifier.padding(horizontal = Space.l), verticalArrangement = Arrangement.spacedBy(Space.s)) {
+                Row(horizontalArrangement = Arrangement.spacedBy(Space.s)) {
+                    for ((key, label) in listOf("learning" to "What Mochi knows", "conversation" to "Conversation log")) {
+                        val on = tab == key
+                        Box(Modifier.height(36.dp).clip(RoundedCornerShape(18.dp)).background(if (on) c.ink else c.field)
+                            .clickable(role = Role.Tab) { tab = key }.padding(horizontal = 14.dp),
+                            contentAlignment = Alignment.Center) {
+                            Text(label, style = Type.small.copy(fontWeight = if (on) Type.strong else null),
+                                color = if (on) c.bg else c.ink)
+                        }
+                    }
+                }
+                Field(query, { query = it }, "Search what Mochi remembers", Modifier.fillMaxWidth(), singleLine = true)
+                Text(if (tab == "learning") "Facts and preferences Mochi keeps about you. Wrong or outdated? Swipe it away."
+                    else "Every chat and call turn Mochi logged. Long-term: Mochi searches these before answering.",
+                    style = Type.small, color = c.muted)
+            }
+            if (error.isNotEmpty()) Text(error, style = Type.small, color = c.danger, modifier = Modifier.padding(horizontal = Space.l))
+            LazyColumn(state = list, contentPadding = PaddingValues(Space.l), verticalArrangement = Arrangement.spacedBy(Space.s)) {
+                if (items.isEmpty() && !loading && end) item { Text("Nothing here.", style = Type.body, color = c.muted) }
+                items(items, key = { it.optString("id") }) { m ->
+                    val id = m.optString("id")
+                    SwipeRow(selecting, id in selected, "Forget", onDelete = { remove(listOf(m)) },
+                        onToggle = { selected = if (id in selected) selected - id else selected + id },
+                        onOpen = { selected = selected + id }) {
+                        Column(verticalArrangement = Arrangement.spacedBy(Space.xs)) {
+                            val at = m.optJSONObject("meta")?.optString("observed_at").orEmpty()
+                            Text(listOf(m.optString("kind").ifBlank { "memory" }, ago(at)).filter { it.isNotBlank() }
+                                .joinToString(" · "), style = Type.small, color = c.violetInk)
+                            Text(m.optString("text"), style = Type.body, color = c.ink, maxLines = 6, overflow = TextOverflow.Ellipsis)
+                        }
+                    }
+                }
+                if (loading) item { Text("Loading…", style = Type.small, color = c.muted) }
+            }
+        }
+        SnackbarHost(snack, Modifier.align(Alignment.BottomCenter).systemBarsPadding())
+    }
+    if (confirm) AlertDialog(onDismissRequest = { confirm = false },
+        title = { Text("Forget ${selected.size} items?") },
+        text = { Text("Mochi won't find or repeat them again.") },
+        confirmButton = { TextButton({
+            confirm = false
+            val l = items.filter { it.optString("id") in selected }
+            selected = emptySet(); remove(l)
+        }) { Text("Forget", color = c.danger) } },
+        dismissButton = { TextButton({ confirm = false }) { Text("Keep") } })
     if (teach) {
         var text by remember { mutableStateOf("") }
         AlertDialog(onDismissRequest = { teach = false },
@@ -491,9 +625,46 @@ private fun MemoryScreen(onBack: () -> Unit) {
             text = { Field(text, { text = it }, "e.g. My sister's birthday is 3 March") },
             confirmButton = { TextButton({
                 teach = false
-                if (text.isNotBlank()) io(scope, { Mochi.learn(ctx, text.trim()) }, { error = "Couldn't save: ${it.message}" }) { load() }
+                if (text.isNotBlank()) io(scope, { Mochi.learn(ctx, text.trim()) }, { error = "Couldn't save: ${it.message}" }) {
+                    tab = "learning"; restart()
+                }
             }) { Text("Save") } },
             dismissButton = { TextButton({ teach = false }) { Text("Cancel") } })
+    }
+}
+
+@Composable
+private fun MapsScreen(onBack: () -> Unit) {
+    val ctx = LocalContext.current
+    val c = LocalMochi.current
+    val scope = rememberCoroutineScope()
+    var projects by remember { mutableStateOf<List<JSONObject>?>(null) }
+    var error by remember { mutableStateOf("") }
+    LaunchedEffect(Unit) { io(scope, { Mochi.graphs(ctx) }, { error = "Can't reach Mochi. Is Tailscale on?" }) { projects = it } }
+    Screen("Project maps", onBack) {
+        Text("How each project's parts connect. Tap one to explore it.", style = Type.small, color = c.muted,
+            modifier = Modifier.padding(horizontal = Space.xl))
+        if (error.isNotEmpty()) Text(error, style = Type.small, color = c.danger, modifier = Modifier.padding(Space.l))
+        LazyColumn(contentPadding = PaddingValues(Space.l), verticalArrangement = Arrangement.spacedBy(Space.s)) {
+            if (projects == null && error.isEmpty()) item { Text("Loading…", style = Type.body, color = c.muted) }
+            if (projects?.isEmpty() == true) item {
+                Text("No maps yet: Mochi makes one when it first works on a project.", style = Type.body, color = c.muted)
+            }
+            items(projects.orEmpty()) { p ->
+                Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp)).background(c.card)
+                    .clickable { MapActivity.open(ctx, p.optString("name")) }.padding(Space.l),
+                    verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Space.m)) {
+                    Box(Modifier.size(40.dp).clip(RoundedCornerShape(12.dp)).background(c.violetBg), contentAlignment = Alignment.Center) {
+                        LineIcon(Icons2.Map, c.violetInk, 22.dp)
+                    }
+                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        Text(p.optString("name"), style = Type.body.copy(fontWeight = Type.strong), color = c.ink)
+                        Text("${p.optInt("nodes")} parts · ${p.optInt("edges")} links · updated " +
+                            DateUtils.getRelativeTimeSpanString(p.optLong("updated") * 1000), style = Type.small, color = c.muted)
+                    }
+                }
+            }
+        }
     }
 }
 

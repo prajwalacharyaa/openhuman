@@ -193,20 +193,49 @@ object Mochi {
         if (thread(c) == threadId) prefs(c).edit().remove("thread").apply()
     }
 
-    /** What Mochi remembers: matches for [query], or the newest items when it's blank. */
-    fun memories(c: Context, query: String): List<JSONObject> {
+    /** One page of memory: its items and the cursor for the next page (null at the end). */
+    class MemoryPage(val items: List<JSONObject>, val next: String?)
+
+    /**
+     * What Mochi remembers, a page at a time: [kinds] "learning" (what it was taught or learned) or "conversation"
+     * (the logged chat turns); matches for [query], or newest first when it's blank. Blocking.
+     */
+    fun memories(c: Context, query: String, kinds: List<String>, cursor: String? = null): MemoryPage {
+        val filter = JSONObject().put("kinds", JSONArray(kinds))
+        val params = JSONObject().put("limit", 40).put("filter", filter)
+        if (cursor != null) params.put("cursor", cursor)
         val result = if (query.isBlank()) {
-            data(rpc(c, "openhuman.memory_items_list", JSONObject().put("limit", 50).put("preview", true)))
+            data(rpc(c, "openhuman.memory_items_list", params.put("preview", true)))
         } else {
-            data(rpc(c, "openhuman.memory_fetch", JSONObject().put("query", query).put("limit", 30)))
+            data(rpc(c, "openhuman.memory_fetch", params.put("query", query)))
         }
-        val arr = result.optJSONArray("items") ?: result.optJSONArray("hits") ?: result.optJSONArray("results")
-            ?: JSONArray()
-        return (0 until arr.length()).mapNotNull { arr.optJSONObject(it) }
+        val arr = result.optJSONArray("items") ?: result.optJSONArray("hits") ?: JSONArray()
+        val next = result.optString("next_cursor").takeIf { it.isNotBlank() && it != "null" }
+        return MemoryPage((0 until arr.length()).mapNotNull { arr.optJSONObject(it) }, next)
     }
 
-    fun forget(c: Context, id: String) {
-        rpc(c, "openhuman.memory_forget", JSONObject().put("ids", JSONArray().put(id)))
+    /** Forget these memory items for good. */
+    fun forget(c: Context, ids: List<String>) {
+        if (ids.isEmpty()) return
+        rpc(c, "openhuman.memory_forget", JSONObject().put("ids", JSONArray(ids)))
+    }
+
+    /** The projects with a Graphify map (mochi-publish copies them for mochi-ring). Blocking. */
+    fun graphs(c: Context): List<JSONObject> {
+        val req = Request.Builder().url("${ringUrl(c)}/graphs").header("Authorization", "Bearer ${token(c)}").build()
+        quick.newCall(req).execute().use { r ->
+            val arr = JSONObject(r.body?.string() ?: "{}").optJSONArray("projects") ?: JSONArray()
+            return (0 until arr.length()).map { arr.getJSONObject(it) }
+        }
+    }
+
+    /** One project's map (graph.json) as text. Blocking. */
+    fun graph(c: Context, repo: String): String {
+        val req = Request.Builder().url("${ringUrl(c)}/graphs/$repo").header("Authorization", "Bearer ${token(c)}").build()
+        http.newCall(req).execute().use { r ->
+            if (!r.isSuccessful) throw IllegalStateException("HTTP ${r.code}")
+            return r.body?.string() ?: "{}"
+        }
     }
 
     /** Teach Mochi something directly ("My sister's birthday is 3 March"). */
