@@ -62,7 +62,7 @@ function add(ids) {
     }
   }
   edges.add(newEdges);
-  if (fresh.length) { net.setOptions({ physics: { enabled: true } }); }
+  if (fresh.length && net) { net.setOptions({ physics: { enabled: true } }); }
 }
 let fitWhenSettled = true;
 function mainPoints() {
@@ -70,6 +70,10 @@ function mainPoints() {
   const top = g.nodes.map(n => n.id).sort((a, b) => degree(b) - degree(a)).slice(0, MAIN);
   fitWhenSettled = true;
   add(top);
+  if (net) {
+    net.stabilize(150);  // lay it out now (fires stabilizationIterationsDone → fit) instead of drifting for seconds
+    setTimeout(() => { if (!touched) net.fit({ animation: { duration: 300 } }); }, 2500);  // and fit again, in any case
+  }
 }
 function details(id) {
   const n = byId.get(id) || {};
@@ -81,7 +85,7 @@ function details(id) {
     where: n.source_location || '', group: n.community_name || '', connections: conns, total: degree(id) });
 }
 function focusNode(id, expand) {
-  if (!byId.has(id)) return;
+  if (!net || !byId.has(id)) return;
   const near = (adj.get(id) || []).map(c => c.id).sort((a, b) => degree(b) - degree(a));
   add([id].concat(expand === 'all' ? near : near.slice(0, NEIGHBOURS)));
   net.selectNodes([id]);
@@ -95,23 +99,41 @@ function find(text) {
   if (hit) focusNode(hit.id); else Android.notFound(text);
 }
 
-const net = new vis.Network(document.getElementById('map'), { nodes, edges }, {
-  nodes: { scaling: { min: 6, max: 34, label: { enabled: true, min: 12, max: 22, drawThreshold: 9 } } },
-  physics: { solver: 'barnesHut', barnesHut: { gravitationalConstant: -6000, springLength: 140, avoidOverlap: 0.3 },
-    stabilization: { iterations: 120, fit: false } },
-  interaction: { hover: false, tooltipDelay: 999999, zoomView: true, dragView: true, multiselect: false },
-  layout: { improvedLayout: false },
-});
-// physics only while a layout settles (it costs battery); the whole map is fitted once it has settled
+// The map is created only once its box has a real size: an Android WebView can start at 0x0, and a map laid out
+// and fitted in a 0x0 box ends up off-screen. Until December moves or zooms it, it re-fits when its size changes.
+const box = document.getElementById('map');
+let net = null, touched = false;
 function settled() {
-  net.setOptions({ physics: { enabled: false } });
+  net.setOptions({ physics: { enabled: false } }); // physics only while a layout settles (it costs battery)
   if (fitWhenSettled) { fitWhenSettled = false; net.fit({ animation: { duration: 300 } }); }
 }
-net.on('stabilizationIterationsDone', settled);
-net.on('stabilized', settled);
-net.on('click', p => { if (p.nodes.length) focusNode(p.nodes[0]); else Android.select(''); });
-mainPoints();
-Android.ready(String(g.nodes.length), String(links.length));
+function start() {
+  net = new vis.Network(box, { nodes, edges }, {
+    nodes: { scaling: { min: 6, max: 34, label: { enabled: true, min: 14, max: 26, drawThreshold: 5 } } },
+    physics: { solver: 'barnesHut', barnesHut: { gravitationalConstant: -2500, centralGravity: 0.9, springLength: 110, avoidOverlap: 0.4 },
+      stabilization: { iterations: 120, fit: false } },
+    interaction: { hover: false, tooltipDelay: 999999, zoomView: true, dragView: true, multiselect: false },
+    layout: { improvedLayout: false },
+  });
+  net.on('stabilizationIterationsDone', settled);
+  net.on('stabilized', settled);
+  net.on('dragStart', () => { touched = true; });
+  net.on('zoom', () => { touched = true; });
+  net.on('click', p => { if (p.nodes.length) focusNode(p.nodes[0]); else Android.select(''); });
+  mainPoints();
+  Android.ready(String(g.nodes.length), String(links.length));
+}
+let lastW = 0, lastH = 0;
+new ResizeObserver(() => {
+  const w = box.clientWidth, h = box.clientHeight;
+  if (w < 10 || h < 10) return;
+  if (!net) { lastW = w; lastH = h; start(); return; }
+  if (Math.abs(w - lastW) + Math.abs(h - lastH) > 20) {
+    lastW = w; lastH = h;
+    net.setSize(w + 'px', h + 'px'); net.redraw();
+    if (!touched) net.fit();
+  }
+}).observe(box);
 </script>
 </body>
 </html>

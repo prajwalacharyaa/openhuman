@@ -6,7 +6,10 @@ import android.content.Intent
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.util.Log
+import android.webkit.ConsoleMessage
 import android.webkit.JavascriptInterface
+import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
 import android.webkit.WebView
@@ -131,6 +134,13 @@ private fun MapScreen(repo: String, onBack: () -> Unit) {
                             else WebResourceResponse("text/plain", "utf-8", ByteArrayInputStream(ByteArray(0)))
                         }
                         override fun shouldOverrideUrlLoading(view: WebView, req: WebResourceRequest) = true
+                    }
+                    // the page's messages and errors go to the phone's log (adb logcat -s MochiMap)
+                    webChromeClient = object : WebChromeClient() {
+                        override fun onConsoleMessage(m: ConsoleMessage): Boolean {
+                            Log.d("MochiMap", "${m.message()} @${m.sourceId()}:${m.lineNumber()}")
+                            return true
+                        }
                     }
                     addJavascriptInterface(MapBridge(json,
                         onSelect = { d -> selected = if (d.isEmpty()) null else runCatching { JSONObject(d) }.getOrNull() },
