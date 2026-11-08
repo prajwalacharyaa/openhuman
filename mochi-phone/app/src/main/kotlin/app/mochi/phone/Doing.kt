@@ -51,23 +51,4 @@ object Doing {
     /** The lanes with a step in the last [BUSY_MS] (they light up on the page). */
     fun activeLanes(now: Long = System.currentTimeMillis()): Set<String> =
         steps.filter { now - it.at < BUSY_MS }.map { if (it.lane == "helper") "helper:" + it.who else it.lane }.toSet()
-
-    /** A tool Gemini started on the call, as a step (phone data never: just "Using your phone"). */
-    fun voiceTool(name: String, args: JSONObject?) {
-        val command = args?.optString("command").orEmpty()
-        val (lane, text) = when {
-            name.contains("memory") -> "memory" to "Checking memory"
-            name.contains("search") || name.contains("answer") -> "web" to
-                ("Searching the web" + (args?.optString("query")?.takeIf { it.isNotBlank() }?.let { ": ${it.take(60)}" } ?: ""))
-            name == "shell" && command.contains("mochi-ask") -> "brain" to "Handing this to Claude"
-            name == "shell" && command.contains("mochi-phone") -> "phone" to "Using your phone"
-            name == "shell" && command.contains("mochi-remind") -> "server" to "Setting a reminder"
-            name == "shell" && command.contains("mochi-mail") -> "server" to "Writing an email"
-            name == "shell" -> "server" to "Running a helper on the server"
-            else -> "voice" to name.replace('_', ' ').replaceFirstChar { it.uppercase() }
-        }
-        val detail = if (lane == "phone") "" else (args?.optString("query")?.takeIf { it.isNotBlank() } ?: command)
-        add(JSONObject().put("lane", lane).put("who", "Mochi (voice)").put("text", text).put("detail", detail.take(300))
-            .put("at", System.currentTimeMillis() / 1000))
-    }
 }

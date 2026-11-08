@@ -87,6 +87,10 @@ object Icons2 {
         moveTo(4f, 9f); horizontalLineTo(8f); lineTo(13f, 5f); verticalLineTo(19f); lineTo(8f, 15f); horizontalLineTo(4f); close()
         moveTo(16f, 9f); lineTo(22f, 15f); moveTo(22f, 9f); lineTo(16f, 15f)
     }
+    val Snow = line("snow") {
+        moveTo(12f, 3f); verticalLineTo(21f); moveTo(4.2f, 7.5f); lineTo(19.8f, 16.5f); moveTo(19.8f, 7.5f); lineTo(4.2f, 16.5f)
+        moveTo(9.5f, 4.5f); lineTo(12f, 6.5f); lineTo(14.5f, 4.5f); moveTo(9.5f, 19.5f); lineTo(12f, 17.5f); lineTo(14.5f, 19.5f)
+    }
     val Home = line("home") { moveTo(4f, 11f); lineTo(12f, 4f); lineTo(20f, 11f); verticalLineTo(20f); horizontalLineTo(4f); close() }
     val Shield = line("shield") {
         moveTo(12f, 3f); lineTo(20f, 7f); verticalLineTo(12f); curveTo(20f, 17f, 16.5f, 20f, 12f, 21f)

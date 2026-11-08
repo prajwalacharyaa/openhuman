@@ -174,6 +174,14 @@ object Call {
         return socket.send(JSONObject().put("type", "text").put("text", text).toString())
     }
 
+    /** Freeze now: the Freeze button, or Mochi itself (`mochi-phone freeze`, when it understood December). */
+    fun freezeNow(): Boolean {
+        val socket = ws ?: return false
+        if (!active) return false
+        if (!frozen) main.post { freeze(socket) }
+        return true
+    }
+
     private fun freeze(socket: WebSocket) {
         frozen = true
         quiet = true
@@ -260,7 +268,7 @@ object Call {
                     }
                 }
                 "tool_started" -> {
-                    Doing.voiceTool(f.optString("name"), f.optJSONObject("args"))
+                    // the step itself (with its detail) comes from the server's activity feed
                     main.postDelayed({ MochiWidget.update(app) }, 300)
                     if (!frozen) status("Checking (${f.optString("name")})…")
                 }
@@ -305,6 +313,8 @@ object Call {
     private fun isFreeze(said: String): Boolean {
         val words = said.lowercase().replace("'", "").replace("’", "").replace(Regex("[^\\p{L}\\p{M}\\s]"), " ")
             .trim().split(Regex("\\s+")).filter { it.isNotEmpty() }
+        // "freeze" on its own is a command too (it isn't something people say mid-sentence)
+        if (words.size == 1) return FREEZE_WORD.matches(words[0]) && !words[0].startsWith("breeze")
         if (words.size !in 2..5) return false
         val rest = when {
             NAME.matches(words.first()) -> words.drop(1)

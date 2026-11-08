@@ -206,15 +206,16 @@ class CallActivity : ComponentActivity(), Call.Listener {
                         CallButton(Icons2.HangUp, "Decline", c.danger, Color.White) { decline() }
                         CallButton(Icons2.Phone, "Answer", Color(0xFF2E9D5B), Color.White) { answer() }
                     } else {
-                        val muteLabel = when {
-                            Call.frozen -> "Unfreeze"
-                            Call.muted -> "Unmute"
-                            else -> "Mute"
-                        }
-                        CallButton(if (Call.muted || Call.frozen) Icons2.MicOff else Icons2.Mic, muteLabel,
-                            if (Call.muted || Call.frozen) c.ink else c.field, if (Call.muted || Call.frozen) c.bg else c.ink) {
-                            if (Call.frozen) Call.unfreeze() else Call.muted = !Call.muted
+                        CallButton(if (Call.muted) Icons2.MicOff else Icons2.Mic, if (Call.muted) "Unmute" else "Mute",
+                            if (Call.muted) c.ink else c.field, if (Call.muted) c.bg else c.ink) {
+                            Call.muted = !Call.muted
                             showControls()
+                        }
+                        // one tap, no speech recognition needed: Mochi hears nothing until unfrozen
+                        CallButton(Icons2.Snow, if (Call.frozen) "Unfreeze" else "Freeze",
+                            if (Call.frozen) c.blueInk else c.field, if (Call.frozen) c.bg else c.ink) {
+                            if (Call.frozen) Call.unfreeze() else Call.freezeNow()
+                            window.decorView.postDelayed({ showControls() }, 150)
                         }
                         // Speaker → Earpiece → Silent (Mochi's words only as text) → Speaker
                         val sound = when { Call.silent -> "silent"; Call.speaker -> "speaker"; else -> "earpiece" }

@@ -32,6 +32,7 @@ import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
@@ -162,7 +163,12 @@ private fun DoingScreen(onBack: () -> Unit) {
         val shown = steps.filter { filter == null || laneOf(it) == filter }.asReversed()
         Text(if (filter == null) "Steps, newest first" else "Only: ${all.firstOrNull { it.key == filter }?.label} (tap it again for all)",
             style = Type.small, color = c.muted, modifier = Modifier.padding(horizontal = Space.xl, vertical = Space.s))
-        LazyColumn(contentPadding = PaddingValues(start = Space.l, end = Space.l, bottom = Space.xl),
+        // newest first: a new step slides in at the top and the list follows it, unless December scrolled down to read
+        val list = rememberLazyListState()
+        LaunchedEffect(shown.firstOrNull()?.id) {
+            if (list.firstVisibleItemIndex <= 2) list.animateScrollToItem(0)
+        }
+        LazyColumn(state = list, contentPadding = PaddingValues(start = Space.l, end = Space.l, bottom = Space.xl),
             verticalArrangement = Arrangement.spacedBy(Space.xs)) {
             if (shown.isEmpty()) item {
                 Text("Nothing here yet.", style = Type.body, color = c.muted, modifier = Modifier.padding(Space.l))

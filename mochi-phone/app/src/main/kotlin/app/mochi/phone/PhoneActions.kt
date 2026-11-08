@@ -34,6 +34,9 @@ object PhoneActions {
             "call.place" -> placeCall(c, args)
             "sms.send" -> confirmAndDo(c, "sms", args.optString("to"), args.optString("text"))
             "open" -> open(c, args.optString("url"))
+            // Mochi understood "freeze" (however it was heard): the phone stops sending December's voice
+            "call.freeze" -> if (Call.freezeNow()) ok("frozen: Mochi hears nothing until \"Mochi, unfreeze\" or the button")
+                else fail("no call is on")
             else -> fail("unknown action $action")
         }
     } catch (e: SecurityException) {
