@@ -183,7 +183,9 @@ jobs:
 
   release:
     name: Publish GitHub release
-    if: startsWith(github.ref, 'refs/tags/v')
+    # also when only Windows failed: the server needs just the Linux .deb (Windows' installer step downloads NSIS
+    # from GitHub release files, which returned 504s on 2026-11-08); the Windows installer is added when it built
+    if: ${{ !cancelled() && startsWith(github.ref, 'refs/tags/v') }}
     needs: build
     runs-on: ubuntu-24.04
     permissions:
@@ -200,9 +202,12 @@ jobs:
         run: |
           set -euo pipefail
           cd dist
+          ls ./*.deb >/dev/null 2>&1 || { echo "::error title=Release::no Linux .deb built: nothing to release"; exit 1; }
+          note=""
+          ls ./*.exe >/dev/null 2>&1 || note=" Windows installer missing from this build (its job failed): use the previous release's on PCs."
           sha256sum * > SHA256SUMS
           cat SHA256SUMS
           gh release create "$TAG" --repo "${{ github.repository }}" --target "${{ github.sha }}" \
             --title "Tiny $TAG" \
-            --notes "Personal OpenHuman build (branch tiny). Patches: see the commits since the upstream base tag. Unsigned; Windows: More info > Run anyway." \
+            --notes "Personal OpenHuman build (branch tiny). Patches: see the commits since the upstream base tag. Unsigned; Windows: More info > Run anyway.$note" \
             ./*
