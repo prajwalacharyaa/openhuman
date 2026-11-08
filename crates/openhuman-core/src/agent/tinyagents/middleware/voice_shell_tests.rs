@@ -45,3 +45,11 @@ fn a_workspace_link_out_of_it_is_refused() {
         }
     }
 }
+
+#[test]
+fn a_voice_step_shows_its_command_but_never_phone_details() {
+    assert_eq!(step_detail("shell", &serde_json::json!({"command": "mochi-ask \"check   the repo\""})), "mochi-ask \"check the repo\"");
+    assert_eq!(step_detail("shell", &serde_json::json!({"command": "mochi-phone contacts \"mum\""})), "mochi-phone");
+    assert_eq!(step_detail("web_search_tool", &serde_json::json!({"query": "NEPSE today"})), "NEPSE today");
+    assert_eq!(step_detail("memory_search", &serde_json::json!({})), "memory_search");
+}

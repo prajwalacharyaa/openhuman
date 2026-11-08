@@ -83,6 +83,22 @@ fn cat_reads_only_workspace(part: &str) -> bool {
     })
 }
 
+/// The detail of a voice tool call for the "What Mochi is doing" step (mochi-activity reads it from the journal):
+/// the command, query or text, on one line. Nothing for December's phone (contacts, messages): just the helper.
+pub(crate) fn step_detail(name: &str, args: &serde_json::Value) -> String {
+    let field = |k: &str| args.get(k).and_then(|v| v.as_str()).map(str::to_string);
+    let text = field("command").or_else(|| field("query")).or_else(|| field("text")).unwrap_or_default();
+    if text.contains("mochi-phone") {
+        return "mochi-phone".to_string();
+    }
+    let one_line: String = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    let mut out: String = one_line.chars().take(200).collect();
+    if out.is_empty() {
+        out = name.to_string();
+    }
+    out
+}
+
 /// `wrap_tool`: refuse a shell command outside [`VOICE_COMMANDS`]. Installed on live (voice) harnesses only.
 pub(crate) struct VoiceShellMiddleware;
 
@@ -99,6 +115,7 @@ impl ToolMiddleware<(), crate::agent::tinyagents::host::OpenHumanRunContext> for
         call: TaToolCall,
         next: ToolHandler<'_, (), crate::agent::tinyagents::host::OpenHumanRunContext>,
     ) -> TaResult<MiddlewareToolOutcome> {
+        tracing::info!("[voice-live] tool {}: {}", call.name, step_detail(&call.name, &call.arguments));
         if call.name == "shell" {
             let command = call.arguments.get("command").and_then(|c| c.as_str()).unwrap_or_default();
             if !voice_may_run(command) {
