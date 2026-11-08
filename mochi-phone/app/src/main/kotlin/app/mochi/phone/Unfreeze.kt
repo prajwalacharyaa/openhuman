@@ -28,6 +28,12 @@ object Unfreeze {
     private var pending = ShortArray(0) // samples short of a whole Porcupine frame
     private var recognizer: SpeechRecognizer? = null
     private var onBack: (() -> Unit)? = null
+    /** No wake word set up: the on-device recognizer listens the whole time Mochi is frozen (nothing leaves the
+     *  phone), for "unfreeze" or "Mochi" plus a back word. */
+    private var phraseMode = false
+    private const val PHRASE_LISTEN_MS = 8_000L
+    private val NAME = Regex("m[ou]{1,2}c{1,2}h?(i|ii|ee|ie|y|o)s?|मोची|मोचि|मुची")
+    private val UNFREEZE = Regex("\\b(un|on|an|en)\\s?fr(ee|ie|i|e)+[sz]e?\\b|अनफ्रीज")
 
     /** The recognizer has the microphone: the call sends silence meanwhile. */
     @Volatile var needsMic = false
@@ -38,8 +44,16 @@ object Unfreeze {
     fun start(c: Context, back: () -> Unit): String? {
         stop()
         val keyword = File(c.filesDir, WakeService.KEYWORD_FILE)
-        if (!keyword.exists() || Mochi.wakeKey(c).isBlank()) return "the \"Mochi\" wake word isn't set up"
         if (!SpeechRecognizer.isOnDeviceRecognitionAvailable(c)) return "this phone has no on-device speech recognition"
+        if (!keyword.exists() || Mochi.wakeKey(c).isBlank()) {
+            // no wake word: listen for the phrase itself, on the phone, until unfrozen
+            app = c.applicationContext
+            onBack = back
+            phraseMode = true
+            needsMic = true
+            main.postDelayed({ listen() }, 300)
+            return null
+        }
         porcupine = runCatching {
             Porcupine.Builder().setAccessKey(Mochi.wakeKey(c)).setKeywordPath(keyword.absolutePath).setSensitivity(0.6f)
                 .build(c.applicationContext)
@@ -51,6 +65,7 @@ object Unfreeze {
 
     @Synchronized
     fun stop() {
+        phraseMode = false
         main.removeCallbacksAndMessages(null)
         recognizer?.let { r -> main.post { r.destroy() } }
         recognizer = null
@@ -104,12 +119,19 @@ object Unfreeze {
             .putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
             .putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
         main.postDelayed({ if (recognizer === r) r.startListening(intent) }, 150) // the call's mic lets go first
-        main.postDelayed({ done(r) }, LISTEN_MS)
+        main.postDelayed({ done(r) }, if (phraseMode) PHRASE_LISTEN_MS else LISTEN_MS)
     }
 
     private fun says(results: Bundle): Boolean =
         results.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION).orEmpty().any { heard ->
-            heard.lowercase().replace("'", "").split(Regex("\\W+")).any { it in BACK }
+            val text = heard.lowercase().replace("'", "")
+            val words = text.split(Regex("\\W+"))
+            if (phraseMode) {
+                // stricter without the wake word: "unfreeze", or "Mochi" with a back word ("Mochi, I'm back")
+                UNFREEZE.containsMatchIn(text) || (words.any { NAME.matches(it) } && words.any { it in BACK })
+            } else {
+                words.any { it in BACK }
+            }
         }
 
     /** Not an unfreeze: give the microphone back and keep waiting for "Mochi". */
@@ -117,11 +139,17 @@ object Unfreeze {
         if (recognizer !== r) return
         recognizer = null
         r.destroy()
-        needsMic = false
+        if (phraseMode && onBack != null) {
+            main.postDelayed({ if (phraseMode) listen() }, 250) // keep listening while frozen
+        } else {
+            needsMic = false
+        }
     }
 
     private fun back(r: SpeechRecognizer) {
         if (recognizer !== r) return
+        phraseMode = false
+        needsMic = false
         val then = onBack
         done(r)
         then?.invoke()

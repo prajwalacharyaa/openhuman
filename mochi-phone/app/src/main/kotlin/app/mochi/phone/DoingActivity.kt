@@ -46,7 +46,9 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
@@ -112,12 +114,14 @@ private fun DoingScreen(onBack: () -> Unit) {
     val scope = rememberCoroutineScope()
     var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
     var filter by remember { mutableStateOf<String?>(null) }
+    var detailed by remember { mutableStateOf(Mochi.detailed(ctx)) }
     LaunchedEffect(Unit) {
         io(scope, { Doing.backfill(ctx) }) {}
         while (true) { delay(1_000); now = System.currentTimeMillis() }
     }
     val steps = Doing.steps
-    val active = Doing.activeLanes(now)
+    // a call lights Voice for as long as it's on (steps come only when Mochi uses a tool)
+    val active = Doing.activeLanes(now) + (if (Call.active) setOf("voice") else emptySet())
     val busy = Doing.busy(now)
     val helpers = steps.filter { it.lane == "helper" && now - it.at < 10 * 60_000 }.map { it.who }.distinct()
     val all = lanes(c, helpers)
@@ -151,7 +155,14 @@ private fun DoingScreen(onBack: () -> Unit) {
             .background(c.card), contentAlignment = Alignment.Center) {
             val side = maxWidth
             val ring = side * 0.36f
-            Mascot(Modifier.size(side * 0.34f), mood = mood, onTap = {})
+            // double-tap Mochi: details on / off (remembered; the widget follows)
+            Box(Modifier.size(side * 0.34f).pointerInput(Unit) {
+                detectTapGestures(onDoubleTap = {
+                    detailed = !detailed
+                    Mochi.setDetailed(ctx, detailed)
+                    MochiWidget.update(ctx, force = true)
+                })
+            }) { Mascot(Modifier.fillMaxSize(), mood = mood) }
             all.forEachIndexed { i, lane ->
                 val a = -PI / 2 + 2 * PI * i / all.size
                 LaneBubble(lane, lane.key in active, filter == lane.key,
@@ -161,7 +172,19 @@ private fun DoingScreen(onBack: () -> Unit) {
             }
         }
         val shown = steps.filter { filter == null || laneOf(it) == filter }.asReversed()
-        Text(if (filter == null) "Steps, newest first" else "Only: ${all.firstOrNull { it.key == filter }?.label} (tap it again for all)",
+        if (Call.active) {
+            val said = Call.said.lastOrNull()
+            Text(when {
+                Call.frozen -> "On a call · frozen: Mochi hears nothing"
+                said != null && said.role != "user" && !said.final -> "On a call · Mochi is speaking"
+                said != null && said.role == "user" && !said.final -> "On a call · Mochi is listening to you"
+                else -> "On a call · " + Call.status.ifBlank { "listening" }
+            }, style = Type.small.copy(fontWeight = Type.strong), color = c.amberInk,
+                modifier = Modifier.padding(horizontal = Space.l, vertical = Space.xs).fillMaxWidth()
+                    .clip(RoundedCornerShape(14.dp)).background(c.amberBg).padding(horizontal = Space.m, vertical = Space.s))
+        }
+        Text((if (detailed) "Details on" else "Details off") + " (double-tap Mochi) · " +
+            (if (filter == null) "steps, newest first" else "only ${all.firstOrNull { it.key == filter }?.label}, tap it again for all"),
             style = Type.small, color = c.muted, modifier = Modifier.padding(horizontal = Space.xl, vertical = Space.s))
         // newest first: a new step slides in at the top and the list follows it, unless December scrolled down to read
         val list = rememberLazyListState()
@@ -181,7 +204,7 @@ private fun DoingScreen(onBack: () -> Unit) {
                     Column(Modifier.weight(1f)) {
                         Text(s.text, style = Type.body, color = c.ink, maxLines = 3, overflow = TextOverflow.Ellipsis)
                         // the specifics: the command, the search, the address, the file, the helper's task
-                        if (s.detail.isNotBlank() && s.detail != s.text) Text(s.detail,
+                        if (detailed && s.detail.isNotBlank() && s.detail != s.text) Text(s.detail,
                             style = Type.small.copy(fontFamily = FontFamily.Monospace), color = c.muted, maxLines = 4,
                             overflow = TextOverflow.Ellipsis,
                             modifier = Modifier.padding(top = 2.dp).fillMaxWidth().clip(RoundedCornerShape(8.dp))

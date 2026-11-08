@@ -258,6 +258,10 @@ object Mochi {
         prefs(c).edit().putString("inbox", kept.toString()).apply()
     }
 
+    /** "What Mochi is doing" shows each step's detail line (double-tap Mochi there to switch). The widget follows. */
+    fun detailed(c: Context) = prefs(c).getBoolean("detailed", true)
+    fun setDetailed(c: Context, on: Boolean) = prefs(c).edit().putBoolean("detailed", on).apply()
+
     fun clearInbox(c: Context) = prefs(c).edit().putString("inbox", "[]").apply()
 
     /** Notices that came in since December last opened the Inbox (the red count). */

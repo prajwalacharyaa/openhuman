@@ -53,7 +53,8 @@ class MochiWidget : AppWidgetProvider() {
             val busy = Doing.busy()
             val status = when {
                 Call.active -> "On a call" + (if (busy && step != null) " · ${step.text}" else if (Call.muted) " · muted" else "")
-                busy && step != null -> "Working: ${step.text}"
+                busy && step != null -> "Working: ${step.text}" +
+                    (if (Mochi.detailed(c) && step.detail.isNotBlank() && step.detail != step.text) "\n${step.detail}" else "")
                 else -> "Resting · tap to open"
             }
             val v = RemoteViews(c.packageName, R.layout.widget_mochi)
