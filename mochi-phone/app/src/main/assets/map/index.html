@@ -16,6 +16,7 @@
 <body>
 <div id="map"></div>
 <script>
+window.onerror = (msg, src, line) => { try { Android.failed(String(msg) + ' (line ' + line + ')'); } catch (e) {} };
 // The project map: a project's Graphify graph (graph.json) drawn with vis-network.
 // Starts with the main points (the most connected nodes); a tap focuses a node, adds its neighbours and asks the
 // app to show its details (Android.select). The app calls focusNode(id), expandAll(id), mainPoints().
@@ -63,11 +64,12 @@ function add(ids) {
   edges.add(newEdges);
   if (fresh.length) { net.setOptions({ physics: { enabled: true } }); }
 }
+let fitWhenSettled = true;
 function mainPoints() {
   nodes.clear(); edges.clear();
   const top = g.nodes.map(n => n.id).sort((a, b) => degree(b) - degree(a)).slice(0, MAIN);
+  fitWhenSettled = true;
   add(top);
-  setTimeout(() => net.fit({ animation: true }), 50);
 }
 function details(id) {
   const n = byId.get(id) || {};
@@ -100,8 +102,13 @@ const net = new vis.Network(document.getElementById('map'), { nodes, edges }, {
   interaction: { hover: false, tooltipDelay: 999999, zoomView: true, dragView: true, multiselect: false },
   layout: { improvedLayout: false },
 });
-// physics only while a layout settles (it costs battery)
-net.on('stabilized', () => net.setOptions({ physics: { enabled: false } }));
+// physics only while a layout settles (it costs battery); the whole map is fitted once it has settled
+function settled() {
+  net.setOptions({ physics: { enabled: false } });
+  if (fitWhenSettled) { fitWhenSettled = false; net.fit({ animation: { duration: 300 } }); }
+}
+net.on('stabilizationIterationsDone', settled);
+net.on('stabilized', settled);
 net.on('click', p => { if (p.nodes.length) focusNode(p.nodes[0]); else Android.select(''); });
 mainPoints();
 Android.ready(String(g.nodes.length), String(links.length));

@@ -81,14 +81,16 @@ class MapActivity : ComponentActivity() {
     }
 }
 
-/** What the map page tells the app (it calls these on a background thread). */
-private class Bridge(private val json: String, private val onSelect: (String) -> Unit,
-                     private val onReady: (String) -> Unit, private val onMissing: (String) -> Unit) {
+/** What the map page tells the app (it calls these on a background thread). Public: WebView calls it by reflection. */
+class MapBridge(private val json: String, private val onSelect: (String) -> Unit,
+                private val onReady: (String) -> Unit, private val onMissing: (String) -> Unit,
+                private val onFailed: (String) -> Unit) {
     private val main = Handler(Looper.getMainLooper())
     @JavascriptInterface fun graph(): String = json
     @JavascriptInterface fun select(details: String) { main.post { onSelect(details) } }
     @JavascriptInterface fun ready(nodes: String, edges: String) { main.post { onReady("$nodes parts · $edges links") } }
     @JavascriptInterface fun notFound(text: String) { main.post { onMissing(text) } }
+    @JavascriptInterface fun failed(message: String) { main.post { onFailed(message) } }
 }
 
 private fun js(s: String) = JSONObject.quote(s)
@@ -130,10 +132,11 @@ private fun MapScreen(repo: String, onBack: () -> Unit) {
                         }
                         override fun shouldOverrideUrlLoading(view: WebView, req: WebResourceRequest) = true
                     }
-                    addJavascriptInterface(Bridge(json,
+                    addJavascriptInterface(MapBridge(json,
                         onSelect = { d -> selected = if (d.isEmpty()) null else runCatching { JSONObject(d) }.getOrNull() },
                         onReady = { summary = it },
-                        onMissing = { error = "Nothing called \"$it\" in this map." }), "Android")
+                        onMissing = { error = "Nothing called \"$it\" in this map." },
+                        onFailed = { error = "The map couldn't draw: $it" }), "Android")
                     loadUrl("file:///android_asset/map/index.html" + if (dark) "?dark=1" else "")
                     web = this
                 }
