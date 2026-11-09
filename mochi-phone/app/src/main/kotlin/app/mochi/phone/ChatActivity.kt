@@ -129,7 +129,9 @@ fun stepLabel(tool: String): String {
 
 private fun visible(m: JSONObject): Boolean {
     val text = m.optString("content").trim()
-    return text.isNotEmpty() && !text.startsWith("(December picked up the phone call")
+    // notes for the voice, not things December said: a call's pick-up note and the recap passed to the next speaker
+    return text.isNotEmpty() && !text.startsWith("(December picked up the phone call") &&
+        !text.startsWith("(December passed the call over")
 }
 
 @Composable

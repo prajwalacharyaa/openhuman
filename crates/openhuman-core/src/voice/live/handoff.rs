@@ -307,8 +307,13 @@ const LOOKUP_SAID: &[&str] = &[
 const MEMORY_SAID: &[&str] = &["checked the memory", "checked your memory", "checked memory", "memory confirms",
     "in your memory", "in my memory", "memory shows"];
 /// How the model gives in to a pushback.
-const AGREE_SAID: &[&str] =
-    &["you're absolutely right", "you are absolutely right", "i stand corrected", "my mistake", "i was wrong"];
+/// 2026-11-09: "You're right to ask; Rajan Bikram Thapa is indeed…" and "I made a mistake… sorry for the
+/// confusion" flipped a fact without a new search, and none of the first list caught it.
+const AGREE_SAID: &[&str] = &[
+    "you're absolutely right", "you are absolutely right", "i stand corrected", "my mistake", "i was wrong",
+    "you're right", "you are right", "you're correct", "you are correct", "i made a mistake", "sorry for the confusion",
+    "good catch", "my apologies, ", "तपाईं सही", "मेरो गल्ती",
+];
 
 /// Whether December's words ask for something current.
 pub(crate) fn asks_fresh(text: &str) -> bool {

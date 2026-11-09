@@ -291,3 +291,10 @@ fn plans_need_a_memory_search_and_claims_need_a_real_check() {
     check.on_event(HandoffEvent::AgentSaid("My research shows money is moving to cash."), later(1));
     assert_eq!(check.on_event(HandoffEvent::TurnComplete, later(2)), Some(LOOKUP_NUDGE));
 }
+
+#[test]
+fn giving_in_without_checking_is_caught_in_more_words() {
+    assert!(concedes("You're right to ask; Rajan Bikram Thapa is indeed the newly appointed chairman."));
+    assert!(concedes("I made a mistake by relying on an outdated source. I'm sorry for the confusion this caused."));
+    assert!(!concedes("Rajan Bikram Thapa is the newly appointed chairman of the Nepal Insurance Authority."));
+}
