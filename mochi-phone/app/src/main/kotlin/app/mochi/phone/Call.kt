@@ -40,6 +40,9 @@ object Call {
 
     private const val RATE = 16_000
     private const val FRAME_BYTES = 3_200 // 100 ms of 16 kHz PCM16
+    /** Muted or frozen: this much silence (1 s) tells Gemini December stopped talking; after it nothing is sent,
+     *  since Gemini bills streamed audio by the second, silence included. */
+    private const val QUIET_FRAMES = 10
     private val main = Handler(Looper.getMainLooper())
 
     var listener: Listener? = null
@@ -387,6 +390,13 @@ object Call {
         noise?.enabled = true
         val buf = ByteArray(FRAME_BYTES)
         val silence = ByteArray(FRAME_BYTES)
+        var quietSent = 0 // silent frames sent since the mute / freeze began
+        fun quiet() {
+            if (quietSent >= QUIET_FRAMES) return
+            socket.send(silence.toByteString())
+            sentBytes += silence.size
+            quietSent++
+        }
         try {
             rec.startRecording()
             while (active && ws === socket) {
@@ -394,8 +404,7 @@ object Call {
                     // checking what came after "Mochi" on the phone: the recognizer needs the mic; the call stays open
                     rec.stop()
                     while (Unfreeze.needsMic && active && ws === socket) {
-                        socket.send(silence.toByteString())
-                        sentBytes += silence.size
+                        quiet()
                         Thread.sleep(100)
                     }
                     rec.startRecording()
@@ -408,8 +417,13 @@ object Call {
                     n += got
                 }
                 if (n == FRAME_BYTES) {
-                    socket.send((if (muted || frozen) silence else buf).toByteString())
-                    sentBytes += buf.size
+                    if (muted || frozen) {
+                        quiet()
+                    } else {
+                        quietSent = 0
+                        socket.send(buf.toByteString())
+                        sentBytes += buf.size
+                    }
                 }
             }
         } finally {
