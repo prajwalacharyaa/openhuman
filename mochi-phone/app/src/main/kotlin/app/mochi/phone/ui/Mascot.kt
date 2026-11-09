@@ -111,9 +111,9 @@ fun Mascot(modifier: Modifier = Modifier, mood: Mood = Mood.Idle, look: AgentLoo
 }
 
 private fun DrawScope.drawMochi(mood: Mood, breathe: Float, blink: Float, talk: Float, bob: Float, hop: Float, drift: Float,
-                                look: AgentLook? = null) {
-    val body = look?.let { androidx.compose.ui.graphics.lerp(BODY, it.color, 0.32f) } ?: BODY
-    val leaf = look?.color ?: LEAF
+                                agent: AgentLook? = null) {
+    val body = agent?.let { androidx.compose.ui.graphics.lerp(BODY, it.color, 0.32f) } ?: BODY
+    val leaf = agent?.color ?: LEAF
     // the hop: squash, jump, land (same curve as the website)
     val (jumpY, sx, sy) = hopShape(hop)
     // shadow shrinks while in the air
@@ -180,13 +180,13 @@ private fun DrawScope.drawMochi(mood: Mood, breathe: Float, blink: Float, talk: 
                 Mood.Sleepy -> drawOval(INK, Offset(57f, 73f - (1.5f + 1.5f * br)), Size(6f, 3f + 3f * br)) // a soft snore
                 else -> drawPath(smilePath, INK, style = Stroke(2.6f, cap = StrokeCap.Round))
             }
-            when (look?.accessory) {
+            when (agent?.accessory) {
                 "pen" -> {
-                    drawPath(penPath, look.color)
+                    drawPath(penPath, agent.color)
                     drawPath(penPath, INK, style = Stroke(2.2f, join = StrokeJoin.Round))
                 }
                 "shield" -> {
-                    drawPath(shieldPath, look.color)
+                    drawPath(shieldPath, agent.color)
                     drawPath(shieldPath, INK, style = Stroke(2.2f, join = StrokeJoin.Round))
                     drawLine(Color.White, Offset(91f, 82f), Offset(95f, 87f), 2.4f, StrokeCap.Round)
                     drawLine(Color.White, Offset(95f, 87f), Offset(102f, 78f), 2.4f, StrokeCap.Round)
