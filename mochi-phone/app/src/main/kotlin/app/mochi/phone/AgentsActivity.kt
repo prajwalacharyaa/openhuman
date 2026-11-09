@@ -251,7 +251,9 @@ private fun AgentDoingPage(name: String, agent: Agents.Agent?, tokens: Doing.Tok
     val detailed = remember { Mochi.detailed(ctx) }
     var opened by remember { mutableStateOf<Doing.StepView?>(null) }
     val list = rememberLazyListState()
-    LaunchedEffect(last?.id) { if (list.firstVisibleItemIndex <= 1) list.animateScrollToItem(0) }
+    // never moves on its own while December reads or taps (the board, a card): only when the view sits exactly on the
+    // newest job does a newer one take its place (it would otherwise land just above the edge)
+    val newest = tasks.firstOrNull()?.let { it.task?.id ?: it.steps.firstOrNull()?.step?.id }
     // SY (HR): her hiring board, refreshed every 10 s while it's open and right after a decision
     val scope = rememberCoroutineScope()
     var board by remember { mutableStateOf<Pair<List<org.json.JSONObject>, List<org.json.JSONObject>>?>(null) }
@@ -261,6 +263,11 @@ private fun AgentDoingPage(name: String, agent: Agents.Agent?, tokens: Doing.Tok
             io(scope, { Agents.board(ctx) }) { board = it }
             delay(10_000)
         }
+    }
+    LaunchedEffect(newest) {
+        val firstJob = 1 + (if (board != null) 2 else 0)
+        if (opened == null && !list.isScrollInProgress && list.firstVisibleItemIndex == firstJob &&
+            list.firstVisibleItemScrollOffset < 24) list.scrollToItem(firstJob)
     }
     LazyColumn(Modifier.fillMaxSize(), state = list, contentPadding = PaddingValues(Space.l),
         verticalArrangement = Arrangement.spacedBy(Space.s)) {

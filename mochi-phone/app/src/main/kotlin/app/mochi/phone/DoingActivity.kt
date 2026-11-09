@@ -54,8 +54,6 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
-import androidx.compose.runtime.snapshotFlow
-import androidx.compose.foundation.interaction.DragInteraction
 import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -159,21 +157,6 @@ private fun DoingScreen(onBack: () -> Unit) {
     var opened by remember { mutableStateOf<Doing.StepView?>(null) }
     var callTapAt by remember { mutableLongStateOf(0L) }
     val list = rememberLazyListState()
-    // follow new steps only while December is at the top; scrolling down (or a step open) stops it until they
-    // scroll back up
-    var follow by remember { mutableStateOf(true) }
-    var touched by remember { mutableStateOf(false) }
-    LaunchedEffect(list) {
-        launch { list.interactionSource.interactions.collect { if (it is DragInteraction.Start) touched = true } }
-        snapshotFlow { list.isScrollInProgress }.collect { moving ->
-            if (!moving && touched) {
-                touched = false
-                val bar = if (Call.active) 2 else 1
-                follow = list.firstVisibleItemIndex <= bar ||
-                    (list.firstVisibleItemIndex == bar + 1 && list.firstVisibleItemScrollOffset < 24)
-            }
-        }
-    }
     LaunchedEffect(Unit) {
         io(scope, { Doing.backfill(ctx) }) {}
         var tick = 0
@@ -249,12 +232,14 @@ private fun DoingScreen(onBack: () -> Unit) {
                 val steps = if (filter == null) t.steps else t.steps.filter { inLane(it.step, filter!!) }
                 if (filter != null && steps.isEmpty()) null else t.copy(steps = steps)
             }
-            // a new step: bring it into view at the top (just under the Stop / details line), only while December
-            // is following along at the top and no step is open
-            LaunchedEffect(Doing.latestStep()?.id) {
-                val bar = if (Call.active) 2 else 1
-                if (follow && opened == null && shown.isNotEmpty() && list.firstVisibleItemIndex <= bar + 1)
-                    list.animateScrollToItem(bar)
+            // the page never moves on its own while December looks at Mochi or reads further down: new steps appear
+            // inside their card and a new card appears in place. Only when the view sits exactly on the newest card
+            // does a newer card (which would land just above the edge) take its place.
+            val newest = shown.firstOrNull()?.let { it.task?.id ?: it.steps.firstOrNull()?.step?.id }
+            LaunchedEffect(newest) {
+                val firstCard = (if (Call.active) 2 else 1) + 1
+                if (opened == null && !list.isScrollInProgress && list.firstVisibleItemIndex == firstCard &&
+                    list.firstVisibleItemScrollOffset < 24) list.scrollToItem(firstCard)
             }
             LazyColumn(state = list, contentPadding = PaddingValues(start = Space.l, end = Space.l, bottom = 96.dp),
                 verticalArrangement = Arrangement.spacedBy(Space.s)) {
