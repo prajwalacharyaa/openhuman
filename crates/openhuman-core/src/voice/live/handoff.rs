@@ -38,7 +38,7 @@ handed this same request on earlier in this call, don't call it again; just say 
 pub(crate) const ASK_CLIENT: &str = "mochi-ask";
 
 /// Most of Claude's answer passed into the call; the rest stays in the chat.
-const MAX_ANSWER_CHARS: usize = 3000;
+const MAX_ANSWER_CHARS: usize = 12000;
 
 /// Sent when December starts a typed turn in this call's chat.
 pub(crate) const TYPED_NOTE: &str = "(Server note, not December speaking: December just typed or pasted a \
@@ -65,10 +65,12 @@ pub(crate) fn claude_reply_note(event: &WebChannelEvent, thread_id: &str) -> Opt
             let answer: String = answer.chars().take(MAX_ANSWER_CHARS).collect();
             Some(format!(
                 "(Server note, not December speaking: Claude finished the request you handed it. \
-                 Tell December now, without waiting to be asked, in one short spoken sentence (two at most), as \
-                 yourself (never name Claude): the result only. If Claude asks December to decide something, name each choice in a few \
-                 words and ask; never drop a choice or a warning. Don't read out details: the full answer is \
-                 in the chat.)\n\n{answer}"
+                 Tell December now, without waiting to be asked, as yourself (never name Claude). If it's a status or \
+                 the result of a change: one or two sentences. If it's information December asked for (about people, \
+                 places, news, research, how or why): read all of it out, completely and in detail, in natural \
+                 spoken sentences and the same order; don't summarize or drop anything, and keep going to the end. \
+                 If Claude asks December to decide something, name each choice and ask; never drop a choice or a \
+                 warning.)\n\n{answer}"
             ))
         }
         "chat_error" => Some(format!(

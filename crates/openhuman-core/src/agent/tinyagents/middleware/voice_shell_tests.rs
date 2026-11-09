@@ -60,3 +60,13 @@ fn a_voice_result_is_one_line_and_never_phone_data() {
     assert_eq!(result_line("mochi-phone", "Mum: 98…", false), "done");
     assert_eq!(result_line("memory_search", "", true), "failed: done");
 }
+
+#[test]
+fn repeated_and_bursty_searches_are_steered_to_claude() {
+    let t0 = std::time::Instant::now();
+    let q = "voice-shell-test unique query about a person";
+    assert_eq!(search_gate(q, t0), Ok(false));
+    assert!(search_gate(&q.to_uppercase(), t0 + std::time::Duration::from_secs(7)).is_err(), "same search, reused");
+    assert_eq!(search_gate("voice-shell-test second query", t0 + std::time::Duration::from_secs(10)), Ok(false));
+    assert_eq!(search_gate("voice-shell-test third query", t0 + std::time::Duration::from_secs(20)), Ok(true));
+}

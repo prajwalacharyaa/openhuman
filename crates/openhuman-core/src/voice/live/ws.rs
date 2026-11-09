@@ -231,11 +231,22 @@ pub async fn handle_live_voice_ws(socket: WebSocket, config: Arc<Config>) {
     // Claude's answers to `mochi-ask` requests arrive as web-chat events.
     let mut chat_events = crate::web_chat::subscribe_web_channel_events();
 
+    // why the call ended, for the log (calls that "just ended" are diagnosed from this)
+    let mut ended_because = String::from("unknown");
     loop {
         tokio::select! {
             incoming = stream.next() => {
                 let message = match incoming {
                     None | Some(Err(_)) | Some(Ok(Message::Close(_))) => {
+                        ended_because = match &incoming {
+                            None => "the phone's connection closed".to_string(),
+                            Some(Err(error)) => format!("the phone's connection failed: {error}"),
+                            Some(Ok(Message::Close(frame))) => format!(
+                                "the phone closed it ({})",
+                                frame.as_ref().map_or("no reason".to_string(), |f| format!("{} {}", f.code, &*f.reason))
+                            ),
+                            _ => "the phone".to_string(),
+                        };
                         let _ = sender.close().await;
                         break;
                     }
@@ -255,6 +266,7 @@ pub async fn handle_live_voice_ws(socket: WebSocket, config: Arc<Config>) {
                         }
                         Ok(ClientFrame::Interrupt) => sender.interrupt().await,
                         Ok(ClientFrame::Stop) => {
+                            ended_because = "December hung up (stop frame)".to_string();
                             let _ = sender.close().await;
                             Ok(())
                         }
@@ -290,8 +302,18 @@ pub async fn handle_live_voice_ws(socket: WebSocket, config: Arc<Config>) {
                 }
             }
             event = session.recv() => {
-                let Some(event) = event else { break };
+                let Some(event) = event else {
+                    if ended_because == "unknown" {
+                        ended_because = "the voice provider's session stream ended".to_string();
+                    }
+                    break;
+                };
                 let closing = matches!(event, LiveAgentEvent::Live(LiveEvent::Closed(_)));
+                if let LiveAgentEvent::Live(LiveEvent::Closed(why)) = &event {
+                    if ended_because == "unknown" {
+                        ended_because = format!("the voice provider closed it: {why:?}");
+                    }
+                }
                 if timing_on {
                     let step = match &event {
                         LiveAgentEvent::ToolStarted { call_id, .. } => {
@@ -363,6 +385,9 @@ pub async fn handle_live_voice_ws(socket: WebSocket, config: Arc<Config>) {
                     };
                     if sent.is_err() {
                         tracing::debug!(session_id, "{LOG_PREFIX} client went away");
+                        if ended_because == "unknown" {
+                            ended_because = "sending to the phone failed (it went away)".to_string();
+                        }
                         let _ = sender.close().await;
                     }
                 }
@@ -372,7 +397,7 @@ pub async fn handle_live_voice_ws(socket: WebSocket, config: Arc<Config>) {
             }
         }
     }
-    tracing::info!(session_id, provider = %provider, "{LOG_PREFIX} session ended");
+    tracing::info!(session_id, provider = %provider, reason = %ended_because, "{LOG_PREFIX} session ended");
     let _ = sink.close().await;
     persister.finish().await;
 }

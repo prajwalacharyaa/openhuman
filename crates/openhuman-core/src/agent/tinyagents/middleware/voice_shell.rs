@@ -99,6 +99,36 @@ pub(crate) fn step_detail(name: &str, args: &serde_json::Value) -> String {
     out
 }
 
+/// Web searches a call made lately: (when, the query as typed, lowercased). The voice model sometimes sends the
+/// same search twice in a row, or keeps searching instead of handing a big question to Claude (2026-11-09: the
+/// same query twice within 7 s, then six searches about one person).
+static RECENT_SEARCHES: std::sync::Mutex<Vec<(std::time::Instant, String)>> = std::sync::Mutex::new(Vec::new());
+/// The same search again this soon reuses the first one's results.
+const SAME_SEARCH_WINDOW: std::time::Duration = std::time::Duration::from_secs(90);
+/// This many searches within [`SEARCH_BURST_WINDOW`] get a nudge to hand the question to Claude instead.
+const SEARCH_BURST: usize = 3;
+const SEARCH_BURST_WINDOW: std::time::Duration = std::time::Duration::from_secs(180);
+
+/// What to do with a web search: `Err(note)` for a repeat (answered without searching), `Ok(true)` when it's one
+/// search too many lately (it runs, with a hand-off note added), `Ok(false)` otherwise.
+pub(crate) fn search_gate(query: &str, now: std::time::Instant) -> Result<bool, &'static str> {
+    let key = query.trim().to_lowercase();
+    let mut recent = RECENT_SEARCHES.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    recent.retain(|(at, _)| now.duration_since(*at) < SEARCH_BURST_WINDOW);
+    if recent.iter().any(|(at, q)| *q == key && now.duration_since(*at) < SAME_SEARCH_WINDOW) {
+        return Err("You just ran exactly this search and have its results above: use them. If they weren't \
+                    enough, hand the question to Claude with mochi-ask (it searches more deeply) instead of \
+                    searching again.");
+    }
+    recent.push((now, key));
+    Ok(recent.len() >= SEARCH_BURST)
+}
+
+/// Added to a search result when the call has searched a lot lately.
+pub(crate) const SEARCH_HANDOFF_NOTE: &str = "\n\n(Several searches already: if this still doesn't answer \
+December fully, hand the question to Claude with mochi-ask now, with everything you found, instead of \
+searching again.)";
+
 /// `wrap_tool`: refuse a shell command outside [`VOICE_COMMANDS`]. Installed on live (voice) harnesses only.
 pub(crate) struct VoiceShellMiddleware;
 
@@ -130,7 +160,24 @@ impl ToolMiddleware<(), crate::agent::tinyagents::host::OpenHumanRunContext> for
                 )));
             }
         }
-        let outcome = next.run(ctx, state, call).await?;
+        let mut many_searches = false;
+        if call.name.contains("web_search") {
+            let query = call.arguments.get("query").and_then(|q| q.as_str()).unwrap_or_default();
+            match search_gate(query, std::time::Instant::now()) {
+                Err(note) => {
+                    tracing::info!("[voice-live] repeated search answered from the first one");
+                    return Ok(MiddlewareToolOutcome::Result(TaToolResult::error(note.to_string())));
+                }
+                Ok(many) => many_searches = many,
+            }
+        }
+        let mut outcome = next.run(ctx, state, call).await?;
+        if let MiddlewareToolOutcome::Result(result) = &mut outcome {
+            if many_searches && !result.is_error {
+                let text = super::tool_result_text(result);
+                super::replace_tool_result_text(result, text + SEARCH_HANDOFF_NOTE);
+            }
+        }
         if let MiddlewareToolOutcome::Result(result) = &outcome {
             let text = super::tool_result_text(result);
             tracing::info!("[voice-live] result {}: {}", name, result_line(&detail, &text, result.is_error));
