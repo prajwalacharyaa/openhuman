@@ -117,6 +117,9 @@ pub enum ClientFrame {
         client_id: Option<String>,
         #[serde(default = "default_input_rate")]
         input_sample_rate: u32,
+        /// One of Mochi's agents to talk with ("mark"): its spoken persona and voice instead of Mochi's.
+        #[serde(default)]
+        agent: Option<String>,
     },
     /// A typed user message.
     Text { text: String },

@@ -145,3 +145,27 @@ fn other_conversations_show_their_latest_messages() {
     let prompt = system_prompt(Path::new("/nonexistent"), None, &[], None, Some(&block));
     assert!(prompt.contains("Your other recent conversations"));
 }
+
+#[test]
+fn a_call_with_an_agent_speaks_as_the_agent() {
+    let ws = tempfile::tempdir().unwrap();
+    std::fs::write(ws.path().join("VOICE.md"), "Speak briefly. Freeze when asked.").unwrap();
+    std::fs::write(ws.path().join("IDENTITY.md"), "You are Mochi.").unwrap();
+    std::fs::create_dir_all(ws.path().join(AGENT_VOICE_DIR)).unwrap();
+    std::fs::write(
+        ws.path().join(AGENT_VOICE_DIR).join("sy.md"),
+        "display: SY\nvoice: Leda\n\nYou are SY, Mochi's HR. Practical and fair.\n",
+    )
+    .unwrap();
+    let agent = agent_voice(ws.path(), "sy").expect("SY's spoken persona");
+    assert_eq!(agent.display, "SY");
+    assert_eq!(agent.voice.as_deref(), Some("Leda"));
+    let prompt = prompt_for(ws.path(), Some(&agent), None, &[], None, None);
+    assert!(prompt.contains("Speak briefly. Freeze when asked."), "the call rules stay");
+    assert!(prompt.contains("You are SY, Mochi's HR"));
+    assert!(!prompt.contains("You are Mochi."), "Mochi's persona files are left out");
+    // Mochi's own call is unchanged; unknown or unsafe names are no agent
+    assert!(system_prompt(ws.path(), None, &[], None, None).contains("You are Mochi."));
+    assert!(agent_voice(ws.path(), "nobody").is_none());
+    assert!(agent_voice(ws.path(), "../sy").is_none());
+}

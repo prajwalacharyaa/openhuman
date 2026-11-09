@@ -152,11 +152,13 @@ pub(crate) fn parse_start(message: &Message) -> Result<LiveStartRequest, LiveVoi
             thread_id,
             client_id,
             input_sample_rate,
+            agent,
         }) => Ok(LiveStartRequest {
             provider,
             thread_id,
             client_id,
             input_sample_rate,
+            agent,
         }),
         Ok(_) => Err(LiveVoiceError::invalid(
             "the first frame must be a start frame",

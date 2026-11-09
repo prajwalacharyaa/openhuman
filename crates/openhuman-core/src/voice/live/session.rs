@@ -63,6 +63,50 @@ pub(crate) const PERSONA_FILES: [&str; 3] = ["SOUL.md", "IDENTITY.md", "ROLE.md"
 /// description (projects, browser, research habits), and in a call it read as things the voice itself could
 /// do, so it claimed work it couldn't do (2026-11-08). `VOICE.md` says what the voice does.
 pub(crate) const VOICE_PERSONA_FILES: [&str; 2] = ["SOUL.md", "IDENTITY.md"];
+/// Workspace folder with each agent's spoken persona (`voice-agents/<name>.md`): optional `display:` and `voice:`
+/// header lines, a blank line, then who the agent is on a call. A call with an agent uses it instead of Mochi's
+/// persona files, and its Gemini voice; the speaking guidance (`VOICE.md`, its call rules) stays.
+pub(crate) const AGENT_VOICE_DIR: &str = "voice-agents";
+
+/// One agent's spoken persona and voice.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct AgentVoice {
+    pub(crate) name: String,
+    pub(crate) display: String,
+    pub(crate) voice: Option<String>,
+    pub(crate) body: String,
+}
+
+/// The agent's spoken persona, when `name` is a plain agent name with a file.
+pub(crate) fn agent_voice(workspace_dir: &Path, name: &str) -> Option<AgentVoice> {
+    let plain = !name.is_empty()
+        && name.len() <= 40
+        && name.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '_');
+    if !plain {
+        return None;
+    }
+    let text = std::fs::read_to_string(workspace_dir.join(AGENT_VOICE_DIR).join(format!("{name}.md"))).ok()?;
+    let (mut display, mut voice) = (None, None);
+    let mut lines = text.lines().peekable();
+    while let Some(line) = lines.peek() {
+        if let Some(v) = line.strip_prefix("display:") {
+            display = Some(v.trim().to_string());
+        } else if let Some(v) = line.strip_prefix("voice:") {
+            voice = Some(v.trim().to_string()).filter(|v| !v.is_empty());
+        } else {
+            break;
+        }
+        lines.next();
+    }
+    let body = lines.collect::<Vec<_>>().join("\n").trim().to_string();
+    if body.is_empty() {
+        return None;
+    }
+    let display = display.filter(|d| !d.is_empty()).unwrap_or_else(|| {
+        if name.len() <= 2 { name.to_uppercase() } else { name[..1].to_uppercase() + &name[1..] }
+    });
+    Some(AgentVoice { name: name.to_string(), display, voice, body })
+}
 /// What the opening memory recall is ranked around when the thread has no
 /// user message yet.
 const DEFAULT_RECALL_FOCUS: &str =
@@ -75,6 +119,8 @@ pub(crate) struct LiveStartRequest {
     pub(crate) thread_id: Option<String>,
     pub(crate) client_id: Option<String>,
     pub(crate) input_sample_rate: u32,
+    /// A call with one of Mochi's agents ([`AgentVoice`]).
+    pub(crate) agent: Option<String>,
 }
 
 /// A running session plus what the transport needs to know about it.
@@ -112,6 +158,19 @@ pub(crate) fn system_prompt(
     memory: Option<&str>,
     others: Option<&str>,
 ) -> String {
+    prompt_for(workspace_dir, None, zone, recent, memory, others)
+}
+
+/// [`system_prompt`], for a call with one of Mochi's agents when `agent` is given: the same speaking guidance and
+/// context, with the agent's spoken persona in place of Mochi's persona files.
+pub(crate) fn prompt_for(
+    workspace_dir: &Path,
+    agent: Option<&AgentVoice>,
+    zone: Option<&str>,
+    recent: &[ConversationMessage],
+    memory: Option<&str>,
+    others: Option<&str>,
+) -> String {
     let custom = std::fs::read_to_string(workspace_dir.join(VOICE_PROMPT_FILE)).ok();
     let guidance = custom
         .as_deref()
@@ -126,8 +185,19 @@ pub(crate) fn system_prompt(
     } else {
         &PERSONA_FILES
     };
-    for file in files.iter().copied() {
-        inject_workspace_file(&mut persona, workspace_dir, file);
+    if let Some(agent) = agent {
+        prompt.push_str(&format!(
+            "\n\nIn this call you are {name}, one of Mochi's agents, not Mochi: introduce yourself as {name} and \
+             speak as {name}. Everything above about speaking and the call rules applies to you; where it names \
+             Mochi, it means you, and its commands work the same for you. Handing work to Claude reaches your own \
+             chat, where Claude works as {name}.\n\nWho you are:\n\n{body}",
+            name = agent.display,
+            body = agent.body
+        ));
+    } else {
+        for file in files.iter().copied() {
+            inject_workspace_file(&mut persona, workspace_dir, file);
+        }
     }
     if !persona.trim().is_empty() {
         prompt.push_str(
@@ -323,14 +393,23 @@ pub(crate) async fn start(
     )
     .await;
     let zone = config.time_zone();
-    let prompt = system_prompt(
+    // a call with one of Mochi's agents: its spoken persona and voice (an unknown name is Mochi's call)
+    let agent = request.agent.as_deref().and_then(|name| agent_voice(&config.workspace_dir, name));
+    if let Some(agent) = agent.as_ref() {
+        tracing::info!(session_id, agent = %agent.name, "[voice-live] call with an agent");
+    }
+    let prompt = prompt_for(
         &config.workspace_dir,
+        agent.as_ref(),
         Some(zone.as_str()),
         &recent,
         pack.as_ref().map(|pack| pack.injection()).as_deref(),
         other_conversations_block(&others).as_deref(),
     );
     let mut live = providers::live_config(&config, &provider, &prompt, request.input_sample_rate);
+    if let Some(voice) = agent.as_ref().and_then(|a| a.voice.clone()) {
+        live.voice = Some(voice);
+    }
     // Hosted Gemini fixes its tools when the ticket is minted, so they must be
     // in the configuration before `prepare`.
     live.tools = tinyagents_live::tool_declarations(&harness, false);
