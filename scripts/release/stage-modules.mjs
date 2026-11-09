@@ -167,7 +167,13 @@ const DOWNLOAD_TIMEOUT_MS = 120_000;
  */
 export async function download(url, destination, timeoutMs = DOWNLOAD_TIMEOUT_MS) {
   let lastError;
-  for (let attempt = 1; attempt <= 3; attempt += 1) {
+  // GitHub's release downloads time out now and then (HTTP 502/503/504): wait a little longer each time
+  const waits = [0, 5_000, 15_000, 30_000, 60_000, 90_000];
+  for (const wait of waits) {
+    if (wait) {
+      console.log(`[bundled-modules] retrying ${url} in ${wait / 1000}s (${lastError})`);
+      await new Promise((resolve) => setTimeout(resolve, wait));
+    }
     try {
       const response = await fetch(url, {
         redirect: "follow",
