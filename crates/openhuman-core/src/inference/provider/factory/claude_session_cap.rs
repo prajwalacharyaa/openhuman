@@ -16,7 +16,12 @@
 //! short, simple message runs on Haiku and anything else on Sonnet; a Haiku chat that gets real work moves
 //! up to Sonnet. The model only ever changes together with a fresh session: switching inside a session would
 //! throw away its prompt cache and cost more than it saves.
+//!
+//! A chat labelled `agent:<name>` (the app's "Chat with Mark") runs as that Claude Code agent: the provider passes
+//! `--agent <name>` (its own prompt, tools, skills and hooks), Mochi's persona is replaced by a short direct-chat
+//! note with the agent's own notes, and the chat's model starts from the agent's (quick/deep words still switch).
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, SystemTime};
@@ -53,6 +58,8 @@ const WORK_WORDS: &[&str] = &[
 ];
 /// Longest message (characters) that can open a Haiku chat on its own.
 const LIGHT_CHARS: usize = 160;
+/// Most of an agent's notes put into its direct chat.
+const AGENT_NOTES_BYTES: usize = 20_000;
 /// How much of a session transcript's end is read to find its last call's size.
 const TAIL_BYTES: u64 = 1 << 20;
 
@@ -70,12 +77,22 @@ pub(crate) struct SessionCap {
     /// Pick a model per chat (only for the default Sonnet brain; coding and memory roles keep theirs).
     route: bool,
     lock: Mutex<()>,
+    /// OpenHuman's thread index (`threads.jsonl`): a chat's labels, `agent:<name>` among them.
+    threads_file: PathBuf,
+    /// Claude Code agent files (`~/.claude/agents/<name>.md`).
+    agent_files: PathBuf,
+    /// The specialists' notes (`<name>/MEMORY.md`).
+    agent_notes: PathBuf,
+    /// thread → the agent it runs as (looked up once per thread: a chat's agent is set when it's created).
+    agents: Mutex<HashMap<String, Option<String>>>,
 }
 
 impl SessionCap {
     pub(crate) fn new(inner: Arc<dyn ChatModel<()>>, workspace: &Path, route: bool) -> Self {
         let home = std::env::var_os("HOME").map(PathBuf::from).unwrap_or_default();
-        Self::with_paths(inner, workspace, home.join(".claude").join("projects")).routed(route)
+        let mut cap = Self::with_paths(inner, workspace, home.join(".claude").join("projects")).routed(route);
+        cap.agent_files = home.join(".claude").join("agents");
+        cap
     }
 
     /// Turns per-chat model routing on or off.
@@ -93,7 +110,71 @@ impl SessionCap {
             routes_file: workspace.join("claude-session-model.json"),
             route: false,
             lock: Mutex::new(()),
+            // the workspace is `~/OpenHuman/.openhuman`; threads and projects sit next to it
+            threads_file: workspace.parent().unwrap_or(workspace).join("workspace/memory/conversations/threads.jsonl"),
+            agent_files: PathBuf::new(),
+            agent_notes: workspace.parent().unwrap_or(workspace).join("projects/.claude/agent-memory"),
+            agents: Mutex::new(HashMap::new()),
         }
+    }
+
+    /// The agent a chat runs as, from its `agent:<name>` label, when that agent exists.
+    fn agent_of(&self, thread: &str) -> Option<String> {
+        let mut agents = self.agents.lock().unwrap_or_else(PoisonError::into_inner);
+        if let Some(known) = agents.get(thread) {
+            return known.clone();
+        }
+        let text = std::fs::read_to_string(&self.threads_file).unwrap_or_default();
+        let mut labels: Option<Vec<String>> = None;
+        for line in text.lines().filter(|line| line.contains(thread)) {
+            let Ok(entry) = serde_json::from_str::<serde_json::Value>(line) else { continue };
+            if entry.get("thread_id").and_then(serde_json::Value::as_str) != Some(thread) {
+                continue;
+            }
+            if let Some(list) = entry.get("labels").and_then(serde_json::Value::as_array) {
+                labels = Some(list.iter().filter_map(serde_json::Value::as_str).map(str::to_string).collect());
+            }
+        }
+        let agent = labels
+            .unwrap_or_default()
+            .iter()
+            .find_map(|label| label.strip_prefix("agent:").map(str::to_string))
+            .filter(|name| valid_agent_name(name) && self.agent_files.join(format!("{name}.md")).is_file());
+        agents.insert(thread.to_string(), agent.clone());
+        agent
+    }
+
+    /// The agent's own model (`model:` in its file), Sonnet when it names none.
+    fn agent_model(&self, agent: &str) -> &'static str {
+        let text = std::fs::read_to_string(self.agent_files.join(format!("{agent}.md"))).unwrap_or_default();
+        let model = text.lines().find_map(|line| line.strip_prefix("model:")).map(str::trim).unwrap_or(NORMAL);
+        [QUICK, NORMAL, DEEP].into_iter().find(|m| *m == model).unwrap_or(NORMAL)
+    }
+
+    /// What replaces Mochi's persona in an agent's direct chat: who it's talking to, and its notes.
+    fn agent_note(&self, agent: &str) -> String {
+        let display = agent_display(agent);
+        let notes_file = self.agent_notes.join(agent).join("MEMORY.md");
+        let mut notes = std::fs::read_to_string(&notes_file).unwrap_or_default();
+        if notes.len() > AGENT_NOTES_BYTES {
+            let mut end = AGENT_NOTES_BYTES;
+            while !notes.is_char_boundary(end) {
+                end -= 1;
+            }
+            notes.truncate(end);
+        }
+        let notes = notes.trim();
+        format!(
+            "You are {display}, one of Mochi's specialist agents, in a direct chat with December (they/them) in \
+             the Mochi app. You are not Mochi: you are {display}, and you introduce yourself that way. Your own \
+             instructions (your agent file) are who you are and how you work. In this chat, talk with December in \
+             your own area and from your own point of view, directly, without handing things to anyone; you can \
+             still do work in your area with your tools. For something outside your area, say so in a line and \
+             suggest asking Mochi.\n\nYour notes file is {}. When you learn something worth keeping (December's \
+             preferences, decisions, feedback), update it: short dated lines, duplicates merged, under 200 lines.\n\n{}",
+            notes_file.display(),
+            if notes.is_empty() { "You have no notes yet.".to_string() } else { format!("Your notes so far:\n{notes}") }
+        )
     }
 
     /// The request with its thread key moved to a fresh session when the current one is too big or idle.
@@ -101,6 +182,15 @@ impl SessionCap {
         let Some(thread) = request.metadata.get("thread_id").and_then(|t| t.as_str()).map(str::to_string) else {
             return request;
         };
+        // a chat that belongs to one of Mochi's agents runs as that agent
+        let agent = self.agent_of(&thread);
+        if let Some(agent) = agent.as_deref() {
+            request.messages.retain(|m| !matches!(m, tinyinference_llm::Message::System(_)));
+            request.messages.insert(0, tinyinference_llm::Message::system(self.agent_note(agent)));
+            if let Some(metadata) = request.metadata.as_object_mut() {
+                metadata.insert("claude_agent".into(), agent.into());
+            }
+        }
         let _guard = self.lock.lock().unwrap_or_else(PoisonError::into_inner);
         let mut fresh = read_json(&self.fresh_file);
         let generation = fresh.get(&thread).and_then(serde_json::Value::as_u64).unwrap_or(0);
@@ -114,7 +204,10 @@ impl SessionCap {
         let stale = self.transcripts.is_dir()
             && session.as_deref().is_some_and(|id| self.transcript(id).is_none_or(|transcript| needs_fresh(&transcript)));
         // the model this chat should run on; a different one than its session's needs a fresh session
-        let route = self.route.then(|| self.pick_model(&thread, &request, session.is_none() || stale));
+        // agents' chats always route, starting from the agent's own model
+        let base = agent.as_deref().map_or(NORMAL, |a| self.agent_model(a));
+        let route = (self.route || agent.is_some())
+            .then(|| self.pick_model(&thread, &request, session.is_none() || stale, base));
         let switch = route.as_ref().is_some_and(|r| r.switch) && session.is_some();
         let stale = stale || switch;
         if let Some(route) = route {
@@ -144,19 +237,21 @@ impl SessionCap {
     }
 
     /// Chooses the chat's model and saves it. `new_session`: the session is starting fresh anyway.
-    fn pick_model(&self, thread: &str, request: &ModelRequest, new_session: bool) -> Route {
+    fn pick_model(&self, thread: &str, request: &ModelRequest, new_session: bool, base: &'static str) -> Route {
         let text = latest_user_words(request);
         let mut routes = read_json(&self.routes_file);
         let current = routes.get(thread).and_then(|r| r.get("model")).and_then(serde_json::Value::as_str);
         let current = [QUICK, NORMAL, DEEP].into_iter().find(|m| Some(*m) == current);
         // December's choice holds until the session goes fresh
         let was_chosen = !new_session && routes.get(thread).and_then(|r| r.get("chosen")).and_then(serde_json::Value::as_bool) == Some(true);
+        // a short, simple message drops to Haiku only from the Sonnet default (an Opus agent stays Opus)
+        let light = |text: &str| if base == NORMAL && is_light(text) { QUICK } else { base };
         let (model, chosen) = match (asked_model(&text), current) {
             (Some(asked), _) => (asked, true),
             (None, Some(current)) if !new_session && was_chosen => (current, true),
-            (None, Some(QUICK)) if !new_session => (if is_light(&text) { QUICK } else { NORMAL }, false),
+            (None, Some(QUICK)) if !new_session => (light(&text), false),
             (None, Some(current)) if !new_session => (current, false),
-            (None, _) => (if is_light(&text) { QUICK } else { NORMAL }, false),
+            (None, _) => (light(&text), false),
         };
         let switch = !new_session && current.is_some_and(|c| c != model);
         routes[thread] = serde_json::json!({ "model": model, "chosen": chosen });
@@ -174,6 +269,20 @@ impl SessionCap {
             .map(|dir| dir.path().join(&name))
             .find(|path| path.is_file())
     }
+}
+
+/// A Claude Code agent name as the provider accepts it (lowercase letters, digits, `-`, `_`).
+pub(crate) fn valid_agent_name(name: &str) -> bool {
+    !name.is_empty() && name.len() <= 40 && name.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '_')
+}
+
+/// "Mark" for "mark"; "SY" for "sy" (two letters read as initials).
+pub(crate) fn agent_display(name: &str) -> String {
+    if name.len() <= 2 {
+        return name.to_uppercase();
+    }
+    let mut chars = name.chars();
+    chars.next().map(|c| c.to_uppercase().collect::<String>() + chars.as_str()).unwrap_or_default()
 }
 
 /// A chat's model for this turn.

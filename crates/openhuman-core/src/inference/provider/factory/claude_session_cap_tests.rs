@@ -164,3 +164,50 @@ fn routing_is_off_unless_turned_on() {
     let (_dir, cap) = setup(&[call(40_000)]);
     assert_eq!(cap.rekey(said("thread-1", "quick mode")).model, None);
 }
+
+#[test]
+fn an_agent_chat_runs_as_its_agent() {
+    let (dir, mut cap) = setup(&[call(40_000)]);
+    let agents = dir.path().join("agents");
+    std::fs::create_dir_all(&agents).unwrap();
+    std::fs::write(agents.join("mark.md"), "---\nname: mark\nmodel: opus\n---\nYou are Mark.\n").unwrap();
+    cap.agent_files = agents;
+    std::fs::create_dir_all(dir.path().join("workspace/memory/conversations")).unwrap();
+    std::fs::write(
+        dir.path().join("workspace/memory/conversations/threads.jsonl"),
+        concat!(
+            r#"{"op":"upsert","thread_id":"thread-1","labels":["agent:mark"]}"#, "\n",
+            r#"{"op":"upsert","thread_id":"thread-2","labels":["general"]}"#, "\n",
+            r#"{"op":"upsert","thread_id":"thread-3","labels":["agent:nobody"]}"#, "\n",
+        ),
+    )
+    .unwrap();
+    std::fs::create_dir_all(dir.path().join("projects/.claude/agent-memory/mark")).unwrap();
+    std::fs::write(dir.path().join("projects/.claude/agent-memory/mark/MEMORY.md"), "- likes short sentences").unwrap();
+    let mut asked = said("thread-1", "is this sentence right?");
+    asked.messages.insert(0, tinyinference_llm::Message::system("You are Mochi."));
+    let out = cap.rekey(asked);
+    assert_eq!(out.metadata.get("claude_agent").and_then(|a| a.as_str()), Some("mark"));
+    // Mochi's persona is gone; the agent's note with its notes is there
+    let system: Vec<String> = out.messages.iter()
+        .filter(|m| matches!(m, tinyinference_llm::Message::System(_)))
+        .map(tinyinference_llm::Message::text)
+        .collect();
+    assert_eq!(system.len(), 1);
+    assert!(system[0].contains("You are Mark") && system[0].contains("likes short sentences"));
+    assert!(!system[0].contains("You are Mochi"));
+    // the agent's own model, even with routing off; quick words still switch
+    assert_eq!(out.model.as_deref(), Some(DEEP));
+    assert_eq!(cap.rekey(said("thread-1", "quick mode please")).model.as_deref(), Some(QUICK));
+    // an ordinary chat, and a label naming no agent file, stay Mochi's
+    assert!(cap.rekey(said("thread-2", "hello")).metadata.get("claude_agent").is_none());
+    assert!(cap.rekey(said("thread-3", "hello")).metadata.get("claude_agent").is_none());
+}
+
+#[test]
+fn agent_names_and_displays() {
+    assert!(valid_agent_name("mark") && valid_agent_name("seo-checker"));
+    assert!(!valid_agent_name("../etc") && !valid_agent_name("Mark") && !valid_agent_name(""));
+    assert_eq!(agent_display("mark"), "Mark");
+    assert_eq!(agent_display("sy"), "SY");
+}
