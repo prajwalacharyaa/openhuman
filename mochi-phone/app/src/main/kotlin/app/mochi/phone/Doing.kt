@@ -65,7 +65,7 @@ object Doing {
         }
     }
 
-    private fun get(c: Context, path: String): JSONObject {
+    internal fun get(c: Context, path: String): JSONObject {
         val req = Request.Builder().url("${Mochi.ringUrl(c)}$path")
             .header("Authorization", "Bearer ${Mochi.token(c)}").build()
         Mochi.http.newCall(req).execute().use { r -> return JSONObject(r.body?.string() ?: "{}") }
@@ -120,7 +120,11 @@ object Doing {
     /** The lanes with a step in the last [BUSY_MS] (they light up on the page). */
     fun activeLanes(now: Long = System.currentTimeMillis()): Set<String> =
         events.filter { (it.kind == "step" || it.kind == "line") && now - it.at < BUSY_MS }
-            .map { if (it.lane == "helper") "helper:" + it.who else it.lane }.toSet()
+            .flatMap { e ->
+                // an agent's own steps light its bubble as well as the lane of what it's doing (web, server…)
+                listOfNotNull(if (e.lane == "helper") "helper:" + e.who else e.lane,
+                    ("helper:" + e.who).takeIf { e.who.startsWith("Helper: ") })
+            }.toSet()
 
     /** The chat of the task Mochi is working on now (for Stop), if any. */
     fun busyThread(now: Long = System.currentTimeMillis()): String? =

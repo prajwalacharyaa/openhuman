@@ -55,13 +55,21 @@ private val smilePath = PathParser().parsePathString("M54 73 Q 60 79 66 73").toP
 private val bigSmilePath = PathParser().parsePathString("M50 71 Q 60 84 70 71").toPath()
 private val frownPath = PathParser().parsePathString("M54 78 Q 60 72 66 78").toPath()
 private val zPath = PathParser().parsePathString("M0 0 H8 L0 8 H8").toPath()
+// an agent's badge, on Mochi's lower right: a pen (writer) or a shield (security)
+private val penPath = PathParser().parsePathString("M84 96 L104 70 L110 75 L90 101 L82 103 Z").toPath()
+private val shieldPath = PathParser().parsePathString(
+    "M96 68 L110 73 C 110 88, 104 96, 96 101 C 88 96, 82 88, 82 73 Z").toPath()
+
+/** How one of Mochi's specialist agents looks: Mochi's shape in their [color], with their [accessory]. */
+data class AgentLook(val color: Color, val accessory: String)
 
 /**
  * Mochi, the rice-cake mascot: breathes and blinks; [mood] moves its eyes and mouth (talks while [Mood.Speaking]).
  * A tap makes it hop (and calls [onTap]).
  */
 @Composable
-fun Mascot(modifier: Modifier = Modifier, mood: Mood = Mood.Idle, onTap: (() -> Unit)? = null) {
+fun Mascot(modifier: Modifier = Modifier, mood: Mood = Mood.Idle, look: AgentLook? = null, label: String = "Mochi",
+           onTap: (() -> Unit)? = null) {
     val loop = rememberInfiniteTransition(label = "mochi")
     val breathe by loop.animateFloat(0f, 1f,
         infiniteRepeatable(tween(1700, easing = FastOutSlowInEasing), RepeatMode.Reverse), label = "breathe")
@@ -92,17 +100,20 @@ fun Mascot(modifier: Modifier = Modifier, mood: Mood = Mood.Idle, onTap: (() -> 
         }
         onTap?.invoke()
     }
-    Canvas(modifier.semantics { contentDescription = "Mochi" }.then(if (onTap != null) tap else Modifier)) {
+    Canvas(modifier.semantics { contentDescription = label }.then(if (onTap != null) tap else Modifier)) {
         val s = minOf(size.width / VIEW_W, size.height / VIEW_H)
         val ox = (size.width - VIEW_W * s) / 2
         val oy = (size.height - VIEW_H * s) / 2
         translate(ox, oy) {
-            scale(s, s, pivot = Offset.Zero) { drawMochi(reaction ?: mood, breathe, blink, talk, bob, hop.value, drift) }
+            scale(s, s, pivot = Offset.Zero) { drawMochi(reaction ?: mood, breathe, blink, talk, bob, hop.value, drift, look) }
         }
     }
 }
 
-private fun DrawScope.drawMochi(mood: Mood, breathe: Float, blink: Float, talk: Float, bob: Float, hop: Float, drift: Float) {
+private fun DrawScope.drawMochi(mood: Mood, breathe: Float, blink: Float, talk: Float, bob: Float, hop: Float, drift: Float,
+                                look: AgentLook? = null) {
+    val body = look?.let { androidx.compose.ui.graphics.lerp(BODY, it.color, 0.32f) } ?: BODY
+    val leaf = look?.color ?: LEAF
     // the hop: squash, jump, land (same curve as the website)
     val (jumpY, sx, sy) = hopShape(hop)
     // shadow shrinks while in the air
@@ -116,10 +127,10 @@ private fun DrawScope.drawMochi(mood: Mood, breathe: Float, blink: Float, talk: 
     val lift = if (mood == Mood.Thinking) bob * 1.5f else 0f
     translate(0f, jumpY + lift) {
         scale(sx * breatheX, sy * breatheY, pivot = Offset(60f, 101f)) {
-            drawPath(bodyPath, BODY)
+            drawPath(bodyPath, body)
             drawPath(bodyPath, INK, style = Stroke(3.2f))
             drawPath(highlightPath, Color.White.copy(alpha = 0.9f), style = Stroke(4f, cap = StrokeCap.Round))
-            drawPath(leafPath, LEAF)
+            drawPath(leafPath, leaf)
             drawPath(leafPath, INK, style = Stroke(2.6f, join = StrokeJoin.Round))
             drawPath(veinPath, INK, style = Stroke(1.6f, cap = StrokeCap.Round))
             val shy = mood == Mood.Listening || mood == Mood.Happy
@@ -168,6 +179,18 @@ private fun DrawScope.drawMochi(mood: Mood, breathe: Float, blink: Float, talk: 
                 }
                 Mood.Sleepy -> drawOval(INK, Offset(57f, 73f - (1.5f + 1.5f * br)), Size(6f, 3f + 3f * br)) // a soft snore
                 else -> drawPath(smilePath, INK, style = Stroke(2.6f, cap = StrokeCap.Round))
+            }
+            when (look?.accessory) {
+                "pen" -> {
+                    drawPath(penPath, look.color)
+                    drawPath(penPath, INK, style = Stroke(2.2f, join = StrokeJoin.Round))
+                }
+                "shield" -> {
+                    drawPath(shieldPath, look.color)
+                    drawPath(shieldPath, INK, style = Stroke(2.2f, join = StrokeJoin.Round))
+                    drawLine(Color.White, Offset(91f, 82f), Offset(95f, 87f), 2.4f, StrokeCap.Round)
+                    drawLine(Color.White, Offset(95f, 87f), Offset(102f, 78f), 2.4f, StrokeCap.Round)
+                }
             }
         }
     }

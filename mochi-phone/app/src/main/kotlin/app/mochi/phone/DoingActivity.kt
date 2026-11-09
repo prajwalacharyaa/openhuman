@@ -20,6 +20,7 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -111,7 +112,7 @@ class DoingActivity : ComponentActivity() {
 /** One helper around Mochi. */
 private class Lane(val key: String, val label: String, val bg: Color, val ink: Color)
 
-private fun lanes(c: MochiColors, helpers: List<String>) = listOf(
+private fun lanes(c: MochiColors, helpers: List<String>, team: List<Agents.Agent>) = listOf(
     Lane("voice", "Voice", c.amberBg, c.amberInk),
     Lane("brain", "Claude", c.blueBg, c.blueInk),
     Lane("memory", "Memory", c.violetBg, c.violetInk),
@@ -119,9 +120,17 @@ private fun lanes(c: MochiColors, helpers: List<String>) = listOf(
     Lane("server", "Server", c.field, c.ink),
     Lane("phone", "Phone", c.amberBg, c.amberInk),
     Lane("github", "GitHub", c.field, c.ink),
-) + helpers.take(3).map { Lane("helper:$it", it.removePrefix("Helper: ").take(14), c.blueBg, c.blueInk) }
+) + helpers.take(3).map { who ->
+    // a specialist (Mark, Melissa…) in its own colour; other helpers (builder, Explore…) in blue
+    val agent = team.firstOrNull { it.who == who }
+    if (agent != null) Lane("helper:$who", agent.display, agent.color.copy(alpha = 0.22f), agent.color)
+    else Lane("helper:$who", who.removePrefix("Helper: ").take(14), c.blueBg, c.blueInk)
+}
 
 private fun laneOf(e: Doing.Event) = if (e.lane == "helper") "helper:" + e.who else e.lane
+
+/** A step belongs to a bubble by its lane, and to an agent's bubble by who did it. */
+private fun inLane(e: Doing.Event, key: String) = laneOf(e) == key || key == "helper:" + e.who
 
 private fun laneInk(c: MochiColors, lane: String) = when (lane) {
     "voice", "phone" -> c.amberInk
@@ -185,8 +194,10 @@ private fun DoingScreen(onBack: () -> Unit) {
     val tasks = Doing.tasks()
     val active = Doing.activeLanes(now) + (if (Call.active) setOf("voice") else emptySet())
     val busy = Doing.busy(now)
-    val helpers = Doing.events.filter { it.lane == "helper" && now - it.at < 10 * 60_000 }.map { it.who }.distinct()
-    val all = lanes(c, helpers)
+    val team = remember { Agents.cached(ctx) }
+    val helpers = Doing.events.filter { (it.lane == "helper" || it.who.startsWith("Helper: ")) && now - it.at < 10 * 60_000 }
+        .map { it.who }.filter { it.startsWith("Helper: ") }.distinct()
+    val all = lanes(c, helpers, team)
     val last = Doing.latestStep()
     val callSpeaking = Call.active && Call.said.lastOrNull()?.let { it.role != "user" && !it.final } == true
     // tapped and still coming up (gives up showing the spinner after 15 s if the call never started)
@@ -235,7 +246,7 @@ private fun DoingScreen(onBack: () -> Unit) {
             // the call's own card ("Call with Mochi") is left out: it kept jumping to the top during a call
             // (the live call line above already says what the call is doing); requests asked on it still show
             val shown = tasks.filter { it.task?.text != CALL_TASK }.mapNotNull { t ->
-                val steps = if (filter == null) t.steps else t.steps.filter { laneOf(it.step) == filter }
+                val steps = if (filter == null) t.steps else t.steps.filter { inLane(it.step, filter!!) }
                 if (filter != null && steps.isEmpty()) null else t.copy(steps = steps)
             }
             // a new step: bring it into view at the top (just under the Stop / details line), only while December
@@ -267,8 +278,12 @@ private fun DoingScreen(onBack: () -> Unit) {
                         }
                         all.forEachIndexed { i, lane ->
                             val a = -PI / 2 + 2 * PI * i / all.size
+                            // double-tap an agent's bubble: that agent's page on the Agents screen
+                            val agentName = lane.key.removePrefix("helper:").removePrefix("Helper: ")
+                                .takeIf { lane.key.startsWith("helper:") }
                             LaneBubble(lane, lane.key in active, filter == lane.key,
-                                Modifier.offset(x = ring * cos(a).toFloat(), y = ring * sin(a).toFloat())) {
+                                Modifier.offset(x = ring * cos(a).toFloat(), y = ring * sin(a).toFloat()),
+                                onDoubleClick = agentName?.let { n -> { AgentsActivity.open(ctx, n) } }) {
                                 filter = if (filter == lane.key) null else lane.key
                             }
                         }
@@ -334,7 +349,7 @@ private fun DoingScreen(onBack: () -> Unit) {
 
 /** One request: what was asked, its models and tokens, and its steps (1–2 lines each, 3–4 with details on). */
 @Composable
-private fun TaskCard(t: Doing.TaskView, detailed: Boolean, onOpen: (Doing.StepView) -> Unit) {
+internal fun TaskCard(t: Doing.TaskView, detailed: Boolean, onOpen: (Doing.StepView) -> Unit) {
     val c = LocalMochi.current
     Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp)).background(c.card).padding(Space.m),
         verticalArrangement = Arrangement.spacedBy(Space.s)) {
@@ -395,7 +410,7 @@ private fun Mono(text: String, maxLines: Int) {
 /** Everything that happened in one step, in a sheet that pulls up to full height and scrolls; × closes it. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun StepSheet(s: Doing.StepView, onClose: () -> Unit) {
+internal fun StepSheet(s: Doing.StepView, onClose: () -> Unit) {
     val ctx = LocalContext.current
     val c = LocalMochi.current
     val scope = rememberCoroutineScope()
@@ -433,14 +448,17 @@ private fun StepSheet(s: Doing.StepView, onClose: () -> Unit) {
 }
 
 @Composable
-private fun LaneBubble(lane: Lane, on: Boolean, picked: Boolean, modifier: Modifier, onClick: () -> Unit) {
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
+private fun LaneBubble(lane: Lane, on: Boolean, picked: Boolean, modifier: Modifier, onDoubleClick: (() -> Unit)? = null,
+                       onClick: () -> Unit) {
     val c = LocalMochi.current
     val pulse by rememberInfiniteTransition(label = "lane").animateFloat(0.55f, 1f,
         infiniteRepeatable(tween(700, easing = FastOutSlowInEasing), RepeatMode.Reverse), label = "pulse")
     val size: Dp = 60.dp
     Box(modifier.size(size).clip(CircleShape).background(if (on) lane.bg else c.field)
         .then(if (picked) Modifier.border(2.dp, c.ink, CircleShape) else if (on) Modifier.border(2.dp, lane.ink, CircleShape) else Modifier)
-        .alpha(if (on) pulse else 0.55f).clickable(role = Role.Button, onClick = onClick), contentAlignment = Alignment.Center) {
+        .alpha(if (on) pulse else 0.55f)
+        .combinedClickable(role = Role.Button, onDoubleClick = onDoubleClick, onClick = onClick), contentAlignment = Alignment.Center) {
         Text(lane.label, style = Type.small.copy(fontWeight = if (on) Type.strong else null), color = if (on) lane.ink else c.muted,
             textAlign = TextAlign.Center, maxLines = 2, modifier = Modifier.widthIn(max = size - 8.dp))
     }

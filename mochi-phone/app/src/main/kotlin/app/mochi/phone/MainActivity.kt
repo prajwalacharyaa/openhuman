@@ -97,7 +97,7 @@ import java.time.Instant
 
 /**
  * Home: everything one tap away. Decisions to answer right on their card, an "Ask Mochi anything" bar (a new chat
- * with no extra screen), tiles for the latest chat, the latest notice, Memory and Inbox, and Call Mochi at the
+ * with no extra screen), tiles for the latest chat, Mochi's agents, Memory and Inbox, and Call Mochi at the
  * bottom. Also the first-time setup (server + Mochi's token) and the permissions a ringing phone needs.
  */
 class MainActivity : ComponentActivity() {
@@ -218,6 +218,7 @@ private fun HomeScreen(go: (String) -> Unit) {
     var muted by remember { mutableStateOf(Call.muted) }
     var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
     var tokens by remember { mutableStateOf<Map<String, Doing.Tokens>>(emptyMap()) }
+    var team by remember { mutableStateOf(Agents.cached(ctx)) }
     LaunchedEffect(Unit) {
         io(scope, { Doing.backfill(ctx) }) {}
         while (true) { onCall = Call.active; muted = Call.muted || Call.frozen; now = System.currentTimeMillis(); delay(1_000) }
@@ -229,6 +230,7 @@ private fun HomeScreen(go: (String) -> Unit) {
         io(scope, { Mochi.threads(ctx).firstOrNull() }) { latest = it }
         io(scope, { Mochi.ramLabel(ctx) }) { ram = it }
         io(scope, { Doing.today(ctx) }) { tokens = it }
+        io(scope, { Agents.load(ctx) }) { team = it }
         notice = Mochi.inbox(ctx).firstOrNull()
         unread = Mochi.unreadInbox(ctx)
         fixList = fixes(ctx)
@@ -361,12 +363,19 @@ private fun HomeScreen(go: (String) -> Unit) {
                         color = c.ink, maxLines = 2, overflow = TextOverflow.Ellipsis)
                     Text(latest?.optString("lastMessageAt")?.let(::ago) ?: "Your latest chat", style = Type.small, color = c.muted)
                 }
-                Tile(c.greenBg, Modifier.weight(1f).heightIn(min = 120.dp), onClick = { go("inbox") }) {
-                    LineIcon(Icons2.Clock, c.greenInk, 24.dp)
-                    Text(notice?.optString("title")?.ifBlank { null } ?: "Nothing new", style = Type.body.copy(fontWeight = Type.strong),
-                        color = c.ink, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                    Text(notice?.optString("body") ?: "Reminders and updates", style = Type.small, color = c.muted,
-                        maxLines = 1, overflow = TextOverflow.Ellipsis)
+                // Mochi's agents: who's working (their face moves), or the team resting; a tap opens Agents
+                val busyAgent = team.firstOrNull { Agents.working(it.name, now) }
+                Tile(c.greenBg, Modifier.weight(1f).heightIn(min = 120.dp), onClick = { AgentsActivity.open(ctx, busyAgent?.name) }) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+                        (busyAgent?.let { listOf(it) } ?: team.take(3)).forEach { a ->
+                            Mascot(Modifier.size(30.dp), mood = if (busyAgent != null) Mood.Thinking else Mood.Sleepy,
+                                look = a.look, label = a.display)
+                        }
+                        if (team.isEmpty()) LineIcon(Icons2.Chat, c.greenInk, 24.dp)
+                    }
+                    Text(busyAgent?.let { "${it.display} is working" } ?: "Agents", style = Type.body.copy(fontWeight = Type.strong), color = c.ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(busyAgent?.let { Agents.latest(it.name)?.text } ?: team.joinToString(" · ") { it.display }
+                        .ifBlank { "Mochi's team" }, style = Type.small, color = c.muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
             }
             Row(horizontalArrangement = Arrangement.spacedBy(Space.m)) {
