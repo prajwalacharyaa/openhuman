@@ -18,6 +18,8 @@
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import {
+  copyFileSync,
+  existsSync,
   mkdirSync,
   readFileSync,
   readdirSync,
@@ -194,6 +196,25 @@ export async function download(url, destination, timeoutMs = DOWNLOAD_TIMEOUT_MS
   throw new Error(`download of ${url} failed: ${lastError}`);
 }
 
+/**
+ * `download`, through a local cache when MODULES_CACHE_DIR is set (CI keeps it between builds): an archive whose
+ * bytes match the registry pin is reused instead of fetched again, so a GitHub outage can't fail a rebuild.
+ */
+async function cachedDownload(asset, archive) {
+  const cacheDir = process.env.MODULES_CACHE_DIR;
+  if (!cacheDir) return download(asset.url, archive);
+  const cached = join(cacheDir, asset.id, asset.version, asset.hostKey, asset.archive);
+  const pinned = (path) =>
+    existsSync(path) && createHash("sha256").update(readFileSync(path)).digest("hex") === asset.sha256.toLowerCase();
+  if (pinned(cached)) {
+    console.log(`[bundled-modules] ${asset.id} ${asset.version} from the cache`);
+  } else {
+    mkdirSync(dirname(cached), { recursive: true });
+    await download(asset.url, cached);
+  }
+  copyFileSync(cached, archive);
+}
+
 export async function stageModules({
   hostKey = defaultHostKey(),
   output = OUTPUT,
@@ -206,7 +227,7 @@ export async function stageModules({
     const dir = join(output, asset.id, asset.version, asset.hostKey);
     mkdirSync(dir, { recursive: true });
     const archive = join(dir, asset.archive);
-    await download(asset.url, archive);
+    await cachedDownload(asset, archive);
     const actual = createHash("sha256").update(readFileSync(archive)).digest("hex");
     if (actual !== asset.sha256.toLowerCase()) {
       throw new Error(`${asset.id}: downloaded archive does not match the compiled registry pin`);

@@ -141,9 +141,25 @@ jobs:
           restore-keys: tiny-build-${{ matrix.settings.name }}-
       - name: Install JS dependencies
         run: pnpm install --frozen-lockfile
+      # the pinned module archives come from GitHub release files, which time out (504) at times: keep them
+      # between builds (saved right after a good download, even if a later step fails), so a rebuild never re-fetches
+      - name: Restore module archives
+        uses: actions/cache/restore@v6
+        with:
+          path: ${{ runner.temp }}/modules-cache
+          key: modules-${{ matrix.settings.target }}-${{ hashFiles('crates/openhuman-core/src/modules/registry.rs', 'crates/openhuman-core/src/modules/registry/*.rs') }}
+          restore-keys: modules-${{ matrix.settings.target }}-
       - name: Bundle pinned native modules
         shell: bash
+        env:
+          MODULES_CACHE_DIR: ${{ runner.temp }}/modules-cache
         run: node scripts/release/stage-modules.mjs --target "${{ matrix.settings.target }}"
+      - name: Save module archives
+        uses: actions/cache/save@v6
+        with:
+          path: ${{ runner.temp }}/modules-cache
+          key: modules-${{ matrix.settings.target }}-${{ hashFiles('crates/openhuman-core/src/modules/registry.rs', 'crates/openhuman-core/src/modules/registry/*.rs') }}
+        continue-on-error: true  # already saved by an earlier build with the same pins
       - name: Build and package
         shell: bash
         working-directory: app
