@@ -53,6 +53,9 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
+import androidx.compose.foundation.interaction.DragInteraction
+import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -147,6 +150,21 @@ private fun DoingScreen(onBack: () -> Unit) {
     var opened by remember { mutableStateOf<Doing.StepView?>(null) }
     var callTapAt by remember { mutableLongStateOf(0L) }
     val list = rememberLazyListState()
+    // follow new steps only while December is at the top; scrolling down (or a step open) stops it until they
+    // scroll back up
+    var follow by remember { mutableStateOf(true) }
+    var touched by remember { mutableStateOf(false) }
+    LaunchedEffect(list) {
+        launch { list.interactionSource.interactions.collect { if (it is DragInteraction.Start) touched = true } }
+        snapshotFlow { list.isScrollInProgress }.collect { moving ->
+            if (!moving && touched) {
+                touched = false
+                val bar = if (Call.active) 2 else 1
+                follow = list.firstVisibleItemIndex <= bar ||
+                    (list.firstVisibleItemIndex == bar + 1 && list.firstVisibleItemScrollOffset < 24)
+            }
+        }
+    }
     LaunchedEffect(Unit) {
         io(scope, { Doing.backfill(ctx) }) {}
         var tick = 0
@@ -220,11 +238,12 @@ private fun DoingScreen(onBack: () -> Unit) {
                 val steps = if (filter == null) t.steps else t.steps.filter { laneOf(it.step) == filter }
                 if (filter != null && steps.isEmpty()) null else t.copy(steps = steps)
             }
-            // something new: bring the newest card into view (just under the Stop / details line), unless December
-            // scrolled far down to read older ones
-            LaunchedEffect(shown.firstOrNull()?.at) {
+            // a new step: bring it into view at the top (just under the Stop / details line), only while December
+            // is following along at the top and no step is open
+            LaunchedEffect(Doing.latestStep()?.id) {
                 val bar = if (Call.active) 2 else 1
-                if (shown.isNotEmpty() && list.firstVisibleItemIndex <= bar + 1) list.animateScrollToItem(bar)
+                if (follow && opened == null && shown.isNotEmpty() && list.firstVisibleItemIndex <= bar + 1)
+                    list.animateScrollToItem(bar)
             }
             LazyColumn(state = list, contentPadding = PaddingValues(start = Space.l, end = Space.l, bottom = 96.dp),
                 verticalArrangement = Arrangement.spacedBy(Space.s)) {
@@ -328,7 +347,8 @@ private fun TaskCard(t: Doing.TaskView, detailed: Boolean, onOpen: (Doing.StepVi
             t.models.forEach { m -> Chip(m.replaceFirstChar { it.uppercase() }, c.blueBg, c.blueInk) }
             if (t.tokens.total > 0) Chip("${Doing.fmt(t.tokens.total)} tokens", c.field, c.muted)
         }
-        t.steps.forEach { s -> StepRow(s, detailed) { onOpen(s) } }
+        // newest step at the top
+        t.steps.asReversed().forEach { s -> StepRow(s, detailed) { onOpen(s) } }
     }
 }
 
@@ -351,7 +371,7 @@ private fun StepRow(s: Doing.StepView, detailed: Boolean, onClick: () -> Unit) {
             val lines = s.lines.map { it.text }
             if (detailed) {
                 if (e.detail.isNotBlank() && e.detail != e.text) Mono(e.detail, 2)
-                lines.takeLast(3).forEach { Text("› $it", style = Type.small, color = c.muted, maxLines = 2, overflow = TextOverflow.Ellipsis) }
+                lines.takeLast(3).asReversed().forEach { Text("› $it", style = Type.small, color = c.muted, maxLines = 2, overflow = TextOverflow.Ellipsis) }
             } else {
                 (lines.lastOrNull() ?: e.detail.takeIf { it.isNotBlank() && it != e.text })?.let {
                     Text(it, style = Type.small, color = c.muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
