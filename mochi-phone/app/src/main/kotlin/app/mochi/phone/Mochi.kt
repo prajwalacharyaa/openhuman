@@ -143,8 +143,18 @@ object Mochi {
     /** The `data` of a core RPC envelope (or the result itself). */
     private fun data(result: JSONObject): JSONObject = result.optJSONObject("data") ?: result
 
-    /** Start a new conversation; returns its thread id. */
-    fun newThread(c: Context): String = data(rpc(c, "openhuman.threads_create_new", JSONObject())).getString("id")
+    /** Start a new conversation (labelled `agent:<name>` for a chat with one of Mochi's agents); returns its id. */
+    fun newThread(c: Context, agent: String? = null): String =
+        data(rpc(c, "openhuman.threads_create_new", JSONObject().apply {
+            if (agent != null) put("labels", JSONArray().put("agent:$agent"))
+        })).getString("id")
+
+    /** The agent a conversation belongs to ("mark" for a chat with Mark), or null for Mochi's own. */
+    fun agentOf(thread: JSONObject?): String? {
+        val labels = thread?.optJSONArray("labels") ?: return null
+        return (0 until labels.length()).map { labels.optString(it) }.firstOrNull { it.startsWith("agent:") }
+            ?.removePrefix("agent:")?.takeIf { it.isNotBlank() }
+    }
 
     /** The conversation's messages, oldest first. */
     fun messages(c: Context, threadId: String): JSONArray =

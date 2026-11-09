@@ -219,6 +219,7 @@ private fun HomeScreen(go: (String) -> Unit) {
     var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
     var tokens by remember { mutableStateOf<Map<String, Doing.Tokens>>(emptyMap()) }
     var team by remember { mutableStateOf(Agents.cached(ctx)) }
+    var hiringWaiting by remember { mutableIntStateOf(0) }
     LaunchedEffect(Unit) {
         io(scope, { Doing.backfill(ctx) }) {}
         while (true) { onCall = Call.active; muted = Call.muted || Call.frozen; now = System.currentTimeMillis(); delay(1_000) }
@@ -231,6 +232,7 @@ private fun HomeScreen(go: (String) -> Unit) {
         io(scope, { Mochi.ramLabel(ctx) }) { ram = it }
         io(scope, { Doing.today(ctx) }) { tokens = it }
         io(scope, { Agents.load(ctx) }) { team = it }
+        io(scope, { Agents.board(ctx).first.count { it.optString("status") == "waiting" } }) { hiringWaiting = it }
         notice = Mochi.inbox(ctx).firstOrNull()
         unread = Mochi.unreadInbox(ctx)
         fixList = fixes(ctx)
@@ -365,7 +367,10 @@ private fun HomeScreen(go: (String) -> Unit) {
                 }
                 // Mochi's agents: who's working (their face moves), or the team resting; a tap opens Agents
                 val busyAgent = team.firstOrNull { Agents.working(it.name, now) }
-                Tile(c.greenBg, Modifier.weight(1f).heightIn(min = 120.dp), onClick = { AgentsActivity.open(ctx, busyAgent?.name) }) {
+                val hr = team.firstOrNull { it.hr }
+                Tile(c.greenBg, Modifier.weight(1f).heightIn(min = 120.dp), onClick = {
+                    AgentsActivity.open(ctx, if (hiringWaiting > 0) hr?.name else busyAgent?.name)
+                }) {
                     Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
                         (busyAgent?.let { listOf(it) } ?: team.take(3)).forEach { a ->
                             Mascot(Modifier.size(30.dp), mood = if (busyAgent != null) Mood.Thinking else Mood.Sleepy,
@@ -373,7 +378,11 @@ private fun HomeScreen(go: (String) -> Unit) {
                         }
                         if (team.isEmpty()) LineIcon(Icons2.Chat, c.greenInk, 24.dp)
                     }
-                    Text(busyAgent?.let { "${it.display} is working" } ?: "Agents", style = Type.body.copy(fontWeight = Type.strong), color = c.ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(when {
+                        hiringWaiting > 0 -> "${hr?.display ?: "SY"}: $hiringWaiting to approve"
+                        busyAgent != null -> "${busyAgent.display} is working"
+                        else -> "Agents"
+                    }, style = Type.body.copy(fontWeight = Type.strong), color = c.ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     Text(busyAgent?.let { Agents.latest(it.name)?.text } ?: team.joinToString(" · ") { it.display }
                         .ifBlank { "Mochi's team" }, style = Type.small, color = c.muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
@@ -533,6 +542,7 @@ private fun SelectionBar(count: Int, verb: String, onAll: () -> Unit, onDelete: 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun ChatsScreen(onBack: () -> Unit) {
+    val team = remember { Agents.cached(LocalContext.current) }
     val ctx = LocalContext.current
     val c = LocalMochi.current
     val scope = rememberCoroutineScope()
@@ -578,10 +588,18 @@ private fun ChatsScreen(onBack: () -> Unit) {
                     SwipeRow(selecting, id in selected, "Delete", onDelete = { remove(listOf(t)) },
                         onToggle = { selected = if (id in selected) selected - id else selected + id },
                         onOpen = { MainActivity.openChat(ctx, id) }) {
-                        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                            Text(t.optString("title").ifBlank { "Conversation" }, style = Type.body.copy(fontWeight = Type.strong),
-                                color = c.ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            Text(ago(t.optString("lastMessageAt")) + if (current) " · current" else "", style = Type.small, color = c.muted)
+                        // a chat with one of Mochi's agents shows its face and name
+                        val owner = Mochi.agentOf(t)
+                        val agentInfo = owner?.let { o -> team.firstOrNull { it.name == o } }
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Space.m)) {
+                            if (owner != null) Mascot(Modifier.size(34.dp), mood = Mood.Idle, look = agentInfo?.look,
+                                label = Agents.display(owner, team))
+                            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                Text(t.optString("title").ifBlank { "Conversation" }, style = Type.body.copy(fontWeight = Type.strong),
+                                    color = c.ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                Text((owner?.let { Agents.display(it, team) + " · " } ?: "") + ago(t.optString("lastMessageAt")) +
+                                    if (current) " · current" else "", style = Type.small, color = c.muted)
+                            }
                         }
                     }
                 }

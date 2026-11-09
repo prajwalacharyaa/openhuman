@@ -86,7 +86,8 @@ class ChatActivity : ComponentActivity() {
         @Suppress("DEPRECATION")
         val shared = if (fresh) intent.getParcelableExtra<Uri>(Intent.EXTRA_STREAM) else null
         val thread = intent.getStringExtra(EXTRA_THREAD)
-        setContent { MochiTheme { ChatScreen(thread, newChat, text, sendNow, shared) { finish() } } }
+        val agent = intent.getStringExtra(EXTRA_AGENT)
+        setContent { MochiTheme { ChatScreen(thread, newChat, text, sendNow, shared, agent) { finish() } } }
     }
 
     companion object {
@@ -94,6 +95,11 @@ class ChatActivity : ComponentActivity() {
         const val EXTRA_THREAD = "thread"
         const val EXTRA_TEXT = "text"
         const val EXTRA_SEND = "send"
+        /** A chat with one of Mochi's agents ("mark"): its newest chat, or a new one. */
+        const val EXTRA_AGENT = "agent"
+
+        fun openAgent(c: android.content.Context, agent: String, new: Boolean = false) =
+            c.startActivity(Intent(c, ChatActivity::class.java).putExtra(EXTRA_AGENT, agent).putExtra(EXTRA_NEW, new))
         const val ACTION_NEW_CHAT = "app.mochi.phone.NEW_CHAT"
         /** The prefix mochi-ask adds for Claude; not something December said. */
         val VOICE_ASK_NOTE = Regex("""^\(Asked on a voice call[^)]*\)\s*""")
@@ -128,11 +134,14 @@ private fun visible(m: JSONObject): Boolean {
 
 @Composable
 fun ChatScreen(initialThread: String?, newChat: Boolean, initialText: String?, sendNow: Boolean, shared: Uri?,
-               onBack: () -> Unit) {
+               initialAgent: String? = null, onBack: () -> Unit) {
     val ctx = LocalContext.current
     val c = LocalMochi.current
     val scope = rememberCoroutineScope()
-    var thread by remember { mutableStateOf(if (newChat) null else initialThread ?: Mochi.thread(ctx)) }
+    // a chat with one of Mochi's agents (Mark…): it answers as that agent; null for Mochi's own chats
+    var agent by remember { mutableStateOf(initialAgent) }
+    val agentInfo = remember(agent) { Agents.find(ctx, agent) }
+    var thread by remember { mutableStateOf(if (newChat || initialAgent != null) initialThread else initialThread ?: Mochi.thread(ctx)) }
     var title by remember { mutableStateOf("Chat") }
     val messages = remember { mutableStateListOf<JSONObject>() }
     val steps = remember { mutableStateListOf<Step>() }
@@ -177,23 +186,27 @@ fun ChatScreen(initialThread: String?, newChat: Boolean, initialText: String?, s
         val sending = files.toList()
         files.clear()
         busy = true; streaming = ""; steps.clear(); status = ""
-        io(scope, { Mochi.send(ctx, id, body, model = Mochi.modelFor(mode)) },
+        // an agent's chat runs on the agent's own model (quick / deep words still switch it)
+        io(scope, { Mochi.send(ctx, id, body, model = if (agent != null) null else Mochi.modelFor(mode)) },
             { busy = false; files.addAll(sending); status = "Not sent: can't reach Mochi. (${it.message})" }) { reload() }
     }
 
     // start or open the conversation
     LaunchedEffect(Unit) {
         val id = thread
+        val withAgent = agent
         if (id == null) {
-            status = "Starting a new conversation…"
-            io(scope, { Mochi.newThread(ctx) }, { status = "Can't reach Mochi. Is Tailscale on?" }) { newId ->
+            status = if (withAgent != null) "Opening your chat with ${Agents.display(withAgent, Agents.cached(ctx))}…"
+                else "Starting a new conversation…"
+            io(scope, {
+                // an agent: its newest chat, unless December asked for a new one
+                (if (withAgent != null && !newChat) Agents.latestChat(ctx, withAgent) else null) ?: Mochi.newThread(ctx, withAgent)
+            }, { status = "Can't reach Mochi. Is Tailscale on?" }) { newId ->
                 thread = newId
-                Mochi.setThread(ctx, newId)
+                if (withAgent == null) Mochi.setThread(ctx, newId) // an agent's chat never becomes Mochi's current one
                 status = ""
                 if (sendNow && !initialText.isNullOrBlank()) send(initialText)
             }
-        } else {
-            Mochi.setThread(ctx, id)
         }
         if (shared != null) io(scope, { Attachments.load(ctx, shared) }) { a -> if (a != null) files.add(a) }
     }
@@ -227,6 +240,9 @@ fun ChatScreen(initialThread: String?, newChat: Boolean, initialText: String?, s
         reload()
         if (id != null) io(scope, { Mochi.threads(ctx).firstOrNull { it.optString("id") == id } }) { t ->
             t?.optString("title")?.takeIf { it.isNotBlank() }?.let { title = it }
+            // an existing chat opened from the list: an agent's stays the agent's; Mochi's becomes the current one
+            val owner = Mochi.agentOf(t)
+            if (owner != null) agent = owner else if (agent == null) Mochi.setThread(ctx, id)
         }
         onDispose { l?.close() }
     }
@@ -255,13 +271,22 @@ fun ChatScreen(initialThread: String?, newChat: Boolean, initialText: String?, s
         Row(Modifier.fillMaxWidth().padding(horizontal = Space.l, vertical = Space.s),
             verticalAlignment = Alignment.CenterVertically) {
             RoundButton(Icons2.Back, "Back", c.field, c.ink, 44.dp, onBack)
-            Text(title, style = Type.title, color = c.ink, maxLines = 1, overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f).padding(horizontal = Space.m))
-            Mascot(Modifier.size(44.dp), onTap = { DoingActivity.open(ctx) }, mood = when {
-                streaming.isNotEmpty() -> Mood.Speaking
-                busy -> Mood.Thinking
-                else -> Mood.Idle
-            })
+            val withAgent = agent
+            Column(Modifier.weight(1f).padding(horizontal = Space.m)) {
+                Text(if (withAgent != null) Agents.display(withAgent, listOfNotNull(agentInfo)) else title,
+                    style = Type.title, color = c.ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                if (withAgent != null) Text(agentInfo?.role?.ifBlank { null } ?: "Mochi's agent", style = Type.small,
+                    color = agentInfo?.color ?: c.muted, maxLines = 1)
+            }
+            // the agent's face (a tap: what it's doing), or Mochi's (a tap: what Mochi is doing)
+            Mascot(Modifier.size(44.dp), look = agentInfo?.look,
+                label = withAgent?.let { Agents.display(it, listOfNotNull(agentInfo)) } ?: "Mochi",
+                onTap = { if (withAgent != null) AgentsActivity.open(ctx, withAgent) else DoingActivity.open(ctx) },
+                mood = when {
+                    streaming.isNotEmpty() -> Mood.Speaking
+                    busy -> Mood.Thinking
+                    else -> Mood.Idle
+                })
         }
         if (status.isNotEmpty()) Text(status, style = Type.small, color = c.danger,
             modifier = Modifier.padding(horizontal = Space.l, vertical = Space.xs))
@@ -271,9 +296,18 @@ fun ChatScreen(initialThread: String?, newChat: Boolean, initialText: String?, s
             if (messages.isEmpty() && !busy) item("empty") {
                 Column(Modifier.fillMaxWidth().padding(top = Space.xxl), horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.spacedBy(Space.m)) {
-                    Mascot(Modifier.size(96.dp))
-                    Text("What can I do for you?", style = Type.title, color = c.ink)
-                    Text("Type, attach a photo or file, or pick Quick or Deep below.", style = Type.small, color = c.muted)
+                    val withAgent = agent
+                    Mascot(Modifier.size(96.dp), look = agentInfo?.look, label = withAgent ?: "Mochi")
+                    if (withAgent != null) {
+                        val name = Agents.display(withAgent, listOfNotNull(agentInfo))
+                        Text("Talk with $name", style = Type.title, color = c.ink)
+                        Text(agentInfo?.description?.substringAfter(". ", agentInfo.description)?.take(160)
+                            ?: "Ask $name directly.", style = Type.small, color = c.muted,
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+                    } else {
+                        Text("What can I do for you?", style = Type.title, color = c.ink)
+                        Text("Type, attach a photo or file, or pick Quick or Deep below.", style = Type.small, color = c.muted)
+                    }
                 }
             }
             items(messages) { m -> Bubble(m) }
@@ -286,7 +320,7 @@ fun ChatScreen(initialThread: String?, newChat: Boolean, initialText: String?, s
             if (files.isNotEmpty()) LazyRow(horizontalArrangement = Arrangement.spacedBy(Space.s)) {
                 items(files.toList()) { a -> AttachmentChip(a) { files.remove(a) } }
             }
-            ModeChips(mode) { mode = it; Mochi.setMode(ctx, it) }
+            if (agent == null) ModeChips(mode) { mode = it; Mochi.setMode(ctx, it) }
             Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(Space.s)) {
                 Box {
                     RoundButton(Icons2.Plus, "Attach photo or file", c.field, c.ink) { attachMenu = true }
@@ -300,7 +334,7 @@ fun ChatScreen(initialThread: String?, newChat: Boolean, initialText: String?, s
                         })
                     }
                 }
-                Field(input, { input = it }, "Message Mochi", Modifier.weight(1f))
+                Field(input, { input = it }, "Message " + (agent?.let { Agents.display(it, listOfNotNull(agentInfo)) } ?: "Mochi"), Modifier.weight(1f))
                 if (busy) {
                     StopButton {
                         thread?.let { id ->
@@ -309,7 +343,9 @@ fun ChatScreen(initialThread: String?, newChat: Boolean, initialText: String?, s
                     }
                 } else {
                     // on this chat's call: Silent (Mochi answers in text only); otherwise: call Mochi in this chat
-                    if (onThisCall) {
+                    if (agent != null) {
+                        // calls with an agent come later; its chat has no call button
+                    } else if (onThisCall) {
                         RoundButton(if (silent) Icons2.Muted else Icons2.Speaker,
                             if (silent) "Silent: Mochi answers in text. Tap for voice" else "Mochi talks. Tap for silent",
                             if (silent) c.ink else c.field, if (silent) c.bg else c.ink) {

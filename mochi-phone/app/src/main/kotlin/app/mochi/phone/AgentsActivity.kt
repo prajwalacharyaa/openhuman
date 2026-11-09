@@ -148,6 +148,9 @@ private fun AgentsScreen(requested: Pair<String, Long>?, onBack: () -> Unit) {
                     else -> "${agents.size} agents · all resting"
                 }, style = Type.small, color = c.muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
+            // Mochi: what Mochi is doing (like the chat screen's Mochi)
+            Mascot(Modifier.size(44.dp), mood = if (Doing.busy(now)) Mood.Thinking else Mood.Idle, label = "What Mochi is doing",
+                onTap = { DoingActivity.open(ctx) })
             RoundButton(Icons2.Home, "Mochi home", c.field, c.ink, 44.dp) {
                 ctx.startActivity(Intent(ctx, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP))
                 onBack()
@@ -248,6 +251,16 @@ private fun AgentDoingPage(name: String, agent: Agents.Agent?, tokens: Doing.Tok
     var opened by remember { mutableStateOf<Doing.StepView?>(null) }
     val list = rememberLazyListState()
     LaunchedEffect(last?.id) { if (list.firstVisibleItemIndex <= 1) list.animateScrollToItem(0) }
+    // SY (HR): her hiring board, refreshed every 10 s while it's open and right after a decision
+    val scope = rememberCoroutineScope()
+    var board by remember { mutableStateOf<Pair<List<org.json.JSONObject>, List<org.json.JSONObject>>?>(null) }
+    var boardTick by remember { mutableStateOf(0) }
+    if (agent?.hr == true) LaunchedEffect(name, boardTick) {
+        while (true) {
+            io(scope, { Agents.board(ctx) }) { board = it }
+            delay(10_000)
+        }
+    }
     LazyColumn(Modifier.fillMaxSize(), state = list, contentPadding = PaddingValues(Space.l),
         verticalArrangement = Arrangement.spacedBy(Space.s)) {
         item("who") {
@@ -265,6 +278,15 @@ private fun AgentDoingPage(name: String, agent: Agents.Agent?, tokens: Doing.Tok
                     if (tokens != null && tokens.total > 0) Text("Today: ${Doing.fmt(tokens.total)} tokens",
                         style = Type.small, color = c.muted)
                 }
+                if (agent != null) RoundButton(Icons2.Chat, "Chat with ${agent.display}", c.field, c.ink, 44.dp) {
+                    ChatActivity.openAgent(ctx, agent.name)
+                }
+            }
+        }
+        board?.let { (waiting, history) ->
+            item("board") { HiringBoard(waiting, history) { scope.launch { delay(1_500); boardTick++ } } }
+            item("board-jobs") {
+                Text("SY's work", style = Type.title, color = c.ink, modifier = Modifier.padding(top = Space.m))
             }
         }
         if (tasks.isEmpty()) item("empty") {
@@ -307,8 +329,8 @@ private fun ProfileSheet(a: Agents.Agent, tokens: Doing.Tokens?, onClose: () -> 
                 }
             }
             Row(horizontalArrangement = Arrangement.spacedBy(Space.s)) {
-                Pill("Ask ${a.display}", true, Modifier.weight(1f)) {
-                    MainActivity.openChat(ctx, new = true, text = "Ask ${a.display} to ")
+                Pill("Chat with ${a.display}", true, Modifier.weight(1f)) {
+                    ChatActivity.openAgent(ctx, a.name)
                     onClose()
                 }
                 Pill("What ${a.display} is doing", false, Modifier.weight(1f), onClick = onDoing)

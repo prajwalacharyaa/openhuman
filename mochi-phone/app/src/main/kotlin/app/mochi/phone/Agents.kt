@@ -3,6 +3,8 @@ package app.mochi.phone
 import android.content.Context
 import androidx.compose.ui.graphics.Color
 import app.mochi.phone.ui.AgentLook
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
 
 /**
@@ -14,8 +16,10 @@ object Agents {
     data class Agent(
         val name: String, val display: String, val role: String, val color: Color, val accessory: String,
         val description: String, val model: String, val skills: List<String>, val notes: String,
+        val isHr: Boolean = false,
     ) {
         val look get() = AgentLook(color, accessory)
+        val hr get() = isHr
         val who get() = "Helper: $name"
     }
 
@@ -29,7 +33,7 @@ object Agents {
             val skills = a.optJSONArray("skills")
             Agent(name, a.optString("display").ifBlank { name.replaceFirstChar { it.uppercase() } }, a.optString("role"),
                 color(a.optString("color")), a.optString("accessory"), a.optString("description"), a.optString("model"),
-                (0 until (skills?.length() ?: 0)).map { skills!!.optString(it) }, a.optString("notes"))
+                (0 until (skills?.length() ?: 0)).map { skills!!.optString(it) }, a.optString("notes"), a.optBoolean("hr"))
         }
     }
 
@@ -59,6 +63,31 @@ object Agents {
     }
 
     fun who(name: String) = "Helper: $name"
+
+    /** SY's hiring board: proposals waiting for December, and recent decisions. Blocking. */
+    fun board(c: Context): Pair<List<JSONObject>, List<JSONObject>> {
+        val o = Doing.get(c, "/hiring")
+        fun list(key: String) = o.optJSONArray(key)?.let { a -> (0 until a.length()).mapNotNull { a.optJSONObject(it) } }.orEmpty()
+        return list("waiting") to list("history")
+    }
+
+    /** December's decision on a proposal: "approve", "reject" or "remarks" (with [text]). Blocking. */
+    fun decide(c: Context, id: String, action: String, text: String = "") {
+        val body = JSONObject().put("action", action).put("text", text).toString()
+            .toRequestBody("application/json".toMediaType())
+        val req = okhttp3.Request.Builder().url("${Mochi.ringUrl(c)}/hiring/$id")
+            .header("Authorization", "Bearer ${Mochi.token(c)}").post(body).build()
+        Mochi.http.newCall(req).execute().use { r ->
+            if (!r.isSuccessful) throw IllegalStateException(
+                runCatching { JSONObject(r.body?.string() ?: "").optString("error") }.getOrNull()?.ifBlank { null } ?: "HTTP ${r.code}")
+        }
+    }
+
+    /** The newest chat with [name], if December has one. Blocking. */
+    fun latestChat(c: Context, name: String): String? =
+        Mochi.threads(c).firstOrNull { Mochi.agentOf(it) == name }?.optString("id")?.takeIf { it.isNotBlank() }
+
+    fun find(c: Context, name: String?): Agent? = name?.let { n -> cached(c).firstOrNull { it.name == n } }
 
     /** The agent's latest step or line, if it has one in the feed. */
     fun latest(name: String): Doing.Event? =
