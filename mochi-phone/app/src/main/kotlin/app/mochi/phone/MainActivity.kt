@@ -779,7 +779,7 @@ private fun MemoryScreen(onBack: () -> Unit) {
             confirmButton = { TextButton({
                 teach = false
                 if (text.isNotBlank()) io(scope, { Mochi.learn(ctx, text.trim()) }, { error = "Couldn't save: ${it.message}" }) {
-                    tab = "learning"; restart()
+                    scope.launch { pager.animateScrollToPage(0) }; restart()
                 }
             }) { Text("Save") } },
             dismissButton = { TextButton({ teach = false }) { Text("Cancel") } })
