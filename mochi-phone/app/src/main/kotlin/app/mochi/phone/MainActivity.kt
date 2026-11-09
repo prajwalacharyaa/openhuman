@@ -542,7 +542,8 @@ private fun SelectionBar(count: Int, verb: String, onAll: () -> Unit, onDelete: 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun ChatsScreen(onBack: () -> Unit) {
-    val team = remember { Agents.cached(LocalContext.current) }
+    val teamCtx = LocalContext.current
+    val team = remember { Agents.cached(teamCtx) }
     val ctx = LocalContext.current
     val c = LocalMochi.current
     val scope = rememberCoroutineScope()
