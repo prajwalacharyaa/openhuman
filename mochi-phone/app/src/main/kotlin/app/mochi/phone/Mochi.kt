@@ -140,10 +140,16 @@ object Mochi {
         runCatching { quick.newCall(req).execute().close() }
     }
 
-    /** "RAM 68%" for the screen headers; asked only while a screen is open. Blocking. */
+    /** "RAM 68% · Storage 47% (26 GB free)" for the screen headers; asked only while a screen is open. Blocking. */
     fun ramLabel(c: Context): String {
         val req = Request.Builder().url("${ringUrl(c)}/stats").header("Authorization", "Bearer ${token(c)}").build()
-        quick.newCall(req).execute().use { r -> return "RAM ${JSONObject(r.body?.string() ?: "{}").getInt("ram")}%" }
+        quick.newCall(req).execute().use { r ->
+            val o = JSONObject(r.body?.string() ?: "{}")
+            // storage too (an older server answers RAM only)
+            val disk = if (o.has("disk")) " · Storage ${o.getInt("disk")}% (${o.optDouble("disk_free_gb").let {
+                if (it >= 10) it.toInt().toString() else "%.1f".format(it) }} GB free)" else ""
+            return "RAM ${o.getInt("ram")}%$disk"
+        }
     }
 
     /** What waits for December (mochi-ring GET /approvals), newest first. Blocking. */
