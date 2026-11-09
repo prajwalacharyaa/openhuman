@@ -9,6 +9,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.background
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -123,7 +124,8 @@ class CallActivity : ComponentActivity(), Call.Listener {
         RingService.onRingStopped = null
         RingService.stopRinging(this)
         question = ""; ended = false
-        startForegroundService(Intent(this, CallService::class.java).putExtra(EXTRA_CALL, call?.toString()))
+        startForegroundService(Intent(this, CallService::class.java).putExtra(EXTRA_CALL, call?.toString())
+            .putExtra(EXTRA_AGENT, intent.getStringExtra(EXTRA_AGENT)).putExtra(EXTRA_THREAD, intent.getStringExtra(EXTRA_THREAD)))
         showControls()
     }
 
@@ -163,6 +165,7 @@ class CallActivity : ComponentActivity(), Call.Listener {
         finish()
     }
 
+    @OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
     @Composable
     private fun CallScreen() {
         val c = LocalMochi.current
@@ -172,6 +175,10 @@ class CallActivity : ComponentActivity(), Call.Listener {
         LaunchedEffect(Unit) { while (true) { delay(1_000); now = System.currentTimeMillis() } }
         LaunchedEffect(lines.size) { if (lines.isNotEmpty()) list.animateScrollToItem(lines.size - 1) }
         val last = lines.lastOrNull()
+        // who December is talking with: Mochi, or one of its agents (the face, name and voice change together)
+        val team = remember { Agents.cached(this@CallActivity) }
+        val speaker = Call.agent?.let { a -> team.firstOrNull { it.name == a } }
+        val speakerName = Call.agent?.let { Agents.display(it, team) } ?: "Mochi"
         val mood = when {
             ended || status.startsWith("Error") -> Mood.Sad
             incoming -> Mood.Surprised
@@ -190,7 +197,7 @@ class CallActivity : ComponentActivity(), Call.Listener {
                 horizontalArrangement = Arrangement.spacedBy(Space.m)) {
                 RoundButton(Icons2.Back, "Back to Home", c.field, c.ink, 44.dp) { finish() }
                 Column(Modifier.weight(1f)) {
-                    Text("Mochi", style = Type.title, color = c.ink)
+                    Text(speakerName, style = Type.title, color = c.ink)
                     Text(when {
                             Call.silent && !incoming -> "$status · silent: Mochi answers in text"
                             mood == Mood.Sleepy && !Call.frozen && !incoming -> "Listening (quiet for a while)"
@@ -200,13 +207,43 @@ class CallActivity : ComponentActivity(), Call.Listener {
                     if (Call.active && !incoming) Text("Claude ${Doing.fmt(Doing.claudeSince(Call.startedAtMs).total)}" +
                         " · Gemini ≈${Doing.fmt(Call.geminiTokens)} tokens", style = Type.small, color = c.muted, maxLines = 1)
                 }
+                // top right: on a call with an agent, Mochi; on Mochi's call, the agent working for it right now.
+                // A tap passes the phone to them; holding opens what they're doing (the call goes on)
+                val other: Pair<String?, Agents.Agent?>? = when {
+                    incoming || !Call.active -> null
+                    Call.agent != null -> null to null
+                    else -> team.firstOrNull { Agents.working(it.name, now) }?.let { it.name to it }
+                }
+                if (other != null) {
+                    val (otherName, otherAgent) = other
+                    val label = otherAgent?.display ?: "Mochi"
+                    Box(Modifier.size(52.dp).clip(CircleShape).background(c.card)
+                        .combinedClickable(role = Role.Button, enabled = !Call.switching,
+                            onClickLabel = "Pass the phone to $label", onLongClickLabel = "See what $label is doing",
+                            onClick = { Call.switchTo(otherName) },
+                            onLongClick = {
+                                if (otherName == null) DoingActivity.open(this@CallActivity)
+                                else AgentsActivity.open(this@CallActivity, otherName)
+                            }), contentAlignment = Alignment.Center) {
+                        Mascot(Modifier.size(42.dp), mood = if (otherAgent != null) Mood.Thinking else Mood.Idle,
+                            look = otherAgent?.look, label = label)
+                    }
+                }
             }
-            // Mochi (a tap opens "What Mochi is doing"), then the conversation
-            Mascot(Modifier.padding(top = Space.s).size(96.dp), mood = mood, onTap = { DoingActivity.open(this@CallActivity) })
+            // who you're talking with (a tap opens what they're doing), then the conversation
+            Mascot(Modifier.padding(top = Space.s).size(96.dp), mood = if (Call.switching) Mood.Surprised else mood,
+                look = speaker?.look, label = speakerName, onTap = {
+                    val a = Call.agent
+                    if (a == null) DoingActivity.open(this@CallActivity) else AgentsActivity.open(this@CallActivity, a)
+                })
             LazyColumn(state = list, modifier = Modifier.weight(1f).fillMaxWidth(),
                 contentPadding = PaddingValues(vertical = Space.l), verticalArrangement = Arrangement.spacedBy(Space.m)) {
                 if (incoming && question.isNotBlank()) item { Bubble(false, question, true) }
-                items(lines) { l -> Bubble(l.role == "user", l.text, l.final) }
+                items(lines) { l ->
+                    if (l.role == "system") Text(l.text, style = Type.small, color = c.muted, textAlign = TextAlign.Center,
+                        modifier = Modifier.fillMaxWidth().padding(vertical = Space.xs))
+                    else Bubble(l.role == "user", l.text, l.final)
+                }
             }
             key(tick) {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly,
@@ -273,5 +310,29 @@ class CallActivity : ComponentActivity(), Call.Listener {
         private const val SLEEPY_AFTER_MS = 25_000L
         const val EXTRA_CALL = "call"
         const val EXTRA_ANSWER = "answer"
+        /** A call with one of Mochi's agents, in its chat [EXTRA_THREAD] (see [callAgent]). */
+        const val EXTRA_AGENT = "agent"
+        const val EXTRA_THREAD = "thread"
+
+        /**
+         * Call one of Mochi's agents: on a call already, pass the phone to it; else a new call in its current chat
+         * (or a new one), in its own voice.
+         */
+        fun callAgent(c: android.content.Context, agent: String, done: (String?) -> Unit = {}) {
+            if (Call.active) {
+                Call.switchTo(agent)
+                c.startActivity(Intent(c, CallActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                return done(null)
+            }
+            Thread {
+                val thread = runCatching { Agents.callChat(c, agent) }.getOrNull()
+                android.os.Handler(android.os.Looper.getMainLooper()).post {
+                    if (thread == null) return@post done("Can't reach Mochi. Is Tailscale on?")
+                    c.startActivity(Intent(c, CallActivity::class.java).putExtra(EXTRA_ANSWER, true)
+                        .putExtra(EXTRA_AGENT, agent).putExtra(EXTRA_THREAD, thread).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                    done(null)
+                }
+            }.start()
+        }
     }
 }

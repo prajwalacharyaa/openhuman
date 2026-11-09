@@ -37,6 +37,16 @@ object PhoneActions {
             // Mochi understood "freeze" (however it was heard): the phone stops sending December's voice
             "call.freeze" -> if (Call.freezeNow()) ok("frozen: Mochi hears nothing until \"Mochi, unfreeze\" or the button")
                 else fail("no call is on")
+            // "pass the phone to Mark" / "back to Mochi": the same call continues with the other speaker
+            "call.switch" -> {
+                val to = args.optString("agent").trim().lowercase().ifBlank { null }
+                when {
+                    !Call.active -> fail("no call is on")
+                    to == Call.agent -> ok("already talking with ${to ?: "Mochi"}")
+                    Call.switchTo(to) -> ok("passing the phone to ${to ?: "Mochi"}: the other voice picks up in a few seconds")
+                    else -> fail("already passing the phone")
+                }
+            }
             else -> fail("unknown action $action")
         }
     } catch (e: SecurityException) {

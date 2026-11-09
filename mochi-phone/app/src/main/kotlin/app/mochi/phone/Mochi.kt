@@ -181,6 +181,14 @@ object Mochi {
         rpc(c, "openhuman.channel_web_chat", chat)
     }
 
+    /** A note in a conversation that no one answers (a call's recap for the next speaker). Blocking. */
+    fun appendNote(c: Context, threadId: String, text: String) {
+        val message = JSONObject().put("id", "note-" + UUID.randomUUID()).put("content", text)
+            .put("type", "text").put("extraMetadata", JSONObject().put("source", "voice")).put("sender", "user")
+            .put("createdAt", Instant.now().toString())
+        rpc(c, "openhuman.threads_message_append", JSONObject().put("thread_id", threadId).put("message", message))
+    }
+
     /** Stop the reply Mochi is writing in this conversation. */
     fun cancel(c: Context, threadId: String) {
         rpc(c, "openhuman.channel_web_cancel", JSONObject().put("client_id", CLIENT_ID).put("thread_id", threadId))

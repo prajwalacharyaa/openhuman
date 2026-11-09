@@ -45,6 +45,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
@@ -278,8 +279,16 @@ private fun AgentDoingPage(name: String, agent: Agents.Agent?, tokens: Doing.Tok
                     if (tokens != null && tokens.total > 0) Text("Today: ${Doing.fmt(tokens.total)} tokens",
                         style = Type.small, color = c.muted)
                 }
-                if (agent != null) RoundButton(Icons2.Chat, "Chat with ${agent.display}", c.field, c.ink, 44.dp) {
-                    ChatActivity.openAgent(ctx, agent.name)
+                if (agent != null) {
+                    RoundButton(Icons2.Chat, "Chat with ${agent.display}", c.field, c.ink, 44.dp) {
+                        ChatActivity.openAgent(ctx, agent.name)
+                    }
+                    // call the agent in its own voice (on a call already: pass the phone to it)
+                    RoundButton(Icons2.Phone, "Call ${agent.display}", agent.color, Color.White, 44.dp) {
+                        CallActivity.callAgent(ctx, agent.name) { err ->
+                            if (err != null) android.widget.Toast.makeText(ctx, err, android.widget.Toast.LENGTH_SHORT).show()
+                        }
+                    }
                 }
             }
         }

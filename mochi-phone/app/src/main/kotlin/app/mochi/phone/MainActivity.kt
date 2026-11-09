@@ -778,6 +778,7 @@ private fun InboxScreen(onBack: () -> Unit) {
     val ctx = LocalContext.current
     val c = LocalMochi.current
     var notices by remember { mutableStateOf(Mochi.inbox(ctx)) }
+    val team = remember { Agents.cached(ctx) }
     LaunchedEffect(Unit) { Mochi.markInboxSeen(ctx); MochiWidget.update(ctx, force = true) }
     Screen("Inbox", onBack, action = {
         if (notices.isNotEmpty()) Text("Clear", style = Type.small, color = c.muted,
@@ -795,15 +796,29 @@ private fun InboxScreen(onBack: () -> Unit) {
                 }
             }
             items(notices) { n ->
+                // a tap shows the whole notice (an agent's report can be long); "Open" goes where it's about
+                var open by remember { mutableStateOf(false) }
+                val title = n.optString("title").ifBlank { "Mochi" }
+                val agent = team.firstOrNull { title.startsWith(it.display + " ") || title.startsWith(it.display + ":") }
                 Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp)).background(c.card)
-                    .clickable { MainActivity.openChat(ctx) }.padding(Space.l),
+                    .clickable(onClickLabel = if (open) "Show less" else "Show all") { open = !open }.padding(Space.l),
                     verticalArrangement = Arrangement.spacedBy(Space.xs)) {
-                    Row {
-                        Text(n.optString("title").ifBlank { "Mochi" }, style = Type.body.copy(fontWeight = Type.strong),
-                            color = c.ink, modifier = Modifier.weight(1f))
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Space.s)) {
+                        if (agent != null) Mascot(Modifier.size(28.dp), look = agent.look, label = agent.display)
+                        Text(title, style = Type.body.copy(fontWeight = Type.strong), color = c.ink, modifier = Modifier.weight(1f))
                         Text(DateUtils.getRelativeTimeSpanString(n.optLong("at")).toString(), style = Type.small, color = c.muted)
                     }
-                    if (n.optString("body").isNotBlank()) Text(n.optString("body"), style = Type.body, color = c.ink)
+                    val body = n.optString("body")
+                    if (body.isNotBlank()) Text(body, style = Type.body, color = c.ink, maxLines = if (open) Int.MAX_VALUE else 4,
+                        overflow = TextOverflow.Ellipsis)
+                    Row(horizontalArrangement = Arrangement.spacedBy(Space.l)) {
+                        if (body.length > 220 || body.count { it == '\n' } > 3)
+                            Text(if (open) "Show less" else "Show all", style = Type.small, color = c.blueInk)
+                        Text(if (agent != null) "Open ${agent.display}" else "Open chat", style = Type.small, color = c.blueInk,
+                            modifier = Modifier.clickable(role = Role.Button) {
+                                if (agent != null) AgentsActivity.open(ctx, agent.name) else MainActivity.openChat(ctx)
+                            })
+                    }
                 }
             }
             item { Spacer(Modifier.height(Space.xl)) }

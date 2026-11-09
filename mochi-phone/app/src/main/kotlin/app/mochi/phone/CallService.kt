@@ -32,7 +32,8 @@ class CallService : Service() {
             .setOngoing(true)
             .build()
         startForeground(Mochi.NOTIFY_ONGOING, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE)
-        Call.start(this, intent?.getStringExtra(CallActivity.EXTRA_CALL)?.let(::JSONObject))
+        Call.start(this, intent?.getStringExtra(CallActivity.EXTRA_CALL)?.let(::JSONObject),
+            intent?.getStringExtra(CallActivity.EXTRA_AGENT), intent?.getStringExtra(CallActivity.EXTRA_THREAD))
         return START_NOT_STICKY
     }
 

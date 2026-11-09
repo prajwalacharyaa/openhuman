@@ -99,14 +99,25 @@ object Call {
         private set
     private val playback = LinkedBlockingQueue<ByteArray>()
 
-    /** Start a call. `mochiCall` is the ring event when answering Mochi; null when December calls. */
+    /** Who December is talking with: one of Mochi's agents ("sy"), or null for Mochi itself. */
+    @Volatile var agent: String? = null
+        private set
+    /** Passing the phone to another speaker (a few seconds): the call screen shows it. */
+    @Volatile var switching = false
+        private set
+
+    private fun voiceRequest(): Request =
+        Request.Builder().url(Mochi.voiceUrl(app) + "?token=" + URLEncoder.encode(Mochi.token(app), "UTF-8")).build()
+
+    /**
+     * Start a call. `mochiCall` is the ring event when answering Mochi; null when December calls. [withAgent]: a
+     * call with one of Mochi's agents, in its chat [agentThread] (its voice and persona; Claude works as it there).
+     */
     @Synchronized
-    fun start(c: Context, mochiCall: JSONObject?) {
+    fun start(c: Context, mochiCall: JSONObject?, withAgent: String? = null, agentThread: String? = null) {
         if (active) return
         app = c.applicationContext
-        val request = runCatching {
-            Request.Builder().url(Mochi.voiceUrl(app) + "?token=" + URLEncoder.encode(Mochi.token(app), "UTF-8")).build()
-        }.getOrElse {
+        val request = runCatching { voiceRequest() }.getOrElse {
             status("The server address isn't valid: change it on the home screen.")
             app.stopService(Intent(app, CallService::class.java))
             main.post { listener?.onEnded() }
@@ -125,7 +136,10 @@ object Call {
         heardBytes = 0
         lastSpoke = System.currentTimeMillis()
         main.post { said.clear() }
-        threadId = mochiCall?.optString("thread_id")?.takeIf { it.isNotEmpty() } ?: Mochi.callThread(app)
+        agent = withAgent?.takeIf { agentThread != null && mochiCall == null }
+        switching = false
+        threadId = if (agent != null) agentThread
+            else mochiCall?.optString("thread_id")?.takeIf { it.isNotEmpty() } ?: Mochi.callThread(app)
         playback.clear()
         val am = app.getSystemService(AudioManager::class.java)
         am.mode = AudioManager.MODE_IN_COMMUNICATION
@@ -162,6 +176,48 @@ object Call {
         }
         app.stopService(Intent(app, CallService::class.java))
         main.post { listener?.onEnded(); MochiWidget.update(app, force = true) }
+    }
+
+    /**
+     * Pass the phone: the same call continues with [target] (an agent's name, or null for Mochi) in a few seconds.
+     * The new speaker gets the last few lines of the call as a note in its chat, so "what do you think of that?"
+     * works. The microphone and speaker threads belong to the old connection and stop with it. Background thread.
+     */
+    fun switchTo(target: String?): Boolean {
+        if (!active || target == agent || switching) return false
+        switching = true
+        if (frozen) unfreeze()
+        val from = agent
+        val name = target?.let { Agents.display(it, Agents.cached(app)) } ?: "Mochi"
+        status("Passing you to $name…")
+        Thread {
+            val thread = runCatching {
+                if (target == null) Mochi.callThread(app) ?: Mochi.newThread(app)
+                else Agents.callChat(app, target)
+            }.getOrNull()
+            if (thread == null) {
+                switching = false
+                status("Couldn't pass the phone: can't reach Mochi.")
+                return@Thread
+            }
+            val recent = said.toList().filter { it.final && it.role != "system" }.takeLast(6)
+            if (recent.isNotEmpty()) runCatching {
+                val by = from?.let { Agents.display(it, Agents.cached(app)) } ?: "Mochi"
+                Mochi.appendNote(app, thread, "(December passed the call over from $by. Just said:\n" +
+                    recent.joinToString("\n") { (if (it.role == "user") "December: " else "$by: ") + it.text } + ")")
+            }
+            synchronized(this) {
+                if (!active) { switching = false; return@Thread }
+                val old = ws
+                agent = target
+                threadId = thread
+                playback.clear()
+                ws = Mochi.http.newWebSocket(voiceRequest(), Socket())
+                old?.let { runCatching { it.send("""{"type":"stop"}"""); it.close(1000, "passed the phone") } }
+            }
+            main.post { said.add(Said("system", "Now talking with $name", true)); MochiWidget.update(app, force = true) }
+        }.start()
+        return true
     }
 
     /** Back from "Mochi, freeze": the mic is sent again and Mochi says it's there. */
@@ -233,7 +289,7 @@ object Call {
     private class Socket : WebSocketListener() {
         override fun onOpen(webSocket: WebSocket, response: Response) {
             val start = JSONObject().put("type", "start").put("thread_id", threadId ?: JSONObject.NULL)
-                .put("client_id", "mochi-phone").put("input_sample_rate", RATE)
+                .put("client_id", "mochi-phone").put("input_sample_rate", RATE).put("agent", agent ?: JSONObject.NULL)
             webSocket.send(start.toString())
         }
 
@@ -242,14 +298,16 @@ object Call {
             val f = runCatching { JSONObject(text) }.getOrNull() ?: return
             when (f.optString("type")) {
                 "ready" -> {
+                    val first = !answered // a pass of the phone opens a new session: no second hello
                     answered = true
                     f.optString("thread_id").takeIf { it.isNotEmpty() && it != "null" }?.let {
                         threadId = it
-                        if (call == null) Mochi.setThread(app, it)
+                        if (call == null && agent == null) Mochi.setThread(app, it) // an agent's chat stays its own
                     }
+                    switching = false
                     startAudio(webSocket, f.optInt("output_sample_rate", 24_000).takeIf { it in 8_000..48_000 } ?: 24_000)
                     status("Listening")
-                    call?.let {
+                    call?.takeIf { first }?.let {
                         // picked up: December decides on this call, so the 3-minute fallback mustn't run meanwhile
                         Thread { runCatching { Mochi.callDone(app, it.getString("id"), "answered") } }.start()
                         val hello = if (it.optBoolean("reminder")) {

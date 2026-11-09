@@ -87,6 +87,18 @@ object Agents {
     fun latestChat(c: Context, name: String): String? =
         Mochi.threads(c).firstOrNull { Mochi.agentOf(it) == name }?.optString("id")?.takeIf { it.isNotBlank() }
 
+    /**
+     * The chat a call with [name] continues: its newest chat if it was used in the last 30 minutes or the agent is
+     * working now (SY's Hiring chat while she works), else a new one. Blocking.
+     */
+    fun callChat(c: Context, name: String): String {
+        val latest = Mochi.threads(c).firstOrNull { Mochi.agentOf(it) == name }
+        val recent = latest?.optString("lastMessageAt")?.let {
+            runCatching { System.currentTimeMillis() - java.time.Instant.parse(it).toEpochMilli() < 30 * 60_000 }.getOrNull()
+        } == true
+        return latest?.optString("id")?.takeIf { it.isNotBlank() && (recent || working(name)) } ?: Mochi.newThread(c, name)
+    }
+
     fun find(c: Context, name: String?): Agent? = name?.let { n -> cached(c).firstOrNull { it.name == n } }
 
     /** The agent's latest step or line, if it has one in the feed. */
