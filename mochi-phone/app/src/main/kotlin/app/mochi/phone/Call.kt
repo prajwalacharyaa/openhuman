@@ -102,6 +102,13 @@ object Call {
     /** Who December is talking with: one of Mochi's agents ("sy"), or null for Mochi itself. */
     @Volatile var agent: String? = null
         private set
+    /** Why the last call ended, for the call screen ("You hung up", "The connection dropped…"). */
+    @Volatile var endReason = ""
+        private set
+    /** Reconnect tries for the current drop (a call survives a network switch or a brief outage). */
+    @Volatile private var reconnects = 0
+    @Volatile private var reconnecting = false
+
     /** Passing the phone to another speaker (a few seconds): the call screen shows it. */
     @Volatile var switching = false
         private set
@@ -138,6 +145,9 @@ object Call {
         main.post { said.clear() }
         agent = withAgent?.takeIf { agentThread != null && mochiCall == null }
         switching = false
+        reconnects = 0
+        reconnecting = false
+        endReason = ""
         threadId = if (agent != null) agentThread
             else mochiCall?.optString("thread_id")?.takeIf { it.isNotEmpty() } ?: Mochi.callThread(app)
         playback.clear()
@@ -149,9 +159,35 @@ object Call {
         main.post { MochiWidget.update(app, force = true) }
     }
 
-    @Synchronized
-    fun end() {
+    /**
+     * The connection went away without December hanging up: the same call reconnects (same speaker and chat), up
+     * to three tries with growing pauses; then it ends with [why] shown. Not before the call was ever answered.
+     */
+    private fun reconnect(why: String) {
         if (!active) return
+        if (!answered || reconnects >= 3) {
+            endReason = why
+            main.post { end(why) }
+            return
+        }
+        reconnects++
+        reconnecting = true
+        status("Reconnecting… ($why)")
+        main.postDelayed({
+            synchronized(this) {
+                if (!active) return@synchronized
+                val old = ws
+                playback.clear()
+                ws = Mochi.http.newWebSocket(voiceRequest(), Socket())
+                old?.let { runCatching { it.cancel() } }
+            }
+        }, 1_500L * reconnects)
+    }
+
+    @Synchronized
+    fun end(why: String = "You hung up") {
+        if (!active) return
+        if (endReason.isEmpty()) endReason = why
         active = false
         Doing.addGeminiToday(app, geminiTokens)
         frozen = false
@@ -305,6 +341,11 @@ object Call {
                         if (call == null && agent == null) Mochi.setThread(app, it) // an agent's chat stays its own
                     }
                     switching = false
+                    if (reconnecting) {
+                        reconnecting = false
+                        reconnects = 0
+                        main.post { said.add(Said("system", "Reconnected", true)) }
+                    }
                     startAudio(webSocket, f.optInt("output_sample_rate", 24_000).takeIf { it in 8_000..48_000 } ?: 24_000)
                     status("Listening")
                     call?.takeIf { first }?.let {
@@ -364,17 +405,21 @@ object Call {
 
         override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
             if (webSocket !== ws) return
-            status(if (response?.code == 401 || response?.code == 403) "The server refused the token."
-                   else "Can't reach Mochi. Is Tailscale on?")
-            main.postDelayed({ if (ws === webSocket) end() }, 2_000)
+            if (response?.code == 401 || response?.code == 403) {
+                status("The server refused the token.")
+                main.postDelayed({ if (ws === webSocket) end("The server refused the token") }, 2_000)
+                return
+            }
+            // a network switch, Tailscale reconnecting, a brief outage: the call reconnects instead of ending
+            reconnect("the connection dropped" + (t.message?.let { ": $it" } ?: ""))
         }
 
         override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
-            if (webSocket === ws) end()
+            if (webSocket === ws) reconnect("the server closed the call ($code${if (reason.isNotBlank()) " $reason" else ""})")
         }
 
         override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
-            if (webSocket === ws) end()
+            if (webSocket === ws) reconnect("the server closed the call ($code${if (reason.isNotBlank()) " $reason" else ""})")
         }
     }
 
@@ -425,8 +470,9 @@ object Call {
             body()
         } catch (e: Exception) {
             if (ws === socket) {
-                status("Audio problem: ${e.message ?: "the microphone or speaker is busy"}")
-                end()
+                val why = "Audio problem: ${e.message ?: "the microphone or speaker is busy"}"
+                status(why)
+                end(why)
             }
         }
     }

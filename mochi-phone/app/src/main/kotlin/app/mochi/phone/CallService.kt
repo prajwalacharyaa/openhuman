@@ -15,7 +15,7 @@ class CallService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == ACTION_HANG_UP) {
-            Call.end()
+            Call.end("Hung up from the notification")
             stopSelf()
             return START_NOT_STICKY
         }

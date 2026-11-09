@@ -48,7 +48,7 @@ class ConfirmActivity : Activity() {
 
     private fun call(number: String, name: String) = try {
         if (checkSelfPermission(Manifest.permission.CALL_PHONE) == PackageManager.PERMISSION_GRANTED) {
-            if (Call.active) Call.end() // the Mochi call gives way to the real one
+            if (Call.active) Call.end("A phone call took over") // the Mochi call gives way to the real one
             val call = Intent(Intent.ACTION_CALL, Uri.parse("tel:$number"))
             PhoneActions.simHandle(this, intent.getIntExtra(EXTRA_SIM, 0))
                 ?.let { call.putExtra(android.telecom.TelecomManager.EXTRA_PHONE_ACCOUNT_HANDLE, it) }

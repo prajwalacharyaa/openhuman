@@ -512,6 +512,46 @@ private fun Screen(title: String, onBack: () -> Unit, action: (@Composable () ->
     }
 }
 
+/** Files December attached in chats: newest first, the chat they came from; tap opens it, swipe deletes the file. */
+@Composable
+private fun UploadsPage(snack: SnackbarHostState) {
+    val ctx = LocalContext.current
+    val c = LocalMochi.current
+    val scope = rememberCoroutineScope()
+    val items = remember { mutableStateListOf<JSONObject>() }
+    var loading by remember { mutableStateOf(true) }
+    var error by remember { mutableStateOf("") }
+    LaunchedEffect(Unit) {
+        io(scope, { Mochi.uploads(ctx) }, { loading = false; error = "Can't reach Mochi. (${it.message})" }) {
+            loading = false; items.clear(); items.addAll(it)
+        }
+    }
+    fun remove(l: List<JSONObject>) = deleteWithUndo(scope, snack, if (l.size == 1) "File deleted" else "${l.size} files deleted", l,
+        hide = { x -> items.removeAll { m -> x.any { it.optString("id") == m.optString("id") } } },
+        restore = { items.addAll(0, it) },
+        delete = { x -> Mochi.deleteUploads(ctx, x.map { it.optString("id") }) },
+        failed = { error = "Couldn't delete: ${it.message}" })
+    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(Space.l), verticalArrangement = Arrangement.spacedBy(Space.s)) {
+        if (error.isNotEmpty()) item { Text(error, style = Type.small, color = c.danger) }
+        if (loading) item { Text("Loading…", style = Type.small, color = c.muted) }
+        else if (items.isEmpty()) item { Text("No uploads.", style = Type.body, color = c.muted) }
+        items(items, key = { it.optString("id") }) { u ->
+            SwipeRow(false, false, "Delete", onDelete = { remove(listOf(u)) }, onToggle = {},
+                onOpen = { MainActivity.openChat(ctx, u.optString("chat")) }) {
+                Column(verticalArrangement = Arrangement.spacedBy(Space.xs)) {
+                    Text(u.optString("name"), style = Type.body.copy(fontWeight = Type.strong), color = c.ink, maxLines = 1,
+                        overflow = TextOverflow.Ellipsis)
+                    val kb = u.optLong("size") / 1024
+                    Text(listOf(if (kb >= 1024) "%.1f MB".format(kb / 1024.0) else "$kb KB",
+                        DateUtils.getRelativeTimeSpanString(u.optLong("at") * 1000).toString(),
+                        u.optString("title").ifBlank { "a chat" }).joinToString(" · "), style = Type.small, color = c.muted,
+                        maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
+            }
+        }
+    }
+}
+
 /** Removes [items] from view now and deletes them after a few seconds unless Undo is tapped. */
 private fun <T> deleteWithUndo(scope: kotlinx.coroutines.CoroutineScope, snack: SnackbarHostState, label: String,
                                items: List<T>, hide: (List<T>) -> Unit, restore: (List<T>) -> Unit,
@@ -625,7 +665,9 @@ private fun MemoryScreen(onBack: () -> Unit) {
     val c = LocalMochi.current
     val scope = rememberCoroutineScope()
     val snack = remember { SnackbarHostState() }
-    var tab by remember { mutableStateOf("learning") }
+    // three pages you can swipe between: what Mochi knows, the conversation log, and uploaded files
+    val pager = androidx.compose.foundation.pager.rememberPagerState { 3 }
+    val tab = if (pager.currentPage == 1) "conversation" else "learning"
     var query by remember { mutableStateOf("") }
     val items = remember { mutableStateListOf<JSONObject>() }
     var cursor by remember { mutableStateOf<String?>(null) }
@@ -678,22 +720,27 @@ private fun MemoryScreen(onBack: () -> Unit) {
                 { confirm = true }, { selected = emptySet() })
             else Column(Modifier.padding(horizontal = Space.l), verticalArrangement = Arrangement.spacedBy(Space.s)) {
                 Row(horizontalArrangement = Arrangement.spacedBy(Space.s)) {
-                    for ((key, label) in listOf("learning" to "What Mochi knows", "conversation" to "Conversation log")) {
-                        val on = tab == key
+                    listOf("What Mochi knows", "Conversations", "Uploads").forEachIndexed { i, label ->
+                        val on = pager.currentPage == i
                         Box(Modifier.height(36.dp).clip(RoundedCornerShape(18.dp)).background(if (on) c.ink else c.field)
-                            .clickable(role = Role.Tab) { tab = key }.padding(horizontal = 14.dp),
+                            .clickable(role = Role.Tab) { scope.launch { pager.animateScrollToPage(i) } }.padding(horizontal = 12.dp),
                             contentAlignment = Alignment.Center) {
                             Text(label, style = Type.small.copy(fontWeight = if (on) Type.strong else null),
-                                color = if (on) c.bg else c.ink)
+                                color = if (on) c.bg else c.ink, maxLines = 1)
                         }
                     }
                 }
-                Field(query, { query = it }, "Search what Mochi remembers", Modifier.fillMaxWidth(), singleLine = true)
-                Text(if (tab == "learning") "Facts and preferences Mochi keeps about you. Wrong or outdated? Swipe it away."
-                    else "Every chat and call turn Mochi logged. Long-term: Mochi searches these before answering.",
-                    style = Type.small, color = c.muted)
+                if (pager.currentPage < 2) Field(query, { query = it }, "Search what Mochi remembers", Modifier.fillMaxWidth(), singleLine = true)
+                Text(when (pager.currentPage) {
+                    0 -> "Facts and preferences Mochi keeps about you. Wrong or outdated? Swipe it away."
+                    1 -> "Every chat and call turn Mochi logged. Long-term: Mochi searches these before answering."
+                    else -> "Files you attached in chats. Deleting a chat deletes its files too; swipe one away to delete it now."
+                }, style = Type.small, color = c.muted)
             }
             if (error.isNotEmpty()) Text(error, style = Type.small, color = c.danger, modifier = Modifier.padding(horizontal = Space.l))
+            androidx.compose.foundation.pager.HorizontalPager(pager, Modifier.fillMaxSize()) { page ->
+            if (page == 2) { UploadsPage(snack); return@HorizontalPager }
+            if (page != pager.currentPage) { Box(Modifier.fillMaxSize()); return@HorizontalPager }
             LazyColumn(state = list, contentPadding = PaddingValues(Space.l), verticalArrangement = Arrangement.spacedBy(Space.s)) {
                 if (items.isEmpty() && !loading && end) item { Text("Nothing here.", style = Type.body, color = c.muted) }
                 items(items, key = { it.optString("id") }) { m ->
@@ -710,6 +757,7 @@ private fun MemoryScreen(onBack: () -> Unit) {
                     }
                 }
                 if (loading) item { Text("Loading…", style = Type.small, color = c.muted) }
+            }
             }
         }
         SnackbarHost(snack, Modifier.align(Alignment.BottomCenter).systemBarsPadding())

@@ -9,6 +9,7 @@ import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
+import okio.buffer
 import org.json.JSONArray
 import org.json.JSONObject
 import java.time.Instant
@@ -79,16 +80,64 @@ object Mochi {
     fun ringUrl(c: Context) = "https://${host(c)}:8448"
 
     /** One JSON-RPC call to the core; returns `result` or throws. Blocking: call off the main thread. */
-    fun rpc(c: Context, method: String, params: JSONObject): JSONObject {
+    fun rpc(c: Context, method: String, params: JSONObject, progress: ((Float) -> Unit)? = null): JSONObject {
         val body = JSONObject().put("jsonrpc", "2.0").put("id", 1).put("method", method).put("params", params)
+        val payload = body.toString().toRequestBody(JSON)
         val req = Request.Builder().url("https://${host(c)}:8446/rpc")
             .header("Authorization", "Bearer ${token(c)}")
-            .post(body.toString().toRequestBody(JSON)).build()
-        quick.newCall(req).execute().use { r ->
+            .post(if (progress != null) Counted(payload, progress) else payload).build()
+        // an upload can take longer than a quick request's 20 s
+        (if (progress != null) http else quick).newCall(req).execute().use { r ->
             val reply = JSONObject(r.body?.string() ?: "{}")
             reply.optJSONObject("error")?.let { throw IllegalStateException(it.optString("message")) }
             return reply.optJSONObject("result") ?: JSONObject()
         }
+    }
+
+    /** A request body that reports how much of it has been sent (0..1), for upload progress. */
+    private class Counted(private val inner: okhttp3.RequestBody, private val onProgress: (Float) -> Unit) :
+        okhttp3.RequestBody() {
+        override fun contentType() = inner.contentType()
+        override fun contentLength() = inner.contentLength()
+        override fun writeTo(sink: okio.BufferedSink) {
+            val total = contentLength().coerceAtLeast(1)
+            var sent = 0L
+            var shown = -1
+            val counting = object : okio.ForwardingSink(sink) {
+                override fun write(source: okio.Buffer, byteCount: Long) {
+                    super.write(source, byteCount)
+                    sent += byteCount
+                    val pct = (sent * 100 / total).toInt()
+                    if (pct != shown) { shown = pct; onProgress(sent.toFloat() / total) }
+                }
+            }
+            val buffered = counting.buffer()
+            inner.writeTo(buffered)
+            buffered.flush()
+        }
+    }
+
+    /** Files December attached in chats, newest first: {id, chat, title, name, size, at}. Blocking. */
+    fun uploads(c: Context): List<JSONObject> {
+        val req = Request.Builder().url("${ringUrl(c)}/uploads").header("Authorization", "Bearer ${token(c)}").build()
+        quick.newCall(req).execute().use { r ->
+            val arr = JSONObject(r.body?.string() ?: "{}").optJSONArray("uploads") ?: JSONArray()
+            return (0 until arr.length()).mapNotNull { arr.optJSONObject(it) }
+        }
+    }
+
+    /** Delete uploads (by id "<chat>/<id>"): the server removes the files within seconds. Blocking. */
+    fun deleteUploads(c: Context, ids: List<String>) {
+        val body = JSONObject().put("ids", JSONArray(ids)).toString().toRequestBody(JSON)
+        val req = Request.Builder().url("${ringUrl(c)}/uploads/delete").header("Authorization", "Bearer ${token(c)}")
+            .post(body).build()
+        quick.newCall(req).execute().use { r -> if (!r.isSuccessful) throw IllegalStateException("HTTP ${r.code}") }
+    }
+
+    /** The app has this chat open: a decision asked in it keeps waiting for December (mochi-ring). Blocking. */
+    fun presence(c: Context, threadId: String) {
+        val req = Request.Builder().url("${ringUrl(c)}/presence/$threadId").header("Authorization", "Bearer ${token(c)}").build()
+        runCatching { quick.newCall(req).execute().close() }
     }
 
     /** "RAM 68%" for the screen headers; asked only while a screen is open. Blocking. */
@@ -165,13 +214,14 @@ object Mochi {
      * Send a typed message, exactly like the desktop chat: Claude answers it in the thread. `followup`: wait for
      * a turn Claude is still working on instead of cancelling it.
      */
-    fun send(c: Context, threadId: String, text: String, followup: Boolean = false, model: String? = null) {
+    fun send(c: Context, threadId: String, text: String, followup: Boolean = false, model: String? = null,
+             progress: ((Float) -> Unit)? = null) {
         val message = JSONObject().put("id", "phone-" + UUID.randomUUID()).put("content", text)
             .put("type", "text").put("extraMetadata", JSONObject()).put("sender", "user")
             .put("createdAt", Instant.now().toString())
         // the append saves any attachment originals and hands back the compact text the turn should use
         val saved = data(rpc(c, "openhuman.threads_message_append",
-            JSONObject().put("thread_id", threadId).put("message", message)))
+            JSONObject().put("thread_id", threadId).put("message", message), progress))
         val compact = saved.optJSONObject("message")?.optString("content")?.takeIf { it.isNotBlank() }
             ?: saved.optString("content").takeIf { it.isNotBlank() } ?: text
         if (threadId == thread(c)) touchThread(c)

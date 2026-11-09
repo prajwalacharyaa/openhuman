@@ -303,7 +303,7 @@ object PhoneActions {
         // end a Mochi call here first (it holds the audio), then let Telecom place the call; that isn't an activity
         // launch, so Android can't silently block it from the background
         if (Call.active) {
-            android.os.Handler(android.os.Looper.getMainLooper()).post { if (Call.active) Call.end() }
+            android.os.Handler(android.os.Looper.getMainLooper()).post { if (Call.active) Call.end("A phone call took over") }
             Thread.sleep(400)
         }
         val extras = android.os.Bundle()

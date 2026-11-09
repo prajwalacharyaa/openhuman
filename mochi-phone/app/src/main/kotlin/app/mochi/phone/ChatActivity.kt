@@ -153,6 +153,10 @@ fun ChatScreen(initialThread: String?, newChat: Boolean, initialText: String?, s
     var status by remember { mutableStateOf("") }
     var live by remember { mutableStateOf<Live?>(null) }
     var attachMenu by remember { mutableStateOf(false) }
+    // a file being read from the phone (preparing) or sent to the server (0..1); null when nothing is going
+    var preparing by remember { mutableStateOf(0) }
+    var uploading by remember { mutableStateOf<Float?>(null) }
+    var uploadNames by remember { mutableStateOf("") }
     val list = rememberLazyListState()
     // the call state isn't Compose state: look again every second (for the Call / Silent button)
     var onThisCall by remember { mutableStateOf(false) }
@@ -186,9 +190,16 @@ fun ChatScreen(initialThread: String?, newChat: Boolean, initialText: String?, s
         val sending = files.toList()
         files.clear()
         busy = true; streaming = ""; steps.clear(); status = ""
+        // files: show how much is uploaded (a photo or a PDF can take a while on mobile data)
+        if (sending.isNotEmpty()) { uploadNames = sending.joinToString(", ") { it.name }; uploading = 0f }
+        val main = android.os.Handler(android.os.Looper.getMainLooper())
+        val onProgress: ((Float) -> Unit)? = if (sending.isEmpty()) null else { p -> main.post { uploading = p } }
         // an agent's chat runs on the agent's own model (quick / deep words still switch it)
-        io(scope, { Mochi.send(ctx, id, body, model = if (agent != null) null else Mochi.modelFor(mode)) },
-            { busy = false; files.addAll(sending); status = "Not sent: can't reach Mochi. (${it.message})" }) { reload() }
+        io(scope, { Mochi.send(ctx, id, body, model = if (agent != null) null else Mochi.modelFor(mode), progress = onProgress) },
+            { busy = false; uploading = null; files.addAll(sending); status = "Not sent: can't reach Mochi. (${it.message})" }) {
+            uploading = null
+            reload()
+        }
     }
 
     // start or open the conversation
@@ -246,6 +257,14 @@ fun ChatScreen(initialThread: String?, newChat: Boolean, initialText: String?, s
         }
         onDispose { l?.close() }
     }
+    // the app has this chat open: a decision Mochi asks in it keeps waiting for December (not auto-chosen)
+    LaunchedEffect(thread) {
+        val id = thread ?: return@LaunchedEffect
+        while (true) {
+            io(scope, { Mochi.presence(ctx, id) }) {}
+            delay(15_000)
+        }
+    }
     LaunchedEffect(thread) {
         while (true) {
             delay(if (live?.connected == true) 20_000 else 6_000)
@@ -258,11 +277,18 @@ fun ChatScreen(initialThread: String?, newChat: Boolean, initialText: String?, s
     }
 
     val pickMedia = rememberLauncherForActivityResult(ActivityResultContracts.PickMultipleVisualMedia(4)) { uris ->
-        uris.forEach { u -> io(scope, { Attachments.load(ctx, u) }) { a -> if (a != null && files.size < 4) files.add(a) } }
+        uris.forEach { u ->
+            preparing++
+            io(scope, { Attachments.load(ctx, u) }, { preparing-- }) { a -> preparing--; if (a != null && files.size < 4) files.add(a) }
+        }
     }
     val pickFile = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { u ->
-        if (u != null) io(scope, { Attachments.load(ctx, u) }) { a ->
-            if (a != null) files.add(a) else status = "That file type or size isn't supported."
+        if (u != null) {
+            preparing++
+            io(scope, { Attachments.load(ctx, u) }, { preparing--; status = "Couldn't read that file." }) { a ->
+                preparing--
+                if (a != null) files.add(a) else status = "That file type or size isn't supported."
+            }
         }
     }
 
@@ -317,6 +343,17 @@ fun ChatScreen(initialThread: String?, newChat: Boolean, initialText: String?, s
         // composer: attachments, mode, field, send / stop (all in thumb reach)
         Column(Modifier.fillMaxWidth().padding(horizontal = Space.l, vertical = Space.s),
             verticalArrangement = Arrangement.spacedBy(Space.s)) {
+            // a file on its way: getting it ready on the phone, then a bar with how much is sent
+            val up = uploading
+            if (preparing > 0 || up != null) Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(c.card)
+                .padding(horizontal = Space.m, vertical = Space.s), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text(if (up != null) (if (up < 1f) "Uploading $uploadNames… ${(up * 100).toInt()}%" else "Uploaded: Mochi is reading it")
+                    else "Getting the file ready…", style = Type.small, color = c.ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                if (up != null && up < 1f) androidx.compose.material3.LinearProgressIndicator(progress = { up },
+                    modifier = Modifier.fillMaxWidth().height(4.dp).clip(RoundedCornerShape(2.dp)), color = c.blueInk, trackColor = c.field)
+                else androidx.compose.material3.LinearProgressIndicator(modifier = Modifier.fillMaxWidth().height(4.dp)
+                    .clip(RoundedCornerShape(2.dp)), color = c.blueInk, trackColor = c.field)
+            }
             if (files.isNotEmpty()) LazyRow(horizontalArrangement = Arrangement.spacedBy(Space.s)) {
                 items(files.toList()) { a -> AttachmentChip(a) { files.remove(a) } }
             }

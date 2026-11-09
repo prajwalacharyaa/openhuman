@@ -155,9 +155,12 @@ class CallActivity : ComponentActivity(), Call.Listener {
     override fun onTranscript(role: String, text: String, final: Boolean) = Unit
 
     override fun onEnded() {
-        status = "Call ended"
+        // why it ended stays on screen a moment longer when December didn't hang up themselves
+        val why = Call.endReason
+        val byDecember = why.isBlank() || why == "You hung up" || why.startsWith("Hung up")
+        status = if (byDecember) "Call ended" else "Call ended: $why"
         ended = true
-        window.decorView.postDelayed({ finish() }, 1_200)
+        window.decorView.postDelayed({ finish() }, if (byDecember) 1_200 else 5_000)
     }
 
     private fun decline() {
