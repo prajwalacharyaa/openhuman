@@ -90,6 +90,7 @@ import app.mochi.phone.ui.Space
 import app.mochi.phone.ui.Tile
 import app.mochi.phone.ui.Type
 import app.mochi.phone.ui.io
+import app.mochi.phone.ui.WhileVisible
 import kotlinx.coroutines.delay
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import org.json.JSONObject
@@ -220,10 +221,11 @@ private fun HomeScreen(go: (String) -> Unit) {
     var tokens by remember { mutableStateOf<Map<String, Doing.Tokens>>(emptyMap()) }
     var team by remember { mutableStateOf(Agents.cached(ctx)) }
     var hiringWaiting by remember { mutableIntStateOf(0) }
-    LaunchedEffect(Unit) {
-        io(scope, { Doing.backfill(ctx) }) {}
+    LaunchedEffect(Unit) { io(scope, { Doing.backfill(ctx) }) {} }
+    WhileVisible {
         while (true) { onCall = Call.active; muted = Call.muted || Call.frozen; now = System.currentTimeMillis(); delay(1_000) }
     }
+    var updateCheckedAt by remember { mutableLongStateOf(0L) }
 
     fun refresh() {
         if (!Mochi.configured(ctx)) return
@@ -236,9 +238,13 @@ private fun HomeScreen(go: (String) -> Unit) {
         notice = Mochi.inbox(ctx).firstOrNull()
         unread = Mochi.unreadInbox(ctx)
         fixList = fixes(ctx)
-        if (updating < 0) io(scope, { Updater.available(ctx) }) { update = it }
+        // a new app version is rare: look every 30 min, not on every refresh
+        if (updating < 0 && System.currentTimeMillis() - updateCheckedAt > 30 * 60_000L) {
+            updateCheckedAt = System.currentTimeMillis()
+            io(scope, { Updater.available(ctx) }) { update = it }
+        }
     }
-    LaunchedEffect(configured) {
+    WhileVisible(configured) {
         while (true) { refresh(); delay(10_000) }
     }
     val pick = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { u ->

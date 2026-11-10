@@ -82,6 +82,7 @@ import app.mochi.phone.ui.RoundButton
 import app.mochi.phone.ui.Space
 import app.mochi.phone.ui.Type
 import app.mochi.phone.ui.io
+import app.mochi.phone.ui.WhileVisible
 import kotlinx.coroutines.delay
 import kotlin.math.PI
 import kotlin.math.cos
@@ -157,8 +158,8 @@ private fun DoingScreen(onBack: () -> Unit) {
     var opened by remember { mutableStateOf<Doing.StepView?>(null) }
     var callTapAt by remember { mutableLongStateOf(0L) }
     val list = rememberLazyListState()
-    LaunchedEffect(Unit) {
-        io(scope, { Doing.backfill(ctx) }) {}
+    LaunchedEffect(Unit) { io(scope, { Doing.backfill(ctx) }) {} }
+    WhileVisible {
         var tick = 0
         while (true) {
             if (tick++ % 15 == 0) io(scope, { Doing.today(ctx) }) { today = it }

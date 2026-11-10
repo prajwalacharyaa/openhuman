@@ -66,6 +66,7 @@ import app.mochi.phone.ui.Space
 import app.mochi.phone.ui.StopButton
 import app.mochi.phone.ui.Type
 import app.mochi.phone.ui.io
+import app.mochi.phone.ui.WhileVisible
 import kotlinx.coroutines.delay
 import org.json.JSONObject
 
@@ -163,7 +164,7 @@ fun ChatScreen(initialThread: String?, newChat: Boolean, initialText: String?, s
     // the call state isn't Compose state: look again every second (for the Call / Silent button)
     var onThisCall by remember { mutableStateOf(false) }
     var silent by remember { mutableStateOf(Call.silent) }
-    LaunchedEffect(thread) {
+    WhileVisible(thread) {
         while (true) {
             onThisCall = Call.active && thread != null && Call.thread == thread
             silent = Call.silent
@@ -260,16 +261,18 @@ fun ChatScreen(initialThread: String?, newChat: Boolean, initialText: String?, s
         onDispose { l?.close() }
     }
     // the app has this chat open: a decision Mochi asks in it keeps waiting for December (not auto-chosen)
-    LaunchedEffect(thread) {
-        val id = thread ?: return@LaunchedEffect
+    // (only while the chat is on screen: in the background it isn't "open")
+    WhileVisible(thread) {
+        val id = thread ?: return@WhileVisible
         while (true) {
             io(scope, { Mochi.presence(ctx, id) }) {}
             delay(15_000)
         }
     }
-    LaunchedEffect(thread) {
+    WhileVisible(thread) {
         while (true) {
-            delay(if (live?.connected == true) 20_000 else 6_000)
+            // live replies stream in; the reload only catches what doesn't (voice lines, other devices)
+            delay(if (live?.connected == true) 30_000 else 6_000)
             if (!busy || live?.connected != true) reload()
         }
     }

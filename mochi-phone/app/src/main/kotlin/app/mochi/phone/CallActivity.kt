@@ -57,6 +57,7 @@ import androidx.compose.ui.semantics.semantics
 import app.mochi.phone.ui.Icons2
 import app.mochi.phone.ui.RoundButton
 import app.mochi.phone.ui.LineIcon
+import app.mochi.phone.ui.WhileVisible
 import kotlinx.coroutines.delay
 import org.json.JSONObject
 
@@ -175,7 +176,7 @@ class CallActivity : ComponentActivity(), Call.Listener {
         val list = rememberLazyListState()
         val lines = Call.said
         var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
-        LaunchedEffect(Unit) { while (true) { delay(1_000); now = System.currentTimeMillis() } }
+        WhileVisible { while (true) { delay(1_000); now = System.currentTimeMillis() } }
         LaunchedEffect(lines.size) { if (lines.isNotEmpty()) list.animateScrollToItem(lines.size - 1) }
         val last = lines.lastOrNull()
         // who December is talking with: Mochi, or one of its agents (the face, name and voice change together)

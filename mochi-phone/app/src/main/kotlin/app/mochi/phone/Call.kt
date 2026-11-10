@@ -43,6 +43,9 @@ object Call {
     /** Muted or frozen: this much silence (1 s) tells Gemini December stopped talking; after it nothing is sent,
      *  since Gemini bills streamed audio by the second, silence included. */
     private const val QUIET_FRAMES = 10
+    /** While muted / frozen, one silent frame this often keeps the call open: Gemini closes a session after ~2 min
+     *  with no audio ("client inactivity"). 100 ms per 20 s = 0.5% of the time billed. */
+    private const val KEEPALIVE_FRAMES = 200
     private val main = Handler(Looper.getMainLooper())
 
     var listener: Listener? = null
@@ -108,6 +111,8 @@ object Call {
     /** Reconnect tries for the current drop (a call survives a network switch or a brief outage). */
     @Volatile private var reconnects = 0
     @Volatile private var reconnecting = false
+    /** The socket a reconnect was already started for. */
+    @Volatile private var dropped: WebSocket? = null
 
     /** Passing the phone to another speaker (a few seconds): the call screen shows it. */
     @Volatile var switching = false
@@ -163,8 +168,10 @@ object Call {
      * The connection went away without December hanging up: the same call reconnects (same speaker and chat), up
      * to three tries with growing pauses; then it ends with [why] shown. Not before the call was ever answered.
      */
-    private fun reconnect(why: String) {
+    private fun reconnect(why: String, from: WebSocket? = ws) {
         if (!active) return
+        // one socket going away reports it more than once (error frame, closed frame, onClosing, onClosed)
+        synchronized(this) { if (from != null && from === dropped) return; dropped = from }
         if (!answered || reconnects >= 3) {
             endReason = why
             main.post { end(why) }
@@ -393,8 +400,14 @@ object Call {
                 }
                 "tool_finished", "turn_complete" -> if (!frozen) status("Listening")
                 "interrupted" -> { playback.clear(); flushPlayback = true }
-                "error" -> { status("Error: ${f.optString("message")}"); if (f.optBoolean("fatal")) end() }
-                "closed" -> end()
+                // Gemini dropping its session (inactivity, its own time limit, a hiccup) isn't December hanging
+                // up: the same call reconnects, like a dropped connection
+                "error" -> {
+                    status("Error: ${f.optString("message")}")
+                    if (f.optBoolean("fatal")) reconnect("the voice service closed: ${f.optString("message")}", webSocket)
+                }
+                "closed" -> if (f.optString("reason") == "client") end()
+                    else reconnect("the voice service closed the call (${f.optString("reason")})", webSocket)
             }
         }
 
@@ -496,10 +509,11 @@ object Call {
         val silence = ByteArray(FRAME_BYTES)
         var quietSent = 0 // silent frames sent since the mute / freeze began
         fun quiet() {
-            if (quietSent >= QUIET_FRAMES) return
+            quietSent++
+            // the first second tells Gemini December stopped; then one frame every 20 s so the session isn't dropped
+            if (quietSent > QUIET_FRAMES && (quietSent - QUIET_FRAMES) % KEEPALIVE_FRAMES != 0) return
             socket.send(silence.toByteString())
             sentBytes += silence.size
-            quietSent++
         }
         try {
             rec.startRecording()

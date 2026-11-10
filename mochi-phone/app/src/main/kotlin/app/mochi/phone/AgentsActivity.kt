@@ -64,6 +64,7 @@ import app.mochi.phone.ui.RoundButton
 import app.mochi.phone.ui.Space
 import app.mochi.phone.ui.Type
 import app.mochi.phone.ui.io
+import app.mochi.phone.ui.WhileVisible
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -115,8 +116,8 @@ private fun AgentsScreen(requested: Pair<String, Long>?, onBack: () -> Unit) {
         ?: agents.firstOrNull()?.name) }
     var profile by remember { mutableStateOf<Agents.Agent?>(null) }
     val pager = rememberPagerState(initialPage = if (requested != null) 1 else 0) { 2 }
-    LaunchedEffect(Unit) {
-        io(scope, { Doing.backfill(ctx) }) {}
+    LaunchedEffect(Unit) { io(scope, { Doing.backfill(ctx) }) {} }
+    WhileVisible {
         var tick = 0
         while (true) {
             if (tick++ % 15 == 0) {
@@ -258,7 +259,7 @@ private fun AgentDoingPage(name: String, agent: Agents.Agent?, tokens: Doing.Tok
     val scope = rememberCoroutineScope()
     var board by remember { mutableStateOf<Pair<List<org.json.JSONObject>, List<org.json.JSONObject>>?>(null) }
     var boardTick by remember { mutableStateOf(0) }
-    if (agent?.hr == true) LaunchedEffect(name, boardTick) {
+    if (agent?.hr == true) WhileVisible(name, boardTick) {
         while (true) {
             io(scope, { Agents.board(ctx) }) { board = it }
             delay(10_000)

@@ -20,6 +20,10 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.repeatOnLifecycle
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -194,6 +198,16 @@ fun Label(text: String) {
     val c = LocalMochi.current
     Text(text, style = Type.small.copy(fontWeight = Type.strong), color = c.muted,
         modifier = Modifier.padding(top = Space.s, bottom = Space.xs))
+}
+
+/**
+ * Runs [block] only while the screen is visible: cancelled when the app goes to the background, started again when
+ * it comes back. For refresh loops, so a hidden screen doesn't keep polling the server (battery, data).
+ */
+@Composable
+fun WhileVisible(vararg keys: Any?, block: suspend CoroutineScope.() -> Unit) {
+    val owner = LocalLifecycleOwner.current
+    LaunchedEffect(owner, *keys) { owner.repeatOnLifecycle(Lifecycle.State.STARTED, block) }
 }
 
 /** Runs [work] off the main thread, then [done] (or [failed]) on it. */
