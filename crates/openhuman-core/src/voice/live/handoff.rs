@@ -82,6 +82,50 @@ pub(crate) fn claude_reply_note(event: &WebChannelEvent, thread_id: &str) -> Opt
     }
 }
 
+/// The most chats from earlier in the same call (before the phone was passed) a session also listens to.
+pub(crate) const MAX_EARLIER_THREADS: usize = 8;
+
+/// Chats used earlier in this call: the `earlier_threads` the phone app sends in the start frame when it
+/// passes the phone (2026-11-10: Nadia's answer finished after the phone went back to Mochi, and the new
+/// session, on Mochi's chat, dropped it). Read straight from the frame so the start request stays as it was.
+pub(crate) fn earlier_threads(start_frame: &str) -> Vec<String> {
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(start_frame) else {
+        return Vec::new();
+    };
+    value
+        .get("earlier_threads")
+        .and_then(|v| v.as_array())
+        .map(|ids| {
+            ids.iter()
+                .filter_map(|id| id.as_str())
+                .filter(|id| !id.is_empty() && id.len() <= 120 && id.chars().all(|c| c.is_ascii_alphanumeric() || "-_.~".contains(c)))
+                .take(MAX_EARLIER_THREADS)
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Claude's answer to a `mochi-ask` request made earlier in this call, in another speaker's chat: passed on by
+/// whoever has the phone now. Only answers (never another chat's typed turns).
+pub(crate) fn earlier_reply_note(event: &WebChannelEvent, earlier: &[String]) -> Option<String> {
+    if event.client_id != ASK_CLIENT || !earlier.iter().any(|t| *t == event.thread_id) {
+        return None;
+    }
+    claude_reply_note(event, &event.thread_id).map(|note| {
+        note.replacen(
+            "Claude finished the request you handed it.",
+            "a request handed on earlier in this call, before the phone was passed, is finished (it was asked in              another speaker's chat; say whose it was if that helps, e.g. \"Nadia's plan is ready\").",
+            1,
+        )
+        .replacen(
+            "Claude couldn't finish the request you handed it",
+            "a request handed on earlier in this call, before the phone was passed, couldn't be finished",
+            1,
+        )
+    })
+}
+
 /// A turn December typed into this call's chat (any client but `mochi-ask`).
 fn typed_turn_note(event: &WebChannelEvent) -> Option<String> {
     match event.event.as_str() {

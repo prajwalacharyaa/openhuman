@@ -19,7 +19,9 @@ use tinyagents_live::tinyliveagents::{CloseReason, LiveEvent};
 use tinyagents_live::LiveAgentEvent;
 
 use super::error::LiveVoiceError;
-use super::handoff::{claude_reply_note, CallChecks, HandoffEvent, NoteGate, NUDGE};
+use super::handoff::{
+    claude_reply_note, earlier_reply_note, earlier_threads, CallChecks, HandoffEvent, NoteGate, NUDGE,
+};
 use super::persist::{reads_phone, TranscriptPersister};
 use super::timing::{self, TimingEvent, VoiceTiming};
 use super::session::{self, LiveStartRequest};
@@ -180,6 +182,10 @@ pub async fn handle_live_voice_ws(socket: WebSocket, config: Arc<Config>) {
             return;
         }
     };
+    let earlier = match &first {
+        Message::Text(text) => earlier_threads(text),
+        _ => Vec::new(),
+    };
     let request = match parse_start(&first) {
         Ok(request) => request,
         Err(error) => {
@@ -284,7 +290,14 @@ pub async fn handle_live_voice_ws(socket: WebSocket, config: Arc<Config>) {
             chat = chat_events.recv() => {
                 match chat {
                     Ok(chat) => {
-                        if let Some(note) = claude_reply_note(&chat, &thread_id) {
+                        let note = claude_reply_note(&chat, &thread_id).or_else(|| {
+                            let note = earlier_reply_note(&chat, &earlier);
+                            if note.is_some() {
+                                tracing::info!(session_id, "{LOG_PREFIX} an answer from earlier in this call arrived (another speaker's chat)");
+                            }
+                            note
+                        });
+                        if let Some(note) = note {
                             tracing::info!(session_id, "{LOG_PREFIX} Claude's answer arrived: passing it to the call");
                             if let Some(now) = notes.offer(note, std::time::Instant::now()) {
                                 let _ = sender.send_text(now).await;

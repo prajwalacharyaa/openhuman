@@ -91,6 +91,9 @@ object Call {
     private var ws: WebSocket? = null
     private var call: JSONObject? = null // set when Mochi called December
     private var threadId: String? = null
+    /** Every chat this call has used (Mochi's, then an agent's after a pass of the phone…): a new session hears the
+     *  answers to what was handed on in the earlier ones too, instead of dropping them. */
+    private val callThreads = java.util.Collections.synchronizedSet(LinkedHashSet<String>())
     private var startedAt: java.time.Instant = java.time.Instant.now()
     @Volatile private var answered = false
     @Volatile private var flushPlayback = false
@@ -148,6 +151,7 @@ object Call {
         heardBytes = 0
         lastSpoke = System.currentTimeMillis()
         main.post { said.clear() }
+        callThreads.clear()
         agent = withAgent?.takeIf { agentThread != null && mochiCall == null }
         switching = false
         reconnects = 0
@@ -333,6 +337,8 @@ object Call {
         override fun onOpen(webSocket: WebSocket, response: Response) {
             val start = JSONObject().put("type", "start").put("thread_id", threadId ?: JSONObject.NULL)
                 .put("client_id", "mochi-phone").put("input_sample_rate", RATE).put("agent", agent ?: JSONObject.NULL)
+            val earlier = synchronized(callThreads) { callThreads.filter { it != threadId }.takeLast(8) }
+            if (earlier.isNotEmpty()) start.put("earlier_threads", org.json.JSONArray(earlier))
             webSocket.send(start.toString())
         }
 
@@ -345,6 +351,7 @@ object Call {
                     answered = true
                     f.optString("thread_id").takeIf { it.isNotEmpty() && it != "null" }?.let {
                         threadId = it
+                        callThreads.add(it)
                         if (call == null && agent == null) Mochi.setThread(app, it) // an agent's chat stays its own
                     }
                     switching = false

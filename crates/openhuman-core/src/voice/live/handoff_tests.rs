@@ -84,6 +84,24 @@ fn passes_back_only_this_calls_claude_answers() {
 }
 
 #[test]
+fn answers_from_earlier_in_the_call_follow_the_phone() {
+    let earlier = earlier_threads(r#"{"type":"start","thread_id":"t2","earlier_threads":["t1","bad id!","t3"]}"#);
+    assert_eq!(earlier, vec!["t1".to_string(), "t3".to_string()], "only plausible thread ids");
+    assert!(earlier_threads(r#"{"type":"start"}"#).is_empty());
+    let done = |client: &str, thread: &str| WebChannelEvent {
+        event: "chat_done".into(),
+        client_id: client.into(),
+        thread_id: thread.into(),
+        full_response: Some("Here's the plan.".into()),
+        ..Default::default()
+    };
+    let note = earlier_reply_note(&done("mochi-ask", "t1"), &earlier).expect("a note");
+    assert!(note.contains("before the phone was passed") && note.ends_with("Here's the plan."));
+    assert_eq!(earlier_reply_note(&done("desktop", "t1"), &earlier), None, "never another chat's typed turns");
+    assert_eq!(earlier_reply_note(&done("mochi-ask", "t9"), &earlier), None, "a chat not in this call");
+}
+
+#[test]
 fn notes_wait_until_the_model_stops_speaking() {
     let t0 = std::time::Instant::now();
     let mut gate = NoteGate::default();
