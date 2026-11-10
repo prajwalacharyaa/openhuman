@@ -321,8 +321,13 @@ private fun HomeScreen(go: (String) -> Unit) {
                 val approve = a.optString("approve_url")
                 val isCall = approve.isEmpty()
                 val replyThread = a.optString("thread_id")
+                // a LinkedIn post is read in full (text and image) on its approval page before approving
+                val isPost = a.optString("kind") == "linkedin"
                 Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(24.dp)).background(c.amberBg)
-                    .clickable(enabled = replyThread.isNotEmpty()) { MainActivity.openChat(ctx, replyThread) }.padding(20.dp),
+                    .clickable(enabled = isPost || replyThread.isNotEmpty()) {
+                        if (isPost) ctx.startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse(approve)))
+                        else MainActivity.openChat(ctx, replyThread)
+                    }.padding(20.dp),
                     verticalArrangement = Arrangement.spacedBy(Space.m)) {
                     Text(if (isCall) (if (a.optString("result") == "declined") "Declined call" else "Missed call")
                         else "Waiting for you", style = Type.small.copy(fontWeight = Type.strong), color = c.amberInk)
@@ -330,7 +335,8 @@ private fun HomeScreen(go: (String) -> Unit) {
                         style = Type.title, color = c.ink, maxLines = 3, overflow = TextOverflow.Ellipsis)
                     if (!isCall && a.optString("text").isNotBlank()) Text(a.optString("text"), style = Type.small,
                         color = c.muted, maxLines = 3, overflow = TextOverflow.Ellipsis)
-                    if (replyThread.isNotEmpty()) Text("Tap to answer by typing", style = Type.small, color = c.amberInk)
+                    if (isPost) Text("Tap to read the whole post", style = Type.small, color = c.amberInk)
+                    else if (replyThread.isNotEmpty()) Text("Tap to answer by typing", style = Type.small, color = c.amberInk)
                     Row(horizontalArrangement = Arrangement.spacedBy(Space.s)) {
                         val off = id in busy
                         if (isCall) {
