@@ -116,6 +116,17 @@ object LinkedIn {
         }
     }.getOrNull()
 
+    /** December asks for a video (noted on the draft; the request itself goes to Nadia through Mochi). Blocking. */
+    fun requestVideo(c: Context, id: String) {
+        post(c, "/linkedin/drafts/$id/request-video", JSONObject())
+        ask(c, "December requests a video for LinkedIn draft $id (from Nadia's page in the app). Make it with mochi-video " +
+            "from the post's own lines and attach it with mochi-linkedin video $id <mp4>; keep the text as it is.")
+    }
+
+    /** Plays the draft's video in the phone's own player (streamed from the approval page over Tailscale). */
+    fun play(c: Context, status: JSONObject, id: String) = c.startActivity(Intent(Intent.ACTION_VIEW)
+        .setDataAndType(Uri.parse(approveUrl(status, id) + "/video"), "video/mp4").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+
     /** A gallery photo as base64 JPEG (shrunk to 1600 px by [Attachments]). Blocking. */
     fun photo(c: Context, uri: Uri): String? =
         Attachments.load(c, uri)?.takeIf { it.image }?.marker?.substringAfter("base64,")?.removeSuffix("]")
@@ -262,7 +273,11 @@ private fun PostCard(d: JSONObject, bg: Color, line: String, busy: Boolean, onOp
         .clickable(role = Role.Button, onClickLabel = "Open the post", onClick = onOpen).padding(Space.m),
         verticalArrangement = Arrangement.spacedBy(Space.s)) {
         Text(d.optString("text"), style = Type.body, color = c.ink, maxLines = 5, overflow = TextOverflow.Ellipsis)
-        Text(listOf(line, "${d.optInt("chars")} characters", if (d.optBoolean("has_image")) "with image" else "")
+        Text(listOf(line, "${d.optInt("chars")} characters", when {
+            d.optBoolean("has_video") -> "with video"
+            d.optString("video_status") == "requested" -> "video coming"
+            d.optBoolean("has_image") -> "with image"
+            else -> "" })
             .filter { it.isNotBlank() }.joinToString(" · "), style = Type.small, color = c.muted, maxLines = 3,
             overflow = TextOverflow.Ellipsis)
         if (buttons != null) {
@@ -293,13 +308,19 @@ private fun DraftEditor(d: JSONObject, status: JSONObject, onClose: () -> Unit, 
     var picture by remember { mutableStateOf<ImageBitmap?>(null) }
     var newImage by remember { mutableStateOf<String?>(null) }   // base64 JPEG picked from the gallery
     var removeImage by remember { mutableStateOf(false) }
+    var hasVideo by remember { mutableStateOf(d.optBoolean("has_video")) }
+    var removeVideo by remember { mutableStateOf(false) }
+    var videoStatus by remember { mutableStateOf(d.optString("video_status")) }
     var note by remember { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
     var message by remember { mutableStateOf("") }
 
     LaunchedEffect(id) {
         io(scope, { LinkedIn.full(ctx, id) }) { f ->
-            if (f.has("text")) { original = f; text = f.optString("text"); at = f.optLong("at"); alt = f.optString("alt") }
+            if (f.has("text")) {
+                original = f; text = f.optString("text"); at = f.optLong("at"); alt = f.optString("alt")
+                hasVideo = f.optBoolean("has_video"); videoStatus = f.optString("video_status")
+            }
             loaded = true
         }
         if (d.optBoolean("has_image")) io(scope, { LinkedIn.image(LinkedIn.approveUrl(status, id)) }) { picture = it }
@@ -319,6 +340,7 @@ private fun DraftEditor(d: JSONObject, status: JSONObject, onClose: () -> Unit, 
         if (loaded && alt != original.optString("alt")) put("alt", alt)
         newImage?.let { put("image_b64", it) }
         if (removeImage) put("no_image", true)
+        if (removeVideo) put("no_video", true)
     }
     val dirty = changes.length() > 0
     fun work(after: String, block: () -> Unit) {
@@ -403,6 +425,32 @@ private fun DraftEditor(d: JSONObject, status: JSONObject, onClose: () -> Unit, 
                 }
             }
 
+            // video: play / remove, or ask for one (green when Nadia thinks the post suits video, red when not)
+            Text("Video", style = Type.title, color = c.ink)
+            if (hasVideo && !removeVideo) {
+                Text("A video is attached. It's posted instead of the image.", style = Type.small, color = c.muted)
+                Row(horizontalArrangement = Arrangement.spacedBy(Space.s)) {
+                    Pill("Play video", true, Modifier.weight(1f)) { LinkedIn.play(ctx, status, id) }
+                    Pill("Remove video", false, Modifier.weight(1f)) { removeVideo = true }
+                }
+            } else {
+                val fit = original.optString("video_fit").ifBlank { d.optString("video_fit") }
+                val why = original.optString("video_why").ifBlank { d.optString("video_why") }
+                when (videoStatus) {
+                    "requested" -> Text("Video requested: Nadia is making it. It shows up here when it's attached.",
+                        style = Type.small, color = c.muted)
+                    "failed" -> Text("The video couldn't be made: ${original.optString("video_error")}", style = Type.small, color = c.danger)
+                }
+                if (fit.isNotBlank()) Text((if (fit == "good") "Good for a video: " else "Not ideal for a video: ") + why,
+                    style = Type.small, color = if (fit == "good") c.greenInk else c.danger)
+                if (videoStatus != "requested") VideoButton(fit) {
+                    work("Asked Nadia for a video (about a minute to make once she starts).") {
+                        save(); LinkedIn.requestVideo(ctx, id)
+                    }
+                    videoStatus = "requested"
+                }
+            }
+
             // ask for changes
             Field(note, { note = it }, "Suggest changes (Nadia and Mark rework it)", Modifier.fillMaxWidth()) {
                 if (note.isNotBlank()) Pill("Send", true) {
@@ -431,5 +479,21 @@ private fun DraftEditor(d: JSONObject, status: JSONObject, onClose: () -> Unit, 
                 }
             }
         }
+    }
+}
+
+/** Request video: green when Nadia rated the post good for video, red when she didn't, neutral when she hasn't said. */
+@Composable
+private fun VideoButton(fit: String, onClick: () -> Unit) {
+    val c = LocalMochi.current
+    val (bg, ink) = when (fit) {
+        "good" -> c.greenInk to Color.White
+        "poor" -> c.danger to Color.White
+        else -> c.field to c.ink
+    }
+    Box(Modifier.fillMaxWidth().heightIn(min = 44.dp).clip(RoundedCornerShape(22.dp)).background(bg)
+        .clickable(role = Role.Button, onClick = onClick).padding(horizontal = Space.l, vertical = Space.m),
+        contentAlignment = Alignment.Center) {
+        Text(if (fit == "poor") "Request video anyway" else "Request video", style = Type.body.copy(fontWeight = Type.strong), color = ink)
     }
 }
