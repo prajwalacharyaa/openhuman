@@ -25,6 +25,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
@@ -276,9 +277,16 @@ fun ChatScreen(initialThread: String?, newChat: Boolean, initialText: String?, s
             if (!busy || live?.connected != true) reload()
         }
     }
+    // follow the reply as it streams, to the end of the list and the bottom of a long bubble (not its top);
+    // not while December has scrolled up to read
     LaunchedEffect(messages.size, streaming.length, steps.size, busy) {
-        val count = messages.size + (if (busy) 1 else 0)
-        if (count > 0) list.animateScrollToItem(count - 1)
+        val total = list.layoutInfo.totalItemsCount
+        if (total == 0 || list.isScrollInProgress) return@LaunchedEffect
+        val lastSeen = list.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0
+        if (lastSeen >= total - 2) {
+            list.scrollToItem(total - 1)
+            list.scrollBy(100_000f)
+        }
     }
 
     val pickMedia = rememberLauncherForActivityResult(ActivityResultContracts.PickMultipleVisualMedia(4)) { uris ->

@@ -23,6 +23,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -177,7 +178,19 @@ class CallActivity : ComponentActivity(), Call.Listener {
         val lines = Call.said
         var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
         WhileVisible { while (true) { delay(1_000); now = System.currentTimeMillis() } }
-        LaunchedEffect(lines.size) { if (lines.isNotEmpty()) list.animateScrollToItem(lines.size - 1) }
+        // follow the newest words: also while a reply grows inside its line (same count, longer text), to the very
+        // end of the list (the question card on top shifts the indexes) and to the end of a long reply, not its top.
+        // Not while December has scrolled up to read something earlier.
+        val newest = lines.lastOrNull()
+        LaunchedEffect(lines.size, newest?.text?.length) {
+            val total = list.layoutInfo.totalItemsCount
+            if (total == 0 || list.isScrollInProgress) return@LaunchedEffect
+            val lastSeen = list.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0
+            if (lastSeen >= total - 2) {
+                list.scrollToItem(total - 1)
+                list.scrollBy(100_000f)   // clamped to the end: shows the bottom of a long last bubble
+            }
+        }
         val last = lines.lastOrNull()
         // who December is talking with: Mochi, or one of its agents (the face, name and voice change together)
         val team = remember { Agents.cached(this@CallActivity) }
