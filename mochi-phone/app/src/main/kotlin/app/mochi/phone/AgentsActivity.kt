@@ -36,6 +36,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.key
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -175,8 +176,12 @@ private fun AgentsScreen(requested: Pair<String, Long>?, onBack: () -> Unit) {
                 if (name == null) {
                     Text("No agents yet.", style = Type.body, color = c.muted, modifier = Modifier.padding(Space.xl))
                 } else {
-                    AgentDoingPage(name, agents.firstOrNull { it.name == name }, tokens[name], now) {
-                        agents.firstOrNull { a -> a.name == name }?.let { profile = it }
+                    // one page slot is reused for whichever agent is picked: key it by the agent so its state (SY's
+                    // hiring board, Nadia's LinkedIn page, an open step, the scroll) never carries over to the next one
+                    key(name) {
+                        AgentDoingPage(name, agents.firstOrNull { it.name == name }, tokens[name], now) {
+                            agents.firstOrNull { a -> a.name == name }?.let { profile = it }
+                        }
                     }
                 }
             }
@@ -275,7 +280,8 @@ private fun AgentDoingPage(name: String, agent: Agents.Agent?, tokens: Doing.Tok
         }
     }
     LaunchedEffect(newest) {
-        val firstJob = 1 + (if (board != null) 2 else 0) + (if (linkedin != null) 2 else 0)
+        val firstJob = 1 + (if (board != null && agent?.hr == true) 2 else 0) +
+            (if (linkedin != null && agent?.skills?.contains("linkedin") == true) 2 else 0)
         if (opened == null && !list.isScrollInProgress && list.firstVisibleItemIndex == firstJob &&
             list.firstVisibleItemScrollOffset < 24) list.scrollToItem(firstJob)
     }
@@ -309,13 +315,13 @@ private fun AgentDoingPage(name: String, agent: Agents.Agent?, tokens: Doing.Tok
                 }
             }
         }
-        board?.let { (waiting, history) ->
+        board?.takeIf { agent?.hr == true }?.let { (waiting, history) ->
             item("board") { HiringBoard(waiting, history) { scope.launch { delay(1_500); boardTick++ } } }
             item("board-jobs") {
-                Text("SY's work", style = Type.title, color = c.ink, modifier = Modifier.padding(top = Space.m))
+                Text("${agent?.display ?: name}'s work", style = Type.title, color = c.ink, modifier = Modifier.padding(top = Space.m))
             }
         }
-        linkedin?.let { li ->
+        linkedin?.takeIf { agent?.skills?.contains("linkedin") == true }?.let { li ->
             item("linkedin") { LinkedInBoard(li) { scope.launch { delay(1_000); linkedinTick++ } } }
             item("linkedin-jobs") {
                 Text("${agent?.display ?: name}'s work", style = Type.title, color = c.ink, modifier = Modifier.padding(top = Space.m))
