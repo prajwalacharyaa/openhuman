@@ -265,8 +265,17 @@ private fun AgentDoingPage(name: String, agent: Agents.Agent?, tokens: Doing.Tok
             delay(10_000)
         }
     }
+    // the LinkedIn agent (whoever has the `linkedin` skill): December's drafts, approvals and posts
+    var linkedin by remember { mutableStateOf<org.json.JSONObject?>(null) }
+    var linkedinTick by remember { mutableStateOf(0) }
+    if (agent?.skills?.contains("linkedin") == true) WhileVisible(name, linkedinTick) {
+        while (true) {
+            io(scope, { LinkedIn.load(ctx) }) { linkedin = it }
+            delay(15_000)
+        }
+    }
     LaunchedEffect(newest) {
-        val firstJob = 1 + (if (board != null) 2 else 0)
+        val firstJob = 1 + (if (board != null) 2 else 0) + (if (linkedin != null) 2 else 0)
         if (opened == null && !list.isScrollInProgress && list.firstVisibleItemIndex == firstJob &&
             list.firstVisibleItemScrollOffset < 24) list.scrollToItem(firstJob)
     }
@@ -304,6 +313,12 @@ private fun AgentDoingPage(name: String, agent: Agents.Agent?, tokens: Doing.Tok
             item("board") { HiringBoard(waiting, history) { scope.launch { delay(1_500); boardTick++ } } }
             item("board-jobs") {
                 Text("SY's work", style = Type.title, color = c.ink, modifier = Modifier.padding(top = Space.m))
+            }
+        }
+        linkedin?.let { li ->
+            item("linkedin") { LinkedInBoard(li) { scope.launch { delay(1_000); linkedinTick++ } } }
+            item("linkedin-jobs") {
+                Text("${agent?.display ?: name}'s work", style = Type.title, color = c.ink, modifier = Modifier.padding(top = Space.m))
             }
         }
         if (tasks.isEmpty()) item("empty") {
