@@ -126,6 +126,20 @@ object Mochi {
         }
     }
 
+    /** The newest live link: Mochi's real-build slot while it runs, else the most recently changed preview
+     *  (only one changed in the last 12 hours). Null when there's nothing live. Blocking. */
+    fun liveLink(c: Context): String? {
+        val req = Request.Builder().url("${ringUrl(c)}/previews").header("Authorization", "Bearer ${token(c)}").build()
+        quick.newCall(req).execute().use { r ->
+            if (!r.isSuccessful) return null
+            val o = JSONObject(r.body?.string() ?: "{}")
+            o.optJSONObject("live")?.optString("url")?.takeIf { it.startsWith("https://") }?.let { return it }
+            val p = o.optJSONArray("previews")?.optJSONObject(0) ?: return null
+            return p.optString("url").takeIf { it.startsWith("https://") &&
+                System.currentTimeMillis() / 1000 - p.optLong("updated") < 12 * 3600 }
+        }
+    }
+
     /** Delete uploads (by id "<chat>/<id>"): the server removes the files within seconds. Blocking. */
     fun deleteUploads(c: Context, ids: List<String>) {
         val body = JSONObject().put("ids", JSONArray(ids)).toString().toRequestBody(JSON)

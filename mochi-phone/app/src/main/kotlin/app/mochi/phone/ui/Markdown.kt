@@ -78,6 +78,8 @@ fun parseBlocks(md: String): List<Block> {
     return out
 }
 
+private val BARE_URL = Regex("""^https?://[^\s<>"'`]*[A-Za-z0-9/#=_-]""")
+
 /** Inline Markdown: **bold**, *italic*, `code`, [links](https://…). Only http(s) links become tappable. */
 fun inline(text: String, c: MochiColors): AnnotatedString = buildAnnotatedString {
     var i = 0
@@ -113,6 +115,15 @@ fun inline(text: String, c: MochiColors): AnnotatedString = buildAnnotatedString
                 } else {
                     append('['); i++
                 }
+            }
+            // a bare link (a preview page, a pull request): tappable too, without its trailing punctuation
+            (i == 0 || !text[i - 1].isLetterOrDigit()) && BARE_URL.find(rest) != null -> {
+                val url = BARE_URL.find(rest)!!.value.trimEnd('.', ',', ';', ':', ')', '!', '?')
+                withLink(LinkAnnotation.Url(url,
+                    TextLinkStyles(SpanStyle(color = c.blueInk, textDecoration = TextDecoration.Underline)))) {
+                    append(url)
+                }
+                i += url.length
             }
             else -> { append(text[i]); i++ }
         }

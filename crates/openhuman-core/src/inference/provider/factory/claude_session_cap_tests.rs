@@ -139,6 +139,13 @@ fn small_talk_is_light_and_work_is_not() {
 }
 
 #[test]
+fn big_ui_work_is_spotted_and_tweaks_are_not() {
+    assert!(is_big_ui("1. on the page in general: add a fade-in animation to the cards"));
+    assert!(is_big_ui("make the layout two columns"));
+    assert!(!is_big_ui("1. on `main > a` (now says \"hire me\"): make it blue"));
+}
+
+#[test]
 fn a_chat_is_routed_and_switches_only_with_a_fresh_session() {
     let (dir, cap) = setup(&[call(40_000)]);
     let cap = cap.routed(true);
@@ -182,8 +189,8 @@ fn an_agent_chat_runs_as_its_agent() {
         ),
     )
     .unwrap();
-    std::fs::create_dir_all(dir.path().join("projects/.claude/agent-memory/mark")).unwrap();
-    std::fs::write(dir.path().join("projects/.claude/agent-memory/mark/MEMORY.md"), "- likes short sentences").unwrap();
+    std::fs::create_dir_all(dir.path().join("projects/agent-notes/mark")).unwrap();
+    std::fs::write(dir.path().join("projects/agent-notes/mark/MEMORY.md"), "- likes short sentences").unwrap();
     let mut asked = said("thread-1", "is this sentence right?");
     asked.messages.insert(0, tinyinference_llm::Message::system("You are Mochi."));
     let out = cap.rekey(asked);

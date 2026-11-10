@@ -56,6 +56,12 @@ const WORK_WORDS: &[&str] = &[
     "review", "explain", "why ", "how do", "how does", "how to", "report", "browse", "website", "portfolio",
     "redesign", "graphify", "jigubites", "test", "decide", "decision",
 ];
+/// UI work too big for a Haiku agent (the preview's "tweak"): its chat moves up to Sonnet for that message.
+const BIG_UI_WORDS: &[&str] = &[
+    "animation", "animate", "transition", "parallax", "carousel", "slider", "layout", "new section",
+    "add a section", "another section", "new page", "responsive", "on mobile", "on phones", "mobile view",
+    "redesign", "restructure", "rearrange", "whole page", "entire page",
+];
 /// Longest message (characters) that can open a Haiku chat on its own.
 const LIGHT_CHARS: usize = 160;
 /// Most of an agent's notes put into its direct chat.
@@ -113,7 +119,7 @@ impl SessionCap {
             // the workspace is `~/OpenHuman/.openhuman`; threads and projects sit next to it
             threads_file: workspace.parent().unwrap_or(workspace).join("workspace/memory/conversations/threads.jsonl"),
             agent_files: PathBuf::new(),
-            agent_notes: workspace.parent().unwrap_or(workspace).join("projects/.claude/agent-memory"),
+            agent_notes: workspace.parent().unwrap_or(workspace).join("projects/agent-notes"),
             agents: Mutex::new(HashMap::new()),
         }
     }
@@ -168,8 +174,10 @@ impl SessionCap {
             "You are {display}, one of Mochi's specialist agents, in a direct chat with December (they/them) in \
              the Mochi app. You are not Mochi: you are {display}, and you introduce yourself that way. Your own \
              instructions (your agent file) are who you are and how you work. In this chat, talk with December in \
-             your own area and from your own point of view, directly, without handing things to anyone; you can \
-             still do work in your area with your tools. For something outside your area, say so in a line and \
+             your own area and from your own point of view, directly, without handing things to Mochi; you can \
+             still do work in your area with your tools. When your instructions give part of a job to another \
+             agent (Nadia's post text is Mark's), run that agent yourself with the Agent tool and wait for its \
+             answer; never say something was sent to someone you didn't run. For something outside your area, say so in a line and \
              suggest asking Mochi.\n\nYour notes file is {}. When you learn something worth keeping (December's \
              preferences, decisions, feedback), update it: short dated lines, duplicates merged, under 200 lines.\n\n{}",
             notes_file.display(),
@@ -244,12 +252,23 @@ impl SessionCap {
         let current = [QUICK, NORMAL, DEEP].into_iter().find(|m| Some(*m) == current);
         // December's choice holds until the session goes fresh
         let was_chosen = !new_session && routes.get(thread).and_then(|r| r.get("chosen")).and_then(serde_json::Value::as_bool) == Some(true);
-        // a short, simple message drops to Haiku only from the Sonnet default (an Opus agent stays Opus)
-        let light = |text: &str| if base == NORMAL && is_light(text) { QUICK } else { base };
+        // a short, simple message drops to Haiku only from the Sonnet default (an Opus agent stays Opus);
+        // a Haiku agent's chat goes up to Sonnet for UI work too big for it
+        let light = |text: &str| {
+            if base == NORMAL && is_light(text) {
+                QUICK
+            } else if base == QUICK && is_big_ui(text) {
+                NORMAL
+            } else {
+                base
+            }
+        };
         let (model, chosen) = match (asked_model(&text), current) {
             (Some(asked), _) => (asked, true),
             (None, Some(current)) if !new_session && was_chosen => (current, true),
             (None, Some(QUICK)) if !new_session => (light(&text), false),
+            // a Haiku agent moved up for one big job comes back down for the next small one
+            (None, Some(NORMAL)) if !new_session && base == QUICK => (light(&text), false),
             (None, Some(current)) if !new_session => (current, false),
             (None, _) => (light(&text), false),
         };
@@ -322,6 +341,10 @@ pub(crate) fn asked_model(words: &str) -> Option<&'static str> {
 }
 
 /// A short, simple message (a greeting, a quick fact, a reminder) that Haiku answers as well as Sonnet.
+pub(crate) fn is_big_ui(words: &str) -> bool {
+    BIG_UI_WORDS.iter().any(|w| words.contains(w))
+}
+
 pub(crate) fn is_light(words: &str) -> bool {
     !words.is_empty()
         && words.chars().count() <= LIGHT_CHARS

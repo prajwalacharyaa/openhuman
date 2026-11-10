@@ -571,9 +571,15 @@ private fun <T> deleteWithUndo(scope: kotlinx.coroutines.CoroutineScope, snack: 
     hide(items)
     scope.launch {
         snack.currentSnackbarData?.dismiss()
-        val undo = snack.showSnackbar(label, actionLabel = "Undo", duration = SnackbarDuration.Short) ==
-            SnackbarResult.ActionPerformed
-        if (undo) restore(items) else io(scope, { delete(items) }, { restore(items); failed(it) }) {}
+        var undo: Boolean? = null
+        try {
+            undo = snack.showSnackbar(label, actionLabel = "Undo", duration = SnackbarDuration.Short) ==
+                SnackbarResult.ActionPerformed
+        } finally {
+            // leaving the tab or screen before the snackbar ends cancels the wait: delete anyway (it was not undone)
+            if (undo == null) Thread { runCatching { delete(items) } }.start()
+        }
+        if (undo == true) restore(items) else io(scope, { delete(items) }, { restore(items); failed(it) }) {}
     }
 }
 
@@ -743,17 +749,12 @@ private fun MemoryScreen(onBack: () -> Unit) {
                     }
                 }
                 if (pager.currentPage < 2) Field(query, { query = it }, "Search what Mochi remembers", Modifier.fillMaxWidth(), singleLine = true)
-                Text(when (pager.currentPage) {
-                    0 -> "Facts and preferences Mochi keeps about you. Wrong or outdated? Swipe it away."
-                    1 -> "Every chat and call turn Mochi logged. Long-term: Mochi searches these before answering."
-                    else -> "Files you attached in chats. Deleting a chat deletes its files too; swipe one away to delete it now."
-                }, style = Type.small, color = c.muted)
             }
             if (error.isNotEmpty()) Text(error, style = Type.small, color = c.danger, modifier = Modifier.padding(horizontal = Space.l))
-            androidx.compose.foundation.pager.HorizontalPager(pager, Modifier.fillMaxSize()) { page ->
+            androidx.compose.foundation.pager.HorizontalPager(pager, Modifier.fillMaxSize(), verticalAlignment = Alignment.Top) { page ->
             if (page == 2) { UploadsPage(snack); return@HorizontalPager }
             if (page != pager.currentPage) { Box(Modifier.fillMaxSize()); return@HorizontalPager }
-            LazyColumn(state = list, contentPadding = PaddingValues(Space.l), verticalArrangement = Arrangement.spacedBy(Space.s)) {
+            LazyColumn(Modifier.fillMaxSize(), state = list, contentPadding = PaddingValues(Space.l), verticalArrangement = Arrangement.spacedBy(Space.s)) {
                 if (items.isEmpty() && !loading && end) item { Text("Nothing here.", style = Type.body, color = c.muted) }
                 items(items, key = { it.optString("id") }) { m ->
                     val id = m.optString("id")

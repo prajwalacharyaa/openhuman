@@ -3,6 +3,7 @@ package app.mochi.phone
 import android.Manifest
 import android.content.Context
 import android.content.Intent
+import android.net.Uri
 import android.content.pm.PackageManager
 import android.os.Bundle
 import android.text.format.DateUtils
@@ -111,7 +112,7 @@ class DoingActivity : ComponentActivity() {
 /** One helper around Mochi. */
 private class Lane(val key: String, val label: String, val bg: Color, val ink: Color)
 
-private fun lanes(c: MochiColors, helpers: List<String>, team: List<Agents.Agent>) = listOf(
+private fun lanes(c: MochiColors, helpers: List<String>, team: List<Agents.Agent>, live: Boolean) = listOf(
     Lane("voice", "Voice", c.amberBg, c.amberInk),
     Lane("brain", "Claude", c.blueBg, c.blueInk),
     Lane("memory", "Memory", c.violetBg, c.violetInk),
@@ -119,7 +120,7 @@ private fun lanes(c: MochiColors, helpers: List<String>, team: List<Agents.Agent
     Lane("server", "Server", c.field, c.ink),
     Lane("phone", "Phone", c.amberBg, c.amberInk),
     Lane("github", "GitHub", c.field, c.ink),
-) + helpers.take(3).map { who ->
+) + (if (live) listOf(Lane("live", "Live", c.greenBg, c.greenInk)) else emptyList()) + helpers.take(3).map { who ->
     // a specialist (Mark, Melissa…) in its own colour; other helpers (builder, Explore…) in blue
     val agent = team.firstOrNull { it.who == who }
     if (agent != null) Lane("helper:$who", agent.display, agent.color.copy(alpha = 0.22f), agent.color)
@@ -157,12 +158,15 @@ private fun DoingScreen(onBack: () -> Unit) {
     var today by remember { mutableStateOf<Map<String, Doing.Tokens>>(emptyMap()) }
     var opened by remember { mutableStateOf<Doing.StepView?>(null) }
     var callTapAt by remember { mutableLongStateOf(0L) }
+    var liveLink by remember { mutableStateOf<String?>(null) }   // a preview or live build to show December
     val list = rememberLazyListState()
     LaunchedEffect(Unit) { io(scope, { Doing.backfill(ctx) }) {} }
     WhileVisible {
         var tick = 0
         while (true) {
-            if (tick++ % 15 == 0) io(scope, { Doing.today(ctx) }) { today = it }
+            if (tick % 15 == 0) io(scope, { Doing.today(ctx) }) { today = it }
+            if (tick % 15 == 0) io(scope, { Mochi.liveLink(ctx) }, { liveLink = null }) { liveLink = it }
+            tick++
             now = System.currentTimeMillis()
             delay(1_000)
         }
@@ -181,7 +185,7 @@ private fun DoingScreen(onBack: () -> Unit) {
     val team = remember { Agents.cached(ctx) }
     val helpers = Doing.events.filter { (it.lane == "helper" || it.who.startsWith("Helper: ")) && now - it.at < 10 * 60_000 }
         .map { it.who }.filter { it.startsWith("Helper: ") }.distinct()
-    val all = lanes(c, helpers, team)
+    val all = lanes(c, helpers, team, liveLink != null)
     val last = Doing.latestStep()
     val callSpeaking = Call.active && Call.said.lastOrNull()?.let { it.role != "user" && !it.final } == true
     // tapped and still coming up (gives up showing the spinner after 15 s if the call never started)
@@ -269,7 +273,11 @@ private fun DoingScreen(onBack: () -> Unit) {
                                 .takeIf { lane.key.startsWith("helper:") }
                             LaneBubble(lane, lane.key in active, filter == lane.key,
                                 Modifier.offset(x = ring * cos(a).toFloat(), y = ring * sin(a).toFloat()),
-                                onDoubleClick = agentName?.let { n -> { AgentsActivity.open(ctx, n) } }) {
+                                onDoubleClick = if (lane.key == "live") liveLink?.let { u -> {
+                                    // double-tap Live: the preview / live build in the browser
+                                    runCatching { ctx.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(u))) }
+                                    Unit
+                                } } else agentName?.let { n -> { AgentsActivity.open(ctx, n) } }) {
                                 filter = if (filter == lane.key) null else lane.key
                             }
                         }
