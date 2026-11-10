@@ -117,10 +117,11 @@ object LinkedIn {
     }.getOrNull()
 
     /** December asks for a video (noted on the draft; the request itself goes to Nadia through Mochi). Blocking. */
-    fun requestVideo(c: Context, id: String) {
+    fun requestVideo(c: Context, id: String, voice: Boolean) {
         post(c, "/linkedin/drafts/$id/request-video", JSONObject())
-        ask(c, "December requests a video for LinkedIn draft $id (from Nadia's page in the app). Make it with mochi-video " +
-            "from the post's own lines and attach it with mochi-linkedin video $id <mp4>; keep the text as it is.")
+        ask(c, "December requests a video for LinkedIn draft $id (from Nadia's page in the app), " +
+            (if (voice) "WITH a voice-over. " else "without a voice-over (music only if it helps). ") +
+            "Make it with mochi-video from the post's own lines and attach it with mochi-linkedin video $id <mp4>; keep the text as it is.")
     }
 
     /** Plays the draft's video in the phone's own player (streamed from the approval page over Tailscale). */
@@ -311,6 +312,7 @@ private fun DraftEditor(d: JSONObject, status: JSONObject, onClose: () -> Unit, 
     var hasVideo by remember { mutableStateOf(d.optBoolean("has_video")) }
     var removeVideo by remember { mutableStateOf(false) }
     var videoStatus by remember { mutableStateOf(d.optString("video_status")) }
+    var withVoice by remember { mutableStateOf(false) }
     var note by remember { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
     var message by remember { mutableStateOf("") }
@@ -443,11 +445,19 @@ private fun DraftEditor(d: JSONObject, status: JSONObject, onClose: () -> Unit, 
                 }
                 if (fit.isNotBlank()) Text((if (fit == "good") "Good for a video: " else "Not ideal for a video: ") + why,
                     style = Type.small, color = if (fit == "good") c.greenInk else c.danger)
-                if (videoStatus != "requested") VideoButton(fit) {
-                    work("Asked Nadia for a video (about a minute to make once she starts).") {
-                        save(); LinkedIn.requestVideo(ctx, id)
+                if (videoStatus != "requested") {
+                    // voice-over is December's choice only; music Nadia adds when it helps
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Space.s)) {
+                        Pill(if (withVoice) "✓ With voice-over" else "With voice-over", withVoice, height = 36.dp) { withVoice = !withVoice }
+                        Text(if (withVoice) "Narrated, music under it" else "Silent or music only", style = Type.small, color = c.muted)
                     }
-                    videoStatus = "requested"
+                    VideoButton(fit) {
+                        val voice = withVoice
+                        work("Asked Nadia for a video (about a minute to make once she starts).") {
+                            save(); LinkedIn.requestVideo(ctx, id, voice)
+                        }
+                        videoStatus = "requested"
+                    }
                 }
             }
 
