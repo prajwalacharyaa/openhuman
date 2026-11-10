@@ -25,7 +25,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.layout.widthIn
-import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
@@ -40,6 +39,8 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
@@ -76,6 +77,9 @@ import org.json.JSONObject
  * Mochi is doing), formatted; Stop cancels a reply; photos and files can be attached; Quick / Normal / Deep picks
  * the model (Normal lets Mochi decide). Opened from Home, a notification, the "New chat" shortcut or Share.
  */
+/** Messages added to the chat at a time as December scrolls up. */
+private const val PAGE = 40
+
 class ChatActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -162,6 +166,14 @@ fun ChatScreen(initialThread: String?, newChat: Boolean, initialText: String?, s
     var uploading by remember { mutableStateOf<Float?>(null) }
     var uploadNames by remember { mutableStateOf("") }
     val list = rememberLazyListState()
+    // the list is laid out bottom-up (newest at the bottom from the first frame, no scroll from the top on open);
+    // older messages are added PAGE at a time as December scrolls up toward them
+    var shown by remember(thread) { mutableIntStateOf(PAGE) }
+    LaunchedEffect(list) {
+        snapshotFlow { list.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0 }.collect { top ->
+            if (top >= list.layoutInfo.totalItemsCount - 3 && shown < messages.size) shown += PAGE
+        }
+    }
     // the call state isn't Compose state: look again every second (for the Call / Silent button)
     var onThisCall by remember { mutableStateOf(false) }
     var silent by remember { mutableStateOf(Call.silent) }
@@ -277,16 +289,10 @@ fun ChatScreen(initialThread: String?, newChat: Boolean, initialText: String?, s
             if (!busy || live?.connected != true) reload()
         }
     }
-    // follow the reply as it streams, to the end of the list and the bottom of a long bubble (not its top);
+    // follow the reply as it streams (item 0 is the bottom: its end shows, even for a long bubble);
     // not while December has scrolled up to read
     LaunchedEffect(messages.size, streaming.length, steps.size, busy) {
-        val total = list.layoutInfo.totalItemsCount
-        if (total == 0 || list.isScrollInProgress) return@LaunchedEffect
-        val lastSeen = list.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0
-        if (lastSeen >= total - 2) {
-            list.scrollToItem(total - 1)
-            list.scrollBy(100_000f)
-        }
+        if (!list.isScrollInProgress && list.firstVisibleItemIndex <= 1) list.scrollToItem(0)
     }
 
     val pickMedia = rememberLauncherForActivityResult(ActivityResultContracts.PickMultipleVisualMedia(4)) { uris ->
@@ -330,8 +336,16 @@ fun ChatScreen(initialThread: String?, newChat: Boolean, initialText: String?, s
         if (status.isNotEmpty()) Text(status, style = Type.small, color = c.danger,
             modifier = Modifier.padding(horizontal = Space.l, vertical = Space.xs))
 
-        LazyColumn(state = list, modifier = Modifier.weight(1f).fillMaxWidth(),
-            contentPadding = PaddingValues(Space.l), verticalArrangement = Arrangement.spacedBy(Space.l)) {
+        LazyColumn(state = list, modifier = Modifier.weight(1f).fillMaxWidth(), reverseLayout = true,
+            contentPadding = PaddingValues(Space.l), verticalArrangement = Arrangement.spacedBy(Space.l, Alignment.Bottom)) {
+            // bottom-up: the live reply first (lowest), then the newest messages, then older ones as December scrolls up
+            if (busy) item("live") { LiveReply(steps, streaming) }
+            val recent = messages.takeLast(shown)
+            items(recent.size) { i -> Bubble(recent[recent.size - 1 - i]) }
+            if (shown < messages.size) item("older") {
+                Text("Loading earlier messages…", style = Type.small, color = c.muted, textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                    modifier = Modifier.fillMaxWidth().padding(vertical = Space.s))
+            }
             if (messages.isEmpty() && !busy) item("empty") {
                 Column(Modifier.fillMaxWidth().padding(top = Space.xxl), horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.spacedBy(Space.m)) {
@@ -349,8 +363,6 @@ fun ChatScreen(initialThread: String?, newChat: Boolean, initialText: String?, s
                     }
                 }
             }
-            items(messages) { m -> Bubble(m) }
-            if (busy) item("live") { LiveReply(steps, streaming) }
         }
 
         // composer: attachments, mode, field, send / stop (all in thumb reach)
