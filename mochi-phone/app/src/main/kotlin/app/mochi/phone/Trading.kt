@@ -270,15 +270,15 @@ private fun SummaryStrip(mode: String, b: JSONObject, nepsePct: Double?, money: 
     val pages = buildList<SummaryPage> {
         val value = b.optDouble("value", 0.0)
         val todayPct = if (value > 0) b.optDouble("today", 0.0) / value * 100 else null
-        add(SummaryPage("Portfolio value", value, b.optDouble("pnl", 0.0), b.dbl("pnl_pct"), listOf(
-            Triple("Invested", rs(invested), null),
-            Triple("Your stocks today", pct(todayPct), upDown(c, todayPct)),
-            Triple("NEPSE today", pct(nepsePct), upDown(c, nepsePct)))))
         if (sold != null) add(SummaryPage("If you sell everything today", sold.optDouble("net"), sold.optDouble("pnl"),
             if (invested > 0) sold.optDouble("pnl") / invested * 100 else null, listOf(
                 Triple("Fees", rs(sold.optDouble("fees")), null),
                 Triple("Tax", rs(sold.optDouble("tax")), null),
                 Triple("Invested", rs(invested), null))))
+        add(SummaryPage("Portfolio value", value, b.optDouble("pnl", 0.0), b.dbl("pnl_pct"), listOf(
+            Triple("Invested", rs(invested), null),
+            Triple("Your stocks today", pct(todayPct), upDown(c, todayPct)),
+            Triple("NEPSE today", pct(nepsePct), upDown(c, nepsePct)))))
         listOf("ipo" to "IPO shares", "secondary" to "Bought in the market", "other" to "Bonus, rights & merger").forEach { (k, label) ->
             groups?.optJSONObject(k)?.let { g ->
                 val cost = g.optDouble("cost")
@@ -287,7 +287,8 @@ private fun SummaryStrip(mode: String, b: JSONObject, nepsePct: Double?, money: 
             }
         }
     }
-    val pager = rememberPagerState(pageCount = { pages.size })
+    // "If you sell everything today" sits first, one swipe to the left; the card opens on Portfolio value
+    val pager = rememberPagerState(initialPage = if (sold != null) 1 else 0, pageCount = { pages.size })
     val open = marketOpen(holidays)
     Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(28.dp)).background(c.card)
         .then(if (onOpen != null) Modifier.clickable(onClickLabel = "Open portfolio and market", onClick = onOpen) else Modifier)
