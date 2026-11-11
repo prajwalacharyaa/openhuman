@@ -505,6 +505,7 @@ private fun SetupCard(onSaved: () -> Unit) {
             }
         }
         Text("Phone abilities (texts, notifications, assistant) are under Phone abilities.", style = Type.small, color = c.muted)
+        if (Mochi.configured(ctx)) UnlockCard()
     }
 }
 
