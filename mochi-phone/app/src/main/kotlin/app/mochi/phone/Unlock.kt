@@ -174,7 +174,7 @@ object VaultUnlock {
     }
 }
 
-/** Settings: the vault's state, setting this phone up, and the Unlock button. */
+/** Settings > Security: the vault's state, setting this phone up, one Lock/Unlock button, Emergency wipe. */
 @Composable
 fun UnlockCard() {
     val ctx = LocalContext.current
@@ -207,7 +207,6 @@ fun UnlockCard() {
         } else if (countdown > 1) countdown -= 1
     }
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(Space.s)) {
-        Text("Server vault", style = Type.title, color = c.ink)
         Text(when (locked) { null -> "Checking…"; true -> "Locked: Tiny waits until you unlock it."; false -> "Unlocked: Tiny is running." },
             style = Type.small, color = if (locked == true) c.danger else c.muted)
         if (!enrolled) {
@@ -228,24 +227,25 @@ fun UnlockCard() {
                 }
             }
         } else {
-            Pill(if (busy) "Unlocking…" else "Unlock server", locked != false, Modifier.fillMaxWidth()) {
-                if (busy) return@Pill
+            // one button: Unlock while it's locked, Lock while it's open
+            Pill(when {
+                busy -> "…"
+                locked == null -> "Checking…"
+                locked == true -> "Unlock server"
+                else -> "Lock server"
+            }, locked == true, Modifier.fillMaxWidth()) {
+                if (busy || locked == null) return@Pill
                 busy = true; note = ""
-                VaultUnlock.unlock(a) { error ->
+                val opening = locked == true
+                val after: (String?) -> Unit = { error ->
                     busy = false
-                    note = error ?: "Unlocked. Tiny starts within a minute."
+                    note = error ?: if (opening) "Unlocked. Tiny starts within a minute." else "Locked. Tiny is stopped until you unlock it."
                     refresh()
                 }
+                if (opening) VaultUnlock.unlock(a, after) else VaultUnlock.lock(a, after)
             }
-            Pill(if (busy) "…" else "Lock now", false, Modifier.fillMaxWidth()) {
-                if (busy || locked == true) return@Pill
-                busy = true; note = ""
-                VaultUnlock.lock(a) { error ->
-                    busy = false
-                    note = error ?: "Locked. Tiny is stopped until you unlock it."
-                    refresh()
-                }
-            }
+            if (locked == false) Text("Locking stops Tiny (and a Claude session on the server) until it's unlocked again.",
+                style = Type.small, color = c.muted)
             when {
                 countdown > 0 -> {
                     Text("Wiping in $countdown…", style = Type.title, color = c.danger)

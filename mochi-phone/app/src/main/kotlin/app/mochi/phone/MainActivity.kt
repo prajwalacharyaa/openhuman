@@ -163,6 +163,7 @@ private fun App(tab: String, setTab: (String) -> Unit) {
         "memory" -> MemoryScreen { setTab("home") }
         "inbox" -> InboxScreen { setTab("home") }
         "maps" -> MapsScreen { setTab("home") }
+        "settings" -> SettingsScreen { setTab("home") }
         else -> HomeScreen { setTab(it) }
     }
 }
@@ -211,7 +212,6 @@ private fun HomeScreen(go: (String) -> Unit) {
     var showLogins by remember { mutableStateOf(false) }
     var ask by remember { mutableStateOf("") }
     var fixList by remember { mutableStateOf(fixes(ctx)) }
-    var showSetup by remember { mutableStateOf(false) }
     var busy by remember { mutableStateOf(setOf<String>()) }
     var update by remember { mutableStateOf<JSONObject?>(null) }
     var updating by remember { mutableStateOf(-1f) } // download progress, -1 = not downloading
@@ -289,7 +289,7 @@ private fun HomeScreen(go: (String) -> Unit) {
                         lineHeight = 13.sp), color = c.muted, textAlign = TextAlign.Center)
                 }
             }
-            if (!configured || showSetup) SetupCard { configured = true; showSetup = false }
+            if (!configured) SetupCard { configured = true }
             for (f in fixList) {
                 Text(f.label, style = Type.small.copy(fontWeight = Type.strong), color = c.amberInk,
                     modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(c.amberBg)
@@ -433,7 +433,7 @@ private fun HomeScreen(go: (String) -> Unit) {
                     modifier = Modifier.clip(RoundedCornerShape(8.dp)).clickable(role = Role.Button) { go("chats") }
                         .padding(vertical = Space.m, horizontal = Space.xs))
                 Text("Settings", style = Type.small, color = c.muted,
-                    modifier = Modifier.clip(RoundedCornerShape(8.dp)).clickable(role = Role.Button) { showSetup = !showSetup }
+                    modifier = Modifier.clip(RoundedCornerShape(8.dp)).clickable(role = Role.Button) { go("settings") }
                         .padding(vertical = Space.m, horizontal = Space.xs))
                 Text("Phone abilities", style = Type.small, color = c.muted,
                     modifier = Modifier.clip(RoundedCornerShape(8.dp))
@@ -485,15 +485,15 @@ private fun HomeScreen(go: (String) -> Unit) {
 }
 
 @Composable
-private fun SetupCard(onSaved: () -> Unit) {
+internal fun SetupCard(framed: Boolean = true, onSaved: () -> Unit) {
     val ctx = LocalContext.current
     val c = LocalMochi.current
     var host by remember { mutableStateOf(Mochi.host(ctx)) }
     var token by remember { mutableStateOf("") }
     var error by remember { mutableStateOf("") }
-    Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(24.dp)).background(c.card).padding(20.dp),
-        verticalArrangement = Arrangement.spacedBy(Space.m)) {
-        Text("Connect to your server", style = Type.title, color = c.ink)
+    Column(if (framed) Modifier.fillMaxWidth().clip(RoundedCornerShape(24.dp)).background(c.card).padding(20.dp)
+        else Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(Space.m)) {
+        if (framed) Text("Connect to your server", style = Type.title, color = c.ink)
         Text("Over Tailscale only: keep the Tailscale app connected.", style = Type.small, color = c.muted)
         Field(host, { host = it }, "Server, e.g. xarvis-core.tailnet.ts.net", singleLine = true)
         Box(Modifier.fillMaxWidth().clip(RoundedCornerShape(24.dp)).background(c.field).padding(Space.l)) {
@@ -517,14 +517,13 @@ private fun SetupCard(onSaved: () -> Unit) {
                 }
             }
         }
-        Text("Phone abilities (texts, notifications, assistant) are under Phone abilities.", style = Type.small, color = c.muted)
-        if (Mochi.configured(ctx)) UnlockCard()
+        if (framed) Text("Phone abilities (texts, notifications, assistant) are under Phone abilities.", style = Type.small, color = c.muted)
     }
 }
 
 /** A screen with a back button and a title. */
 @Composable
-private fun Screen(title: String, onBack: () -> Unit, action: (@Composable () -> Unit)? = null,
+internal fun Screen(title: String, onBack: () -> Unit, action: (@Composable () -> Unit)? = null,
                    content: @Composable () -> Unit) {
     val c = LocalMochi.current
     Column(Modifier.fillMaxSize().background(c.bg).systemBarsPadding().imePadding()) {
