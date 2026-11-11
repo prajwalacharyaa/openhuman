@@ -149,8 +149,8 @@ internal fun rs(x: Double, decimals: Boolean = false): String {
 
 internal fun pct(x: Double?): String = when {
     x == null -> "–"
-    x > 0 -> "▲ +%.1f%%".format(x)
-    x < 0 -> "▼ −%.1f%%".format(-x)
+    x > 0 -> "+%.1f%%".format(x)
+    x < 0 -> "−%.1f%%".format(-x)
     else -> "0.0%"
 }
 
@@ -175,11 +175,10 @@ internal fun TradingBoard(data: JSONObject, onChanged: () -> Unit) {
     val nepse = data.optJSONObject("market")?.optJSONArray("indices").objs().firstOrNull { it.optString("name") == "NEPSE Index" }
     Column(verticalArrangement = Arrangement.spacedBy(Space.s)) {
         SummaryStrip(mode, b, nepse?.dbl("pct"), snap.optJSONObject("money")?.optJSONObject(mode),
-            snap.optJSONObject("settings")?.optJSONArray("holidays"))
+            snap.optJSONObject("settings")?.optJSONArray("holidays")) { ctx.startActivity(Intent(ctx, ResearchActivity::class.java)) }
         val cards = snap.optJSONArray("cards").objs()
         if (cards.isNotEmpty()) Text("Needs you (${cards.size})", style = Type.title, color = c.ink, modifier = Modifier.padding(top = Space.s))
         cards.forEach { TradeCard(it, onChanged) }
-        Pill("Portfolio & market", true, Modifier.fillMaxWidth()) { ctx.startActivity(Intent(ctx, ResearchActivity::class.java)) }
     }
 }
 
@@ -220,20 +219,50 @@ private fun Amount(x: Double, big: Boolean = true) {
     }
 }
 
+/** A small rounded arrow, up-right for a gain, down-right for a loss (drawn, so it looks the same on every phone). */
+@Composable
+internal fun TrendArrow(up: Boolean, color: Color, size: androidx.compose.ui.unit.Dp = 12.dp) {
+    Canvas(Modifier.size(size)) {
+        val w = this.size.width; val h = this.size.height; val sw = w * 0.16f
+        val from = if (up) Offset(w * 0.2f, h * 0.8f) else Offset(w * 0.2f, h * 0.2f)
+        val to = if (up) Offset(w * 0.8f, h * 0.2f) else Offset(w * 0.8f, h * 0.8f)
+        drawLine(color, from, to, sw, cap = androidx.compose.ui.graphics.StrokeCap.Round)
+        drawLine(color, to, Offset(w * 0.38f, to.y), sw, cap = androidx.compose.ui.graphics.StrokeCap.Round)
+        drawLine(color, to, Offset(to.x, if (up) h * 0.62f else h * 0.38f), sw, cap = androidx.compose.ui.graphics.StrokeCap.Round)
+    }
+}
+
+/** ↗ 9,951.75 | 6.7%  in green, or ↘ in red. */
 @Composable
 private fun ChangeChip(amount: Double, pctV: Double?) {
     val c = LocalMochi.current
     val up = amount >= 0
-    Text((if (up) "▲ " else "▼ ") + rs(abs(amount)).removePrefix("Rs ") + (pctV?.let { "  %.1f%%".format(abs(it)) } ?: ""),
-        style = Type.small.copy(fontWeight = Type.strong), color = if (up) c.greenInk else c.danger,
-        modifier = Modifier.clip(RoundedCornerShape(10.dp)).background(if (up) c.greenBg else c.amberBg).padding(horizontal = 8.dp, vertical = 3.dp))
+    val ink = if (up) c.greenInk else c.danger
+    Row(Modifier.clip(RoundedCornerShape(10.dp)).background(if (up) c.greenBg else c.amberBg).padding(horizontal = 8.dp, vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+        TrendArrow(up, ink, 11.dp)
+        Text(rs(abs(amount)).removePrefix("Rs ") + (pctV?.let { "  |  %.1f%%".format(abs(it)) } ?: ""),
+            style = Type.small.copy(fontWeight = Type.strong), color = ink)
+    }
 }
 
-private data class SummaryPage(val label: String, val value: Double, val change: Double, val pct: Double?, val note: String)
-
-@OptIn(ExperimentalFoundationApi::class)
+/** Label over a value, small: the card's and the rows' figures. */
 @Composable
-private fun SummaryStrip(mode: String, b: JSONObject, nepsePct: Double?, money: JSONObject? = null, holidays: JSONArray? = null) {
+private fun MiniStat(label: String, value: String, modifier: Modifier = Modifier, ink: Color? = null, end: Boolean = false) {
+    val c = LocalMochi.current
+    Column(modifier, horizontalAlignment = if (end) Alignment.End else Alignment.Start) {
+        Text(label, style = Type.small, color = c.muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Text(value, style = Type.body.copy(fontWeight = Type.strong), color = ink ?: c.ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
+    }
+}
+
+private data class SummaryPage(val label: String, val value: Double, val change: Double, val pct: Double?,
+                               val stats: List<Triple<String, String, Color?>>)
+
+@OptIn(ExperimentalFoundationApi::class, ExperimentalLayoutApi::class)
+@Composable
+private fun SummaryStrip(mode: String, b: JSONObject, nepsePct: Double?, money: JSONObject? = null, holidays: JSONArray? = null,
+                         onOpen: (() -> Unit)? = null) {
     val c = LocalMochi.current
     val groups = b.optJSONObject("groups")
     val sold = b.optJSONObject("if_sold")
@@ -241,22 +270,28 @@ private fun SummaryStrip(mode: String, b: JSONObject, nepsePct: Double?, money: 
     val pages = buildList<SummaryPage> {
         val value = b.optDouble("value", 0.0)
         val todayPct = if (value > 0) b.optDouble("today", 0.0) / value * 100 else null
-        add(SummaryPage("Portfolio value", value, b.optDouble("pnl", 0.0), b.dbl("pnl_pct"),
-            "today ${pct(todayPct)}" + (nepsePct?.let { " · NEPSE ${pct(it)}" } ?: "")))
+        add(SummaryPage("Portfolio value", value, b.optDouble("pnl", 0.0), b.dbl("pnl_pct"), listOf(
+            Triple("Invested", rs(invested), null),
+            Triple("Your stocks today", pct(todayPct), upDown(c, todayPct)),
+            Triple("NEPSE today", pct(nepsePct), upDown(c, nepsePct)))))
         if (sold != null) add(SummaryPage("If you sell everything today", sold.optDouble("net"), sold.optDouble("pnl"),
-            if (invested > 0) sold.optDouble("pnl") / invested * 100 else null,
-            "after ${rs(sold.optDouble("fees") + sold.optDouble("tax"))} fees & tax"))
+            if (invested > 0) sold.optDouble("pnl") / invested * 100 else null, listOf(
+                Triple("Fees", rs(sold.optDouble("fees")), null),
+                Triple("Tax", rs(sold.optDouble("tax")), null),
+                Triple("Invested", rs(invested), null))))
         listOf("ipo" to "IPO shares", "secondary" to "Bought in the market", "other" to "Bonus, rights & merger").forEach { (k, label) ->
             groups?.optJSONObject(k)?.let { g ->
                 val cost = g.optDouble("cost")
-                add(SummaryPage("$label · ${g.optInt("stocks")} stocks", g.optDouble("value"), g.optDouble("pnl"),
-                    if (cost > 0) g.optDouble("pnl") / cost * 100 else null, "cost ${rs(cost)}"))
+                add(SummaryPage(label, g.optDouble("value"), g.optDouble("pnl"), if (cost > 0) g.optDouble("pnl") / cost * 100 else null,
+                    listOf(Triple("Invested", rs(cost), null), Triple("Shares", "${g.optInt("qty")}", null), Triple("Stocks", "${g.optInt("stocks")}", null))))
             }
         }
     }
     val pager = rememberPagerState(pageCount = { pages.size })
     val open = marketOpen(holidays)
-    Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(28.dp)).background(c.card).padding(horizontal = Space.xl, vertical = Space.l)) {
+    Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(28.dp)).background(c.card)
+        .then(if (onOpen != null) Modifier.clickable(onClickLabel = "Open portfolio and market", onClick = onOpen) else Modifier)
+        .padding(horizontal = Space.xl, vertical = Space.l)) {
         HorizontalPager(pager, Modifier.fillMaxWidth(), verticalAlignment = Alignment.Top, pageSpacing = Space.xl) { i ->
             val pg = pages[i]
             Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(Space.s)) {
@@ -264,10 +299,12 @@ private fun SummaryStrip(mode: String, b: JSONObject, nepsePct: Double?, money: 
                     Text(pg.label, style = Type.small, color = c.muted, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
                     BookPill(mode, open)
                 }
-                Amount(pg.value)
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Space.s)) {
-                    ChangeChip(pg.change, pg.pct)
-                    Text(pg.note, style = Type.small, color = c.muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                FlowRow(verticalArrangement = Arrangement.Center, horizontalArrangement = Arrangement.spacedBy(Space.m)) {
+                    Amount(pg.value)
+                    Box(Modifier.align(Alignment.CenterVertically)) { ChangeChip(pg.change, pg.pct) }
+                }
+                Row(Modifier.fillMaxWidth().padding(top = Space.s), horizontalArrangement = Arrangement.spacedBy(Space.m)) {
+                    pg.stats.forEachIndexed { k, (label, v, ink) -> MiniStat(label, v, Modifier.weight(1f), ink, end = k == pg.stats.size - 1) }
                 }
             }
         }
@@ -509,14 +546,16 @@ private fun HoldingsTab(data: JSONObject, mode: String, onStock: (String) -> Uni
     val snap = data.optJSONObject("snapshot") ?: JSONObject()
     val b = snap.optJSONObject("books")?.optJSONObject(mode) ?: JSONObject()
     var sort by remember { mutableStateOf("value") }
+    var desc by remember { mutableStateOf(true) }
     var note by remember { mutableStateOf("") }
-    val order: Comparator<JSONObject> = when (sort) {
-        "pnl%" -> compareByDescending<JSONObject> { it.optDouble("pnl_pct") }
-        "pnl" -> compareByDescending<JSONObject> { it.optDouble("pnl") }
-        "today" -> compareByDescending<JSONObject> { it.dbl("today_pct") ?: -999.0 }
+    val base: Comparator<JSONObject> = when (sort) {
+        "pnl%" -> compareBy<JSONObject> { it.optDouble("pnl_pct") }
+        "pnl" -> compareBy<JSONObject> { it.optDouble("pnl") }
+        "today" -> compareBy<JSONObject> { it.dbl("today_pct") ?: -999.0 }
         "name" -> compareBy<JSONObject> { it.optString("symbol") }
-        else -> compareByDescending<JSONObject> { it.optDouble("value") }
+        else -> compareBy<JSONObject> { it.optDouble("value") }
     }
+    val order: Comparator<JSONObject> = if (desc) base.reversed() else base
     val rows = b.optJSONArray("holdings").objs().sortedWith(order)
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(Space.l), verticalArrangement = Arrangement.spacedBy(Space.s)) {
         item {
@@ -528,10 +567,11 @@ private fun HoldingsTab(data: JSONObject, mode: String, onStock: (String) -> Uni
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Row(Modifier.weight(1f).horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(Space.xs)) {
                     listOf("value" to "Value", "pnl%" to "P/L %", "pnl" to "P/L Rs", "today" to "Today", "name" to "A-Z").forEach { (k, label) ->
-                        Text(label, style = Type.small.copy(fontWeight = if (sort == k) Type.strong else null),
+                        Text(label + (if (sort == k) (if (desc) "  ↓" else "  ↑") else ""), style = Type.small.copy(fontWeight = if (sort == k) Type.strong else null),
                             color = if (sort == k) c.bg else c.ink,
                             modifier = Modifier.clip(RoundedCornerShape(14.dp)).background(if (sort == k) c.ink else c.field)
-                                .clickable { sort = k }.padding(horizontal = Space.m, vertical = Space.xs))
+                                .clickable { if (sort == k) desc = !desc else { sort = k; desc = k != "name" } }
+                                .padding(horizontal = Space.m, vertical = Space.xs))
                     }
                 }
                 if (mode == "live") Text("Fetch", style = Type.small.copy(fontWeight = Type.strong), color = c.blueInk,
@@ -559,32 +599,52 @@ private fun HoldingRow(h: JSONObject, onTap: () -> Unit) {
     val c = LocalMochi.current
     val pnl = h.optDouble("pnl", 0.0)
     val pnlPct = h.dbl("pnl_pct")
-    Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp)).background(c.card).clickable(onClick = onTap).padding(Space.l),
-        verticalAlignment = Alignment.Top) {
-        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Row {
-                Text(h.optString("symbol"), style = Type.title, color = c.ink, modifier = Modifier.alignByBaseline())
-                Text("  ${h.optInt("qty")} shares", style = Type.small, color = c.muted, modifier = Modifier.alignByBaseline())
+    val since = h.optString("since").takeIf { it.isNotBlank() && it != "null" }?.let {
+        runCatching { java.time.LocalDate.parse(it).format(java.time.format.DateTimeFormatter.ofPattern("d MMM yyyy")) }.getOrDefault(it)
+    }
+    Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp)).background(c.card).clickable(onClick = onTap).padding(Space.l),
+        verticalArrangement = Arrangement.spacedBy(Space.m)) {
+        // name, how many, since when · the change and the little graph
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text(h.optString("symbol"), style = Type.title, color = c.ink)
+                Text("${h.optInt("qty")} shares" + (since?.let { " · since $it" } ?: ""), style = Type.small, color = c.muted)
             }
-            Text(rs(h.optDouble("value")), style = Type.body.copy(fontWeight = Type.strong), color = c.ink)
-            Text("avg ${"%.1f".format(h.optDouble("avg"))}  →  ${h.dbl("ltp")?.let { "%.1f".format(it) } ?: "–"}", style = Type.small, color = c.muted)
-            // badges wrap onto more lines when a stock has many (UAIL: merger + bonus + rights): the card just grows
-            val names = mapOf("ipo" to "IPO", "secondary" to "Bought", "bonus" to "Bonus", "rights" to "Rights", "merger" to "Merger", "fpo" to "FPO")
-            FlowRow(Modifier.padding(top = 2.dp), horizontalArrangement = Arrangement.spacedBy(4.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                h.optJSONObject("origin")?.let { o -> o.keys().asSequence().toList().forEach { k -> Badge("${names[k] ?: k} ${o.optInt(k)}", c.field, c.muted) } }
-                h.optString("next_sellable").takeIf { it.isNotBlank() && it != "null" }?.let { Badge("T+2 ${it.takeLast(5)}", c.amberBg, c.amberInk) }
-                if (h.optBoolean("wacc_unknown")) Badge("WACC?", c.violetBg, c.violetInk)
-                h.optJSONObject("verdict")?.optString("verdict")?.let { v ->
+            Column(horizontalAlignment = Alignment.End) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    if (pnlPct != null && pnlPct != 0.0) TrendArrow(pnlPct > 0, upDown(c, pnlPct), 12.dp)
+                    Text(pct(pnlPct), style = Type.title, color = upDown(c, pnlPct))
+                }
+                Spark(h.optJSONArray("spark"), Modifier.padding(top = 2.dp).width(72.dp).height(22.dp))
+            }
+        }
+        // the figures, each with its name
+        Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(c.field).padding(horizontal = Space.m, vertical = Space.s),
+            horizontalArrangement = Arrangement.spacedBy(Space.s)) {
+            MiniStat("Bought at (avg)", "%.2f".format(h.optDouble("avg")), Modifier.weight(1f))
+            MiniStat("Price now", h.dbl("ltp")?.let { "%.2f".format(it) } ?: "–", Modifier.weight(1f),
+                ink = h.dbl("today_pct")?.let { upDown(c, it) })
+            MiniStat("Profit / loss", (if (pnl > 0) "+" else "") + rs(pnl), Modifier.weight(1f), upDown(c, pnl), end = true)
+        }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            MiniStat("Invested", rs(h.optDouble("cost", h.optDouble("avg") * h.optInt("qty"))), Modifier.weight(1f))
+            MiniStat("Worth now", rs(h.optDouble("value")), Modifier.weight(1f))
+            MiniStat("Today", pct(h.dbl("today_pct")), Modifier.weight(1f), upDown(c, h.dbl("today_pct")), end = true)
+        }
+        // badges wrap onto more lines when a stock has many (UAIL: merger + bonus + rights): the card just grows
+        val names = mapOf("ipo" to "IPO", "secondary" to "Bought", "bonus" to "Bonus", "rights" to "Rights", "merger" to "Merger", "fpo" to "FPO")
+        val origin = h.optJSONObject("origin")
+        val verdict = h.optJSONObject("verdict")?.optString("verdict")
+        val t2 = h.optString("next_sellable").takeIf { it.isNotBlank() && it != "null" }
+        if (origin != null || verdict != null || t2 != null || h.optBoolean("wacc_unknown"))
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                origin?.let { o -> o.keys().asSequence().toList().forEach { k -> Badge("${names[k] ?: k} ${o.optInt(k)}", c.field, c.muted) } }
+                t2?.let { Badge("Sellable ${it.takeLast(5)}", c.amberBg, c.amberInk) }
+                if (h.optBoolean("wacc_unknown")) Badge("Buy price unknown", c.violetBg, c.violetInk)
+                verdict?.let { v ->
                     Badge("Samir: $v", when (v) { "sell" -> c.amberBg; "add" -> c.greenBg; else -> c.field }, when (v) { "sell" -> c.danger; "add" -> c.greenInk; else -> c.ink })
                 }
             }
-        }
-        Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Text(pct(pnlPct), style = Type.body.copy(fontWeight = Type.strong), color = upDown(c, pnlPct))
-            Text((if (pnl > 0) "+" else "") + rs(pnl), style = Type.small, color = upDown(c, pnl))
-            Spark(h.optJSONArray("spark"), Modifier.padding(top = 2.dp).width(72.dp).height(24.dp))
-            h.dbl("today_pct")?.let { Text("today ${pct(it)}", style = Type.small, color = c.muted) }
-        }
     }
 }
 
@@ -636,7 +696,10 @@ private fun TradesTab(data: JSONObject, mode: String, onStock: (String) -> Unit)
                     Text("${t.optString("at").take(16).replace('T', ' ')} · ${rs(amount)} · fees ${rs(t.optString("fees").toDoubleOrNull() ?: 0.0, true)}" +
                         (if (sell) " · tax ${rs(t.optString("tax").toDoubleOrNull() ?: 0.0, true)}" else ""), style = Type.small, color = c.muted)
                 }
-                if (sell) Text("${if (pnl >= 0) "▲ +" else "▼ "}${rs(pnl)}", style = Type.small.copy(fontWeight = Type.strong), color = upDown(c, pnl))
+                if (sell) Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    TrendArrow(pnl >= 0, upDown(c, pnl), 11.dp)
+                    Text(rs(abs(pnl)).removePrefix("Rs "), style = Type.small.copy(fontWeight = Type.strong), color = upDown(c, pnl))
+                }
             }
         }
     }
@@ -1072,7 +1135,9 @@ private fun SignalsPanel(x: JSONObject) {
             val side = g.optInt("side")
             val ink = if (side > 0) c.greenInk else if (side < 0) c.danger else c.muted
             Row(verticalAlignment = Alignment.Top, horizontalArrangement = Arrangement.spacedBy(Space.m)) {
-                Text(if (side > 0) "▲" else if (side < 0) "▼" else "●", style = Type.small, color = ink, modifier = Modifier.width(14.dp))
+                Box(Modifier.width(14.dp).padding(top = 3.dp)) {
+                    if (side != 0) TrendArrow(side > 0, ink, 12.dp) else Box(Modifier.size(6.dp).clip(CircleShape).background(ink))
+                }
                 Column(Modifier.weight(1f)) {
                     Text(g.optString("name"), style = Type.small.copy(fontWeight = Type.strong), color = c.ink)
                     Text(g.optString("text"), style = Type.small, color = c.muted)
@@ -1102,7 +1167,7 @@ private fun IndicatorsPanel(i: JSONObject) {
         TileGrid(listOf(
             Triple("RSI 14", rsi?.let { "%.0f".format(it) + when { it >= 70 -> " high"; it <= 30 -> " low"; else -> "" } } ?: "–",
                 rsi?.let { if (it >= 70) c.danger else if (it <= 30) c.greenInk else null }),
-            Triple("MACD", if (macd != null && sig != null) (if (macd > sig) "▲ up" else "▼ down") else "–",
+            Triple("MACD", if (macd != null && sig != null) (if (macd > sig) "rising" else "falling") else "–",
                 if (macd != null && sig != null) upDown(c, macd - sig) else null),
             Triple("Trend", i.optString("trend").ifBlank { "–" }, null),
             Triple("20-day avg", num1(i.dbl("sma20")), null), Triple("50-day avg", num1(i.dbl("sma50")), null),
