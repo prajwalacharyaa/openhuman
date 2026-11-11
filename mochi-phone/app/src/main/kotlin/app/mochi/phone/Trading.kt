@@ -637,8 +637,10 @@ private fun HoldingRow(h: JSONObject, onTap: () -> Unit) {
         val origin = h.optJSONObject("origin")
         val verdict = h.optJSONObject("verdict")?.optString("verdict")
         val t2 = h.optString("next_sellable").takeIf { it.isNotBlank() && it != "null" }
-        if (origin != null || verdict != null || t2 != null || h.optBoolean("wacc_unknown"))
-            FlowRow(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        // bottom: where the shares came from (left) · what selling all of them today really brings (right)
+        val sold = h.optJSONObject("if_sold")
+        Row(verticalAlignment = Alignment.Bottom) {
+            FlowRow(Modifier.weight(1f), horizontalArrangement = Arrangement.spacedBy(4.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 origin?.let { o -> o.keys().asSequence().toList().forEach { k -> Badge("${names[k] ?: k} ${o.optInt(k)}", c.field, c.muted) } }
                 t2?.let { Badge("Sellable ${it.takeLast(5)}", c.amberBg, c.amberInk) }
                 if (h.optBoolean("wacc_unknown")) Badge("Buy price unknown", c.violetBg, c.violetInk)
@@ -646,6 +648,10 @@ private fun HoldingRow(h: JSONObject, onTap: () -> Unit) {
                     Badge("Samir: $v", when (v) { "sell" -> c.amberBg; "add" -> c.greenBg; else -> c.field }, when (v) { "sell" -> c.danger; "add" -> c.greenInk; else -> c.ink })
                 }
             }
+            sold?.let {
+                MiniStat("If sold today", rs(it.optDouble("net")), Modifier.padding(start = Space.s), end = true)
+            }
+        }
     }
 }
 
