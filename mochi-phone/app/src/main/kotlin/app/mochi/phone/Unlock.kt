@@ -189,6 +189,10 @@ fun UnlockCard() {
     var wipeTyping by remember { mutableStateOf(false) }
     var confirm by remember { mutableStateOf("") }
     var countdown by remember { mutableStateOf(0) }
+    fun refresh() = scope.launch {
+        locked = withContext(Dispatchers.IO) { runCatching { VaultUnlock.status(ctx).optBoolean("locked") }.getOrNull() }
+    }
+    LaunchedEffect(Unit) { refresh() }
     // the 5-second Cancel window, then the fingerprint, then the wipe
     LaunchedEffect(countdown) {
         if (countdown <= 0) return@LaunchedEffect
@@ -202,10 +206,6 @@ fun UnlockCard() {
             }
         } else if (countdown > 1) countdown -= 1
     }
-    fun refresh() = scope.launch {
-        locked = withContext(Dispatchers.IO) { runCatching { VaultUnlock.status(ctx).optBoolean("locked") }.getOrNull() }
-    }
-    LaunchedEffect(Unit) { refresh() }
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(Space.s)) {
         Text("Server vault", style = Type.title, color = c.ink)
         Text(when (locked) { null -> "Checking…"; true -> "Locked: Tiny waits until you unlock it."; false -> "Unlocked: Tiny is running." },
