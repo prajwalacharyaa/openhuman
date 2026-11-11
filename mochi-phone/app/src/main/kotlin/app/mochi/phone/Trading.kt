@@ -156,7 +156,7 @@ internal fun TradingBoard(data: JSONObject, onChanged: () -> Unit) {
     val b = snap.optJSONObject("books")?.optJSONObject(mode) ?: JSONObject()
     val nepse = data.optJSONObject("market")?.optJSONArray("indices").objs().firstOrNull { it.optString("name") == "NEPSE Index" }
     Column(verticalArrangement = Arrangement.spacedBy(Space.s)) {
-        SummaryStrip(mode, b, nepse?.dbl("pct"))
+        SummaryStrip(mode, b, nepse?.dbl("pct"), snap.optJSONObject("money")?.optJSONObject(mode))
         val cards = snap.optJSONArray("cards").objs()
         if (cards.isNotEmpty()) Text("Needs you (${cards.size})", style = Type.title, color = c.ink, modifier = Modifier.padding(top = Space.s))
         cards.forEach { TradeCard(it, onChanged) }
@@ -165,7 +165,19 @@ internal fun TradingBoard(data: JSONObject, onChanged: () -> Unit) {
 }
 
 @Composable
-private fun SummaryStrip(mode: String, b: JSONObject, nepsePct: Double?) {
+private fun MoneyLine(money: JSONObject?) {
+    val c = LocalMochi.current
+    if (money == null) return
+    val upd = money.optString("collateral_updated").take(16).replace('T', ' ')
+    Text("Can buy with now: ${rs(money.optDouble("available"))}" + (if (upd.isNotBlank()) " (set $upd)" else ""),
+        style = Type.small.copy(fontWeight = Type.strong), color = c.ink)
+    money.optJSONArray("to_bank").objs().forEach { t ->
+        Text("To your bank on ${t.optString("due")}: ${rs(t.optDouble("amount"), true)} (${t.optString("symbol")} sale)", style = Type.small, color = c.muted)
+    }
+}
+
+@Composable
+private fun SummaryStrip(mode: String, b: JSONObject, nepsePct: Double?, money: JSONObject? = null) {
     val c = LocalMochi.current
     val paper = mode == "paper"
     Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(24.dp)).background(if (paper) c.blueBg else c.greenBg).padding(Space.l),
@@ -181,6 +193,7 @@ private fun SummaryStrip(mode: String, b: JSONObject, nepsePct: Double?) {
         Text("today ${pct(if (b.optDouble("value", 0.0) > 0) b.optDouble("today", 0.0) / b.optDouble("value") * 100 else null)} · " +
             "limit ${rs(b.optDouble("collateral", 0.0))}" + (nepsePct?.let { " · NEPSE ${pct(it)}" } ?: ""),
             style = Type.small, color = c.muted)
+        MoneyLine(money)
     }
 }
 
@@ -207,7 +220,11 @@ internal fun TradeCard(k: JSONObject, onChanged: () -> Unit) {
     }
     Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp)).background(c.card).clickable { open = true }.padding(Space.m),
         verticalArrangement = Arrangement.spacedBy(Space.xs)) {
-        Text(title, style = Type.body.copy(fontWeight = Type.strong), color = accent, maxLines = 2, overflow = TextOverflow.Ellipsis)
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Space.xs)) {
+            if (k.optString("mode") == "paper") Badge("PAPER", c.blueBg, c.blueInk)
+            else if (k.optString("mode") == "live") Badge("LIVE", c.greenBg, c.greenInk)
+            Text(title, style = Type.body.copy(fontWeight = Type.strong), color = accent, maxLines = 2, overflow = TextOverflow.Ellipsis)
+        }
         val sub = when (type) {
             "ticket" -> "${k.optString("mode").uppercase()} · fees ${rs(k.optDouble("fees"), true)} · ${k.optString("why")}"
             "suggestion" -> "${k.optString("mode").uppercase()} · ${k.optString("why")}"
@@ -217,7 +234,9 @@ internal fun TradeCard(k: JSONObject, onChanged: () -> Unit) {
         Row(horizontalArrangement = Arrangement.spacedBy(Space.s)) {
             when (type) {
                 "ticket" -> {
-                    Pill(if (k.optString("mode") == "live") "I placed it" else "Fill (paper)", true, Modifier.weight(1f), 40.dp) {
+                    val live = k.optString("mode") == "live"
+                    val sell = k.optString("side") == "sell"
+                    Pill(if (live) (if (sell) "I sold it in TMS" else "I bought it in TMS") else "Fill in paper (pretend)", true, Modifier.weight(1f), 40.dp) {
                         if (!busy) { if (k.optString("mode") == "live") placing = true else send("placed") }
                     }
                     Pill("Not now", false, Modifier.weight(1f), 40.dp) { if (!busy) send("notnow") }
@@ -242,7 +261,8 @@ internal fun TradeCard(k: JSONObject, onChanged: () -> Unit) {
                     Text("Amount ${rs(k.optDouble("amount"), true)} · fees ${rs(k.optDouble("fees"), true)}", style = Type.small)
                     if (k.optString("stop").isNotBlank() && k.optString("stop") != "null") Text("Stop-loss ${k.optString("stop")}", style = Type.small)
                     if (k.optString("target").isNotBlank() && k.optString("target") != "null") Text("Target ${k.optString("target")}", style = Type.small)
-                    Text("Place it in TMS yourself, then tap \"I placed it\" with the real price and quantity. It expires at the close.",
+                    Text(if (k.optString("mode") == "live") "Nothing is traded by tapping: you place it in TMS yourself, then tap \"I sold / bought it in TMS\" with the real price and quantity. It expires at the close."
+                        else "PAPER: pretend money. \"Fill in paper\" moves only the paper book; nothing real happens.",
                         style = Type.small, color = c.muted)
                 }
                 Text("Made ${k.optString("created").replace('T', ' ')}", style = Type.small, color = c.muted)
@@ -300,7 +320,7 @@ private fun ResearchScreen(onBack: () -> Unit, onHome: () -> Unit) {
     WhileVisible(tick) {
         while (true) { io(scope, { Trading.load(ctx) }) { data = it }; delay(15_000) }
     }
-    val tabs = listOf("Holdings", "Watchlist", "Market", "Journal", "Calendar")
+    val tabs = listOf("Holdings", "Trades", "Watchlist", "Market", "Journal", "Calendar")
     val pager = rememberPagerState { tabs.size }
     val snap = data?.optJSONObject("snapshot")
     val mode = view ?: snap?.optString("mode") ?: "paper"
@@ -329,9 +349,10 @@ private fun ResearchScreen(onBack: () -> Unit, onHome: () -> Unit) {
                 if (data == null) Text("Loading…", style = Type.body, color = c.muted, modifier = Modifier.padding(Space.xl))
                 else when (page) {
                     0 -> HoldingsTab(data!!, mode, { stock = it }) { scope.launch { delay(2_000); tick++ } }
-                    1 -> WatchTab(data!!, { stock = it }) { scope.launch { delay(2_000); tick++ } }
-                    2 -> MarketTab(data!!) { stock = it }
-                    3 -> JournalTab(data!!, mode)
+                    1 -> TradesTab(data!!, mode) { stock = it }
+                    2 -> WatchTab(data!!, { stock = it }) { scope.launch { delay(2_000); tick++ } }
+                    3 -> MarketTab(data!!) { stock = it }
+                    4 -> JournalTab(data!!, mode)
                     else -> CalendarTab(data!!) { stock = it }
                 }
             }
@@ -369,7 +390,7 @@ private fun HoldingsTab(data: JSONObject, mode: String, onStock: (String) -> Uni
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(Space.l), verticalArrangement = Arrangement.spacedBy(Space.s)) {
         item {
             val nepse = data.optJSONObject("market")?.optJSONArray("indices").objs().firstOrNull { it.optString("name") == "NEPSE Index" }
-            SummaryStrip(mode, b, nepse?.dbl("pct"))
+            SummaryStrip(mode, b, nepse?.dbl("pct"), snap.optJSONObject("money")?.optJSONObject(mode))
         }
         item {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
@@ -414,6 +435,9 @@ private fun HoldingRow(h: JSONObject, onTap: () -> Unit) {
                     Badge("T+2 ${it.takeLast(5)}", c.amberBg, c.amberInk)
                 }
                 if (h.optBoolean("wacc_unknown")) Badge("WACC?", c.violetBg, c.violetInk)
+                h.optJSONObject("verdict")?.optString("verdict")?.let { v ->
+                    Badge(v.uppercase(), when (v) { "sell" -> c.amberBg; "add" -> c.greenBg; else -> c.field }, when (v) { "sell" -> c.danger; "add" -> c.greenInk; else -> c.ink })
+                }
             }
             val since = h.optInt("held_days", -1).takeIf { it >= 0 }?.let { " · ${it} d" } ?: ""
             Text("${"%.1f".format(h.optDouble("avg"))} → ${h.dbl("ltp")?.let { "%.1f".format(it) } ?: "–"} · " +
@@ -446,6 +470,36 @@ private fun Spark(arr: JSONArray?, modifier: Modifier) {
             if (i == 0) p.moveTo(px, py) else p.lineTo(px, py)
         }
         drawPath(p, color, style = Stroke(width = 2.dp.toPx()))
+    }
+}
+
+// ---- tab: trades, every fill as it was recorded (real = you placed it in TMS and confirmed; paper = pretend) ----
+
+@Composable
+private fun TradesTab(data: JSONObject, mode: String, onStock: (String) -> Unit) {
+    val c = LocalMochi.current
+    val trades = data.optJSONObject("snapshot")?.optJSONArray("trades").objs().filter { it.optString("mode") == mode }
+    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(Space.l), verticalArrangement = Arrangement.spacedBy(Space.s)) {
+        item {
+            Text(if (mode == "live") "Real trades you confirmed (\"I sold / bought it in TMS\"). MeroShare's Transaction History will be checked against these."
+                 else "PAPER trades: pretend money, nothing real.", style = Type.small, color = c.muted)
+        }
+        if (trades.isEmpty()) item { Text("No ${mode} trades yet.", style = Type.body, color = c.muted) }
+        items(trades, key = { "t" + it.optInt("id") }) { t ->
+            val pnl = t.optString("pnl").toDoubleOrNull() ?: 0.0
+            val sell = t.optString("side") == "sell"
+            Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(c.card).clickable { onStock(t.optString("symbol")) }
+                .padding(Space.m), verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("${if (sell) "SOLD" else "BOUGHT"} ${t.optInt("qty")} ${t.optString("symbol")} @ ${t.optString("price")}",
+                        style = Type.body.copy(fontWeight = Type.strong), color = if (sell) c.danger else c.greenInk)
+                    val amount = (t.optString("price").toDoubleOrNull() ?: 0.0) * t.optInt("qty")
+                    Text("${t.optString("at").take(16).replace('T', ' ')} · ${rs(amount)} · fees ${rs(t.optString("fees").toDoubleOrNull() ?: 0.0, true)}" +
+                        (if (sell) " · tax ${rs(t.optString("tax").toDoubleOrNull() ?: 0.0, true)}" else ""), style = Type.small, color = c.muted)
+                }
+                if (sell) Text("${if (pnl >= 0) "▲ +" else "▼ "}${rs(pnl)}", style = Type.small.copy(fontWeight = Type.strong), color = upDown(c, pnl))
+            }
+        }
     }
 }
 
@@ -708,7 +762,21 @@ internal fun StockSheet(symbol: String, onClose: () -> Unit) {
                                 .clickable { days = n }.padding(horizontal = Space.m, vertical = 2.dp))
                     }
                 }
-                Candles(x.optJSONArray("bars").objs().takeLast(days), x.optJSONObject("indicators"))
+                val pos = x.optJSONObject("position")
+                val mine = pos?.optJSONObject("live") ?: pos?.optJSONObject("paper")
+                val ind0 = x.optJSONObject("indicators")
+                val lines = buildList {
+                    mine?.dbl("avg")?.let { add(Triple(it, "your buy", c.blueInk)) }
+                    mine?.optString("stop")?.toDoubleOrNull()?.let { add(Triple(it, "stop", c.danger)) }
+                    mine?.optString("target")?.toDoubleOrNull()?.let { add(Triple(it, "target", c.greenInk)) }
+                    ind0?.dbl("wk52_high")?.let { add(Triple(it, "52w high", c.muted)) }
+                    ind0?.dbl("wk52_low")?.let { add(Triple(it, "52w low", c.muted)) }
+                }
+                Candles(x.optJSONArray("bars").objs().takeLast(days), ind0, lines)
+                // what December asked for first: where he stands, Samir's view, and the signals in one line
+                pos?.let { PositionBlock(it, ind0?.dbl("close")) }
+                SignalsBlock(x)
+                x.optJSONObject("stats")?.let { StatsBlock(it) }
                 x.optJSONObject("indicators")?.let { IndicatorGrid(it) }
                 val pats = x.optJSONArray("patterns").objs().takeLast(6).reversed()
                 if (pats.isNotEmpty()) InfoBlock("Candle patterns") {
@@ -751,6 +819,56 @@ internal fun StockSheet(symbol: String, onClose: () -> Unit) {
 }
 
 @Composable
+private fun PositionBlock(pos: JSONObject, ltp: Double?) {
+    val c = LocalMochi.current
+    listOf("live", "paper").forEach { m ->
+        val p = pos.optJSONObject(m) ?: return@forEach
+        InfoBlock("Your position (${m.uppercase()})") {
+            val qty = p.optInt("qty"); val avg = p.optDouble("avg")
+            val pnl = ltp?.let { (it - avg) * qty }
+            KeyValue("Shares", "$qty at ${"%.2f".format(avg)}")
+            if (pnl != null && ltp != null) Text("${if (pnl >= 0) "▲ +" else "▼ "}${rs(pnl)} (${pct((ltp - avg) / avg * 100).drop(2)}) before costs",
+                style = Type.body.copy(fontWeight = Type.strong), color = upDown(c, pnl))
+            KeyValue("Stop-loss", p.optString("stop").takeIf { it.isNotBlank() && it != "null" } ?: "none set: ask Samir")
+            KeyValue("Target", p.optString("target").takeIf { it.isNotBlank() && it != "null" } ?: "none set")
+            p.optJSONObject("verdict")?.let { v ->
+                Text("Samir: ${v.optString("verdict").uppercase()} (${v.optString("at").take(10)})", style = Type.body.copy(fontWeight = Type.strong),
+                    color = when (v.optString("verdict")) { "sell" -> c.danger; "add" -> c.greenInk; else -> c.ink })
+                Text(v.optString("why"), style = Type.small, color = c.muted)
+            } ?: Text("No verdict from Samir yet: ask him \"review my holdings\".", style = Type.small, color = c.muted)
+        }
+    }
+}
+
+@Composable
+private fun SignalsBlock(x: JSONObject) {
+    val c = LocalMochi.current
+    val sig = x.optJSONArray("signals").objs()
+    if (sig.isEmpty()) return
+    val sc = x.optJSONObject("score")
+    InfoBlock("Signals: ${sc?.optInt("plus") ?: 0} positive · ${sc?.optInt("minus") ?: 0} negative (calculated, not advice)") {
+        sig.forEach { g ->
+            val side = g.optInt("side")
+            Row(verticalAlignment = Alignment.Top, horizontalArrangement = Arrangement.spacedBy(Space.xs)) {
+                Text(if (side > 0) "▲" else if (side < 0) "▼" else "•", style = Type.small,
+                    color = if (side > 0) c.greenInk else if (side < 0) c.danger else c.muted)
+                Text("${g.optString("name")}: ${g.optString("text")}", style = Type.small, color = c.ink)
+            }
+        }
+    }
+}
+
+@Composable
+private fun StatsBlock(st: JSONObject) {
+    InfoBlock("Statistics") {
+        KeyValue("1 week / 1 month", "${pct(st.dbl("ret_1w"))} / ${pct(st.dbl("ret_1m"))}")
+        KeyValue("3 months / 1 year", "${pct(st.dbl("ret_3m"))} / ${pct(st.dbl("ret_1y"))}")
+        KeyValue("Biggest drop from a peak", st.dbl("max_drop_pct")?.let { "%.1f%%".format(it) } ?: "–")
+        KeyValue("Typical daily move", st.dbl("daily_volatility_pct")?.let { "±%.2f%%".format(it) } ?: "–")
+    }
+}
+
+@Composable
 private fun InfoBlock(title: String, content: @Composable () -> Unit) {
     val c = LocalMochi.current
     Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(18.dp)).background(c.card).padding(Space.m), verticalArrangement = Arrangement.spacedBy(2.dp)) {
@@ -786,12 +904,16 @@ private fun IndicatorGrid(i: JSONObject) {
 
 /** Candlesticks drawn here (no chart library: the app stays small), with SMA 20 and Bollinger bands from the server. */
 @Composable
-private fun Candles(bars: List<JSONObject>, ind: JSONObject?) {
+private fun Candles(bars: List<JSONObject>, ind: JSONObject?, lines: List<Triple<Double, String, Color>> = emptyList()) {
     val c = LocalMochi.current
     if (bars.size < 2) { Text("Not enough days yet.", style = Type.small, color = c.muted); return }
     val highs = bars.map { it.optDouble("high") }.filter { !it.isNaN() }
     val lows = bars.map { it.optDouble("low") }.filter { !it.isNaN() }
-    val lo = lows.minOrNull() ?: 0.0; val hi = highs.maxOrNull() ?: 1.0; val span = (hi - lo).takeIf { it > 0 } ?: 1.0
+    // the price lines (your buy, stop, target, 52 weeks) widen the range only if they're near it
+    val near = lines.map { it.first }.filter { it > (lows.minOrNull() ?: 0.0) * 0.85 && it < (highs.maxOrNull() ?: 1.0) * 1.15 }
+    val lo = (lows + near).minOrNull() ?: 0.0; val hi = (highs + near).maxOrNull() ?: 1.0; val span = (hi - lo).takeIf { it > 0 } ?: 1.0
+    val vols = bars.map { it.optDouble("volume").takeIf { v -> !v.isNaN() } ?: 0.0 }
+    val vmax = vols.maxOrNull()?.takeIf { it > 0 } ?: 1.0
     val closes = bars.map { it.optDouble("close") }
     Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(18.dp)).background(c.card).padding(Space.s)) {
         Canvas(Modifier.fillMaxWidth().height(220.dp)) {
@@ -817,7 +939,22 @@ private fun Candles(bars: List<JSONObject>, ind: JSONObject?) {
                 }
                 drawPath(p, c.blueInk, style = Stroke(width = 1.5.dp.toPx()))
             }
+            lines.forEach { (v, _, color) ->
+                if (v in lo..hi) drawLine(color, Offset(0f, y(v)), Offset(size.width, y(v)), 1.dp.toPx(),
+                    pathEffect = androidx.compose.ui.graphics.PathEffect.dashPathEffect(floatArrayOf(10f, 8f)))
+            }
         }
+        // volume under the candles
+        Canvas(Modifier.fillMaxWidth().height(40.dp)) {
+            val w = size.width / bars.size
+            bars.forEachIndexed { i, b ->
+                val up = (b.optDouble("close")) >= (b.optDouble("open").takeIf { !it.isNaN() } ?: b.optDouble("close"))
+                val h = (vols[i] / vmax).toFloat() * size.height
+                drawRect(if (up) c.greenInk.copy(alpha = 0.5f) else c.danger.copy(alpha = 0.5f), Offset(w * i + w * 0.15f, size.height - h), Size(w * 0.7f, h))
+            }
+        }
+        if (lines.isNotEmpty()) Text(lines.filter { it.first in lo..hi }.joinToString(" · ") { "${it.second} ${"%.1f".format(it.first)}" },
+            style = Type.small, color = c.muted)
         Text("${bars.first().optString("day")} – ${bars.last().optString("day")} · blue: 20-day average · high ${"%.1f".format(hi)} low ${"%.1f".format(lo)}",
             style = Type.small, color = c.muted)
     }
