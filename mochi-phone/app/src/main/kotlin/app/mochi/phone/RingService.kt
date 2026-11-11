@@ -184,7 +184,7 @@ class RingService : Service() {
             if (notice.has("url")) return approvalNotice(c, notice.optString("body"))
             Mochi.addToInbox(c, notice)
             MochiWidget.update(c, force = true) // the red count
-            val open = withHome(c, 7 + notices % 50, Intent(c, ChatActivity::class.java))
+            val open = landing(c, notice, 7 + notices % 50)
             val body = notice.optString("body")
             val n = Notification.Builder(c, Mochi.CHANNEL_NOTICES)
                 .setSmallIcon(R.drawable.ic_stat_mochi)
@@ -195,6 +195,36 @@ class RingService : Service() {
                 .setAutoCancel(true)
                 .build()
             c.getSystemService(NotificationManager::class.java).notify(Mochi.NOTIFY_NOTICE_BASE + notices++ % 50, n)
+        }
+
+        /**
+         * Where tapping a notice goes: the server may say ("open": home / portfolio / chat / agent:<name>); otherwise
+         * by its title: an app update -> Home (the Update card), Samir / IPO -> Samir's screen, LinkedIn / Nadia /
+         * Mark -> Nadia's page, an agent named first ("Melissa: ...") -> that agent; anything else -> the chat.
+         */
+        private fun landing(c: Context, notice: JSONObject, code: Int): PendingIntent {
+            val title = notice.optString("title")
+            val lower = title.lowercase()
+            val agentFirst = Regex("""^([A-Za-z]+):""").find(title)?.groupValues?.get(1)?.lowercase()
+            val where = notice.optString("open").ifBlank {
+                when {
+                    "update" in lower && "mochi" in lower -> "home"
+                    lower.startsWith("samir") || lower.startsWith("ipo") -> "agent:samir"
+                    "linkedin" in lower || lower.startsWith("nadia") -> "agent:linkedin"
+                    lower.startsWith("mark") -> "agent:mark"
+                    agentFirst != null && agentFirst !in setOf("mochi", "reminder", "server") -> "agent:$agentFirst"
+                    else -> "chat"
+                }
+            }
+            return when {
+                where == "home" -> PendingIntent.getActivity(c, code, Intent(c, MainActivity::class.java)
+                    .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP),
+                    PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
+                where == "portfolio" -> withHome(c, code, Intent(c, ResearchActivity::class.java))
+                where.startsWith("agent:") -> withHome(c, code, Intent(c, AgentsActivity::class.java)
+                    .putExtra(AgentsActivity.EXTRA_AGENT, where.removePrefix("agent:")))
+                else -> withHome(c, code, Intent(c, ChatActivity::class.java))
+            }
         }
 
         private var waiting = 0

@@ -21,6 +21,9 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.activity.result.PickVisualMediaRequest
+import okio.source
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
@@ -127,6 +130,33 @@ object LinkedIn {
     /** Plays the draft's video in the phone's own player (streamed from the approval page over Tailscale). */
     fun play(c: Context, status: JSONObject, id: String) = c.startActivity(Intent(Intent.ACTION_VIEW)
         .setDataAndType(Uri.parse(approveUrl(status, id) + "/video"), "video/mp4").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+
+    /** December's own video for the draft: streamed (never all in memory) to mochi-ring, which checks it's an MP4.
+     *  Blocking; up to 200 MB. */
+    fun uploadVideo(c: Context, id: String, uri: Uri) {
+        val cr = c.contentResolver
+        val type = cr.getType(uri) ?: ""
+        if (type != "video/mp4") throw IllegalStateException("LinkedIn takes MP4 videos (this one is ${type.ifBlank { "unknown" }})")
+        val size = cr.openAssetFileDescriptor(uri, "r")?.use { it.length }?.takeIf { it > 0 }
+            ?: cr.query(uri, arrayOf(android.provider.OpenableColumns.SIZE), null, null, null)?.use { if (it.moveToFirst()) it.getLong(0) else -1L }
+            ?: -1L
+        if (size <= 0) throw IllegalStateException("Couldn't read that video")
+        if (size > 200L * 1024 * 1024) throw IllegalStateException("The video must be up to 200 MB")
+        val body = object : okhttp3.RequestBody() {
+            override fun contentType() = "video/mp4".toMediaType()
+            override fun contentLength() = size
+            override fun writeTo(sink: okio.BufferedSink) {
+                cr.openInputStream(uri)?.use { ins -> sink.writeAll(ins.source()) } ?: throw java.io.IOException("can't open the video")
+            }
+        }
+        val req = Request.Builder().url("${Mochi.ringUrl(c)}/linkedin/drafts/$id/video")
+            .header("Authorization", "Bearer ${Mochi.token(c)}").post(body).build()
+        Mochi.http.newBuilder().writeTimeout(10, java.util.concurrent.TimeUnit.MINUTES).readTimeout(2, java.util.concurrent.TimeUnit.MINUTES)
+            .build().newCall(req).execute().use { r ->
+                if (!r.isSuccessful) throw IllegalStateException(
+                    runCatching { JSONObject(r.body?.string() ?: "").optString("error") }.getOrNull()?.ifBlank { null } ?: "HTTP ${r.code}")
+            }
+    }
 
     /** A gallery photo as base64 JPEG (shrunk to 1600 px by [Attachments]). Blocking. */
     fun photo(c: Context, uri: Uri): String? =
@@ -327,8 +357,14 @@ private fun DraftEditor(d: JSONObject, status: JSONObject, onClose: () -> Unit, 
         }
         if (d.optBoolean("has_image")) io(scope, { LinkedIn.image(LinkedIn.approveUrl(status, id)) }) { picture = it }
     }
-    val pick = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
-        if (uri != null) io(scope, { LinkedIn.photo(ctx, uri) to runCatching {
+    // a photo or a video from the phone's picker; a video is sent as it is (LinkedIn takes MP4)
+    val pick = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
+        if (uri != null && ctx.contentResolver.getType(uri)?.startsWith("video/") == true) {
+            busy = true; message = "Sending the video…"
+            io(scope, { LinkedIn.uploadVideo(ctx, id, uri) }, { busy = false; message = it.message ?: "Couldn't send that video" }) {
+                busy = false; hasVideo = true; removeVideo = false; videoStatus = "ready"; message = "Video attached."; onChanged()
+            }
+        } else if (uri != null) io(scope, { LinkedIn.photo(ctx, uri) to runCatching {
             ctx.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it)?.asImageBitmap() } }.getOrNull() },
             { message = "Couldn't read that photo" }) { (b64, bmp) ->
             if (b64 == null) message = "That isn't a photo the app can use" else {
@@ -365,8 +401,9 @@ private fun DraftEditor(d: JSONObject, status: JSONObject, onClose: () -> Unit, 
         }.show()
     }
 
+    // the sheet stops below the status bar (time, battery), with a little room
     ModalBottomSheet(onDismissRequest = onClose, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
-        containerColor = c.bg, dragHandle = null) {
+        modifier = Modifier.statusBarsPadding().padding(top = Space.m), containerColor = c.bg, dragHandle = null) {
         Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).navigationBarsPadding().imePadding()
             .padding(horizontal = Space.l, vertical = Space.m), verticalArrangement = Arrangement.spacedBy(Space.m)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -409,19 +446,24 @@ private fun DraftEditor(d: JSONObject, status: JSONObject, onClose: () -> Unit, 
                 Field(alt, { alt = it }, "Describe the image (for people using screen readers)", Modifier.fillMaxWidth())
             }
             Row(horizontalArrangement = Arrangement.spacedBy(Space.s)) {
-                Pill(if (hasImage && !removeImage) "Replace image" else "Add a photo", false, Modifier.weight(1f)) { pick.launch("image/*") }
+                Pill(if (hasImage && !removeImage) "Replace photo / video" else "Add photo / video", false, Modifier.weight(1f)) {
+                    pick.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageAndVideo))
+                }
                 if (hasImage && !removeImage) Pill("Remove image", false, Modifier.weight(1f)) {
                     removeImage = true; newImage = null; picture = null
                 }
             }
             Text("Or ask Nadia for one:", style = Type.small, color = c.muted)
-            Row(horizontalArrangement = Arrangement.spacedBy(Space.xs)) {
-                listOf("Screenshot" to "a screenshot of the project it's about", "Quote card" to "a quote card from its strongest line",
-                    "Number card" to "a number card with its key number", "Chart" to "a simple chart of its numbers").forEach { (label, what) ->
-                    Pill(label, false, Modifier.weight(1f), height = 36.dp) {
-                        work("Asked Nadia for $label. It shows up here when it's attached.") {
-                            LinkedIn.ask(ctx, "December asks for an image on LinkedIn draft $id (from Nadia's page in the app): $what. " +
-                                "Attach it with mochi-linkedin edit $id --image <file> --alt \"...\"; keep the text as it is.")
+            // two a row, so each label fits its button
+            listOf("Screenshot" to "a screenshot of the project it's about", "Quote card" to "a quote card from its strongest line",
+                "Number card" to "a number card with its key number", "Chart" to "a simple chart of its numbers").chunked(2).forEach { row ->
+                Row(horizontalArrangement = Arrangement.spacedBy(Space.s)) {
+                    row.forEach { (label, what) ->
+                        Pill(label, false, Modifier.weight(1f), height = 44.dp) {
+                            work("Asked Nadia for $label. It shows up here when it's attached.") {
+                                LinkedIn.ask(ctx, "December asks for an image on LinkedIn draft $id (from Nadia's page in the app): $what. " +
+                                    "Attach it with mochi-linkedin edit $id --image <file> --alt \"...\"; keep the text as it is.")
+                            }
                         }
                     }
                 }
