@@ -65,6 +65,7 @@ object Call {
     @Volatile var active = false
         private set
     @Volatile var muted = false
+        set(v) { if (field != v) { field = v; notice() } }
     var speaker = true
         private set
     /** When this call started (ms): its Claude tokens are the ones used since. */
@@ -102,7 +103,12 @@ object Call {
     /** December said "Mochi, freeze": the mic isn't sent and Mochi says nothing until "Mochi, unfreeze" (heard on
      *  the phone, see [Unfreeze]) or the Unfreeze button. */
     @Volatile var frozen = false
-        private set
+        private set(v) { if (field != v) { field = v; notice() } }
+
+    /** The call notification's Mute button follows the mute wherever it changed (call screen, widget, "freeze"). */
+    private fun notice() {
+        if (::app.isInitialized) main.post { if (active) CallService.refresh(app) }
+    }
     private val playback = LinkedBlockingQueue<ByteArray>()
 
     /** Who December is talking with: one of Mochi's agents ("sy"), or null for Mochi itself. */
