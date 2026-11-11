@@ -5,7 +5,8 @@
 # Sentry and GitHub App secrets, so it can't run on this fork. This workflow builds the same Tauri app
 # without any of that:
 #   - test:    the unit tests our patches touch (voice, voice recap, memory hooks)
-#   - build:   Linux .deb (also what the xarvis-core server runs headless) + Windows NSIS installer.
+#   - build:   Linux .deb (also what the xarvis-core server runs headless); the Windows NSIS installer only
+#              when asked ("[windows]" in the release commit message, or Run workflow > windows).
 #              macOS is kept below but switched off.
 #   - release: on a tag like v0.64.15-tiny.1, publishes a GitHub release with the installers and
 #              SHA256SUMS (tiny-setup's versions.conf pins the .deb by that checksum).
@@ -23,6 +24,10 @@ on:
         description: "App version for an untagged test build (e.g. 0.64.15-tiny.0)"
         required: false
         default: "0.64.15-tiny.0"
+      windows:
+        description: "Also build the Windows installer (the laptop's desktop app)"
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -93,17 +98,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        settings:
-          - name: linux-x64
-            platform: ubuntu-24.04
-            target: x86_64-unknown-linux-gnu
-            # .deb only: the server and a Linux desktop both install it. (AppImage skipped to save time.)
-            bundles: deb
-          - name: windows-x64
-            platform: windows-latest
-            target: x86_64-pc-windows-msvc
-            # NSIS only: MSI refuses pre-release versions like 0.64.15-tiny.1
-            bundles: nsis
+        # Linux .deb always (the server runs it; AppImage skipped). Windows NSIS only when asked (it doubled the
+        # minutes, 2026-11): "[windows]" in the tagged release commit's message, or "Run workflow" with windows
+        # ticked. (NSIS only: MSI refuses pre-release versions like 0.64.15-tiny.1.)
+        settings: ${{ fromJSON((inputs.windows || contains(github.event.head_commit.message, '[windows]')) && '[{"name":"linux-x64","platform":"ubuntu-24.04","target":"x86_64-unknown-linux-gnu","bundles":"deb"},{"name":"windows-x64","platform":"windows-latest","target":"x86_64-pc-windows-msvc","bundles":"nsis"}]' || '[{"name":"linux-x64","platform":"ubuntu-24.04","target":"x86_64-unknown-linux-gnu","bundles":"deb"}]') }}
           # macOS: kept for later, not built yet (unsigned macOS builds also need right-click > Open).
           # - name: macos-arm64
           #   platform: macos-latest
@@ -220,7 +218,7 @@ jobs:
           cd dist
           ls ./*.deb >/dev/null 2>&1 || { echo "::error title=Release::no Linux .deb built: nothing to release"; exit 1; }
           note=""
-          ls ./*.exe >/dev/null 2>&1 || note=" Windows installer missing from this build (its job failed): use the previous release's on PCs."
+          ls ./*.exe >/dev/null 2>&1 || note=" No Windows installer in this release (built only when asked: [windows] in the release commit, or Run workflow with windows): use the last release that has one on PCs."
           sha256sum * > SHA256SUMS
           cat SHA256SUMS
           gh release create "$TAG" --repo "${{ github.repository }}" --target "${{ github.sha }}" \
