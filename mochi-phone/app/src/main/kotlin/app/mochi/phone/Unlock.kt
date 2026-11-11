@@ -137,8 +137,8 @@ object VaultUnlock {
         }, done)
     }
 
-    /** Unlock the server with this phone's key. [done] gets null on success or the reason (main thread). */
-    fun unlock(a: Activity, done: (String?) -> Unit) {
+    /** Fingerprint, then send this phone's key to [path] (with [extra] fields). [done]: null or the reason. */
+    private fun withKey(a: Activity, title: String, path: String, extra: JSONObject, done: (String?) -> Unit) {
         val p = prefs(a)
         val sealed = p.getString("key", null) ?: return done("Set this phone up first.")
         val cipher = try {
@@ -146,16 +146,26 @@ object VaultUnlock {
                 init(Cipher.DECRYPT_MODE, keystoreKey(), GCMParameterSpec(128, Base64.decode(p.getString("iv", ""), Base64.NO_WRAP)))
             }
         } catch (e: Exception) { return done("The key on this phone can't be used any more (${e.message}): set it up again.") }
-        authenticate(a, cipher, "Unlock the server", { unlocked ->
+        authenticate(a, cipher, title, { unlocked ->
             val raw = try { unlocked.doFinal(Base64.decode(sealed, Base64.NO_WRAP)) } catch (e: Exception) { return@authenticate done(e.message) }
-            val body = JSONObject().put("key", Base64.encodeToString(raw, Base64.NO_WRAP))
+            val body = JSONObject(extra.toString()).put("key", Base64.encodeToString(raw, Base64.NO_WRAP))
             raw.fill(0)
             Thread {
-                val error = try { post(a, "/unlock", body); null } catch (e: Exception) { e.message ?: "failed" }
+                val error = try { post(a, path, body); null } catch (e: Exception) { e.message ?: "failed" }
                 a.runOnUiThread { done(error) }
             }.start()
         }, done)
     }
+
+    /** Unlock the server (Tiny starts). */
+    fun unlock(a: Activity, done: (String?) -> Unit) = withKey(a, "Unlock the server", "/unlock", JSONObject(), done)
+
+    /** Lock it now: Tiny stops, the data is unreadable until the next unlock. Reversible. */
+    fun lock(a: Activity, done: (String?) -> Unit) = withKey(a, "Lock the server now", "/lock", JSONObject(), done)
+
+    /** EMERGENCY WIPE: the vault's keys are destroyed at once, then everything personal is deleted. Irreversible. */
+    fun wipe(a: Activity, done: (String?) -> Unit) =
+        withKey(a, "EMERGENCY WIPE the server", "/wipe", JSONObject().put("confirm", "DELETE EVERYTHING"), done)
 
     /** Forget the key on this phone (the server keeps its slot until `mochi-vault remove-key` over SSH). */
     fun forget(c: Context) {
@@ -176,6 +186,22 @@ fun UnlockCard() {
     var phrase by remember { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
     var note by remember { mutableStateOf("") }
+    var wipeTyping by remember { mutableStateOf(false) }
+    var confirm by remember { mutableStateOf("") }
+    var countdown by remember { mutableStateOf(0) }
+    // the 5-second Cancel window, then the fingerprint, then the wipe
+    LaunchedEffect(countdown) {
+        if (countdown <= 0) return@LaunchedEffect
+        kotlinx.coroutines.delay(1_000)
+        if (countdown == 1) {
+            countdown = 0; wipeTyping = false; confirm = ""; busy = true
+            VaultUnlock.wipe(a) { error ->
+                busy = false
+                note = error ?: "Wipe started: the vault's key is destroyed. You'll get the wipe emails."
+                refresh()
+            }
+        } else if (countdown > 1) countdown -= 1
+    }
     fun refresh() = scope.launch {
         locked = withContext(Dispatchers.IO) { runCatching { VaultUnlock.status(ctx).optBoolean("locked") }.getOrNull() }
     }
@@ -210,6 +236,36 @@ fun UnlockCard() {
                     note = error ?: "Unlocked. Tiny starts within a minute."
                     refresh()
                 }
+            }
+            Pill(if (busy) "…" else "Lock now", false, Modifier.fillMaxWidth()) {
+                if (busy || locked == true) return@Pill
+                busy = true; note = ""
+                VaultUnlock.lock(a) { error ->
+                    busy = false
+                    note = error ?: "Locked. Tiny is stopped until you unlock it."
+                    refresh()
+                }
+            }
+            when {
+                countdown > 0 -> {
+                    Text("Wiping in $countdown…", style = Type.title, color = c.danger)
+                    Pill("Cancel", true, Modifier.fillMaxWidth()) { countdown = 0; wipeTyping = false; confirm = "" }
+                }
+                wipeTyping -> {
+                    Text("This destroys the vault's key at once and deletes everything personal on the server. It can't be " +
+                        "undone: only your GitHub backup and age key rebuild it. Type DELETE EVERYTHING:", style = Type.small, color = c.danger)
+                    Box(Modifier.fillMaxWidth().clip(RoundedCornerShape(24.dp)).background(c.field).padding(Space.l)) {
+                        BasicTextField(confirm, { confirm = it }, singleLine = true, textStyle = Type.body.copy(color = c.ink),
+                            cursorBrush = SolidColor(c.ink), modifier = Modifier.fillMaxWidth().semantics { contentDescription = "Type DELETE EVERYTHING" })
+                    }
+                    Pill("Wipe the server", confirm == "DELETE EVERYTHING", Modifier.fillMaxWidth()) {
+                        if (confirm == "DELETE EVERYTHING") countdown = 5
+                    }
+                    Text("Cancel", style = Type.small, color = c.muted,
+                        modifier = Modifier.clip(RoundedCornerShape(8.dp)).clickable { wipeTyping = false; confirm = "" }.padding(vertical = Space.s))
+                }
+                else -> Text("Emergency wipe…", style = Type.small, color = c.danger,
+                    modifier = Modifier.clip(RoundedCornerShape(8.dp)).clickable { wipeTyping = true; note = "" }.padding(vertical = Space.s))
             }
             Text("Remove from this phone", style = Type.small, color = c.muted,
                 modifier = Modifier.clip(RoundedCornerShape(8.dp)).clickable { VaultUnlock.forget(ctx); enrolled = false; note = "Removed from this phone. On the server: sudo mochi-vault remove-key" }
