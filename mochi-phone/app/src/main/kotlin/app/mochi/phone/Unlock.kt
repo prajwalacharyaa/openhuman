@@ -157,6 +157,9 @@ object VaultUnlock {
         }, done)
     }
 
+    /** Fingerprint, then [path] on the unlock service with this phone's key (e.g. /trading/creds). */
+    fun send(a: Activity, title: String, path: String, extra: JSONObject, done: (String?) -> Unit) = withKey(a, title, path, extra, done)
+
     /** Unlock the server (Tiny starts). */
     fun unlock(a: Activity, done: (String?) -> Unit) = withKey(a, "Unlock the server", "/unlock", JSONObject(), done)
 

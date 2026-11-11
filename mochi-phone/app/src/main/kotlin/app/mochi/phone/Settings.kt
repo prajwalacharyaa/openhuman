@@ -102,6 +102,8 @@ fun SettingsScreen(onBack: () -> Unit) {
                 }
             }
 
+            if (Mochi.configured(ctx)) Section("Trading (Samir)") { TradingSettings() }
+
             Section("Appearance") {
                 var mode by remember { mutableStateOf(Appearance.get(ctx)) }
                 Text("Theme", style = Type.body, color = c.ink)

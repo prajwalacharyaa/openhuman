@@ -1,5 +1,10 @@
 package app.mochi.phone
 
+import app.mochi.phone.ui.LineIcon
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.shape.CircleShape
 import android.content.Context
 import android.content.Intent
 import android.os.Bundle
@@ -279,12 +284,23 @@ private fun AgentDoingPage(name: String, agent: Agents.Agent?, tokens: Doing.Tok
             delay(15_000)
         }
     }
+    // the trader (whoever has the `trading` skill, Samir): his book's summary, December's cards, the Research page
+    var trading by remember { mutableStateOf<org.json.JSONObject?>(null) }
+    var tradingTick by remember { mutableStateOf(0) }
+    if (agent?.skills?.contains("trading") == true) WhileVisible(name, tradingTick) {
+        while (true) {
+            io(scope, { Trading.load(ctx) }) { trading = it }
+            delay(15_000)
+        }
+    }
     LaunchedEffect(newest) {
         val firstJob = 1 + (if (board != null && agent?.hr == true) 2 else 0) +
-            (if (linkedin != null && agent?.skills?.contains("linkedin") == true) 2 else 0)
+            (if (linkedin != null && agent?.skills?.contains("linkedin") == true) 2 else 0) +
+            (if (trading != null && agent?.skills?.contains("trading") == true) 2 else 0)
         if (opened == null && !list.isScrollInProgress && list.firstVisibleItemIndex == firstJob &&
             list.firstVisibleItemScrollOffset < 24) list.scrollToItem(firstJob)
     }
+    Box(Modifier.fillMaxSize()) {
     LazyColumn(Modifier.fillMaxSize(), state = list, contentPadding = PaddingValues(Space.l),
         verticalArrangement = Arrangement.spacedBy(Space.s)) {
         item("who") {
@@ -321,6 +337,12 @@ private fun AgentDoingPage(name: String, agent: Agents.Agent?, tokens: Doing.Tok
                 Text("${agent?.display ?: name}'s work", style = Type.title, color = c.ink, modifier = Modifier.padding(top = Space.m))
             }
         }
+        trading?.takeIf { agent?.skills?.contains("trading") == true }?.let { tr ->
+            item("trading") { TradingBoard(tr) { scope.launch { delay(2_000); tradingTick++ } } }
+            item("trading-jobs") {
+                Text("${agent?.display ?: name}'s work", style = Type.title, color = c.ink, modifier = Modifier.padding(top = Space.m))
+            }
+        }
         linkedin?.takeIf { agent?.skills?.contains("linkedin") == true }?.let { li ->
             item("linkedin") { LinkedInBoard(li) { scope.launch { delay(1_000); linkedinTick++ } } }
             item("linkedin-jobs") {
@@ -334,6 +356,15 @@ private fun AgentDoingPage(name: String, agent: Agents.Agent?, tokens: Doing.Tok
         items(tasks, key = { it.task?.id ?: it.steps.firstOrNull()?.step?.id ?: it.at.toString() }) { t ->
             TaskCard(t, detailed) { opened = it }
         }
+    }
+    // floating mute while a call is on (every agent's page, as on Mochi's Doing screen)
+    var muteTick by remember { mutableStateOf(0) }
+    if (Call.active) Box(Modifier.align(Alignment.BottomEnd).padding(Space.xl).size(64.dp).clip(CircleShape)
+        .background(if (Call.muted || Call.frozen) c.danger else c.ink)
+        .clickable(role = Role.Button) { if (Call.frozen) Call.unfreeze() else Call.muted = !Call.muted; muteTick++ }
+        .semantics { contentDescription = if (Call.muted) "Unmute" else "Mute" }, contentAlignment = Alignment.Center) {
+        key(muteTick) { LineIcon(if (Call.muted || Call.frozen) Icons2.MicOff else Icons2.Mic, Color.White, 28.dp) }
+    }
     }
     opened?.let { s -> StepSheet(s, onClose = { opened = null }) }
 }

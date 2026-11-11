@@ -97,6 +97,10 @@
             android:exported="false"
             android:launchMode="singleTop" />
 
+        <!-- Samir's Research page (holdings, watchlist, market, journal, calendar) -->
+        <activity
+            android:name=".ResearchActivity"
+            android:exported="false" />
         <activity
             android:name=".AgentsActivity"
             android:exported="false"
