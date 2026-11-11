@@ -216,8 +216,11 @@ internal fun TradeCard(k: JSONObject, onChanged: () -> Unit) {
             (if (k.optString("side") == "sell") c.danger else c.greenInk)
         "suggestion" -> "WATCH ${k.optString("symbol")} ${k.optString("op")} ${k.optDouble("price")} → ${k.optString("action")}" +
             (if (k.optBoolean("stoploss")) " (stop-loss)" else "") to c.blueInk
+        "ipo" -> "IPO ${k.optString("symbol")}: ${k.optString("company")}" to c.violetInk
         else -> "⚠ ${k.optString("text")}" to c.amberInk
     }
+    var kitta by remember(k.optString("id")) { mutableStateOf(k.optInt("min", 10).toString()) }
+    var ipoNote by remember(k.optString("id")) { mutableStateOf("") }
     Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp)).background(c.card).clickable { open = true }.padding(Space.m),
         verticalArrangement = Arrangement.spacedBy(Space.xs)) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Space.xs)) {
@@ -228,6 +231,7 @@ internal fun TradeCard(k: JSONObject, onChanged: () -> Unit) {
         val sub = when (type) {
             "ticket" -> "${k.optString("mode").uppercase()} · fees ${rs(k.optDouble("fees"), true)} · ${k.optString("why")}"
             "suggestion" -> "${k.optString("mode").uppercase()} · ${k.optString("why")}"
+            "ipo" -> "${k.optString("share_type")} · ${k.optString("group")} · ${k.optString("sub_group")} · ${k.optInt("min")}-${k.optInt("max")} shares · closes ${k.optString("closes").take(12)}"
             else -> "Stays here until it's done."
         }
         Text(sub, style = Type.small, color = c.muted, maxLines = 2, overflow = TextOverflow.Ellipsis)
@@ -245,6 +249,26 @@ internal fun TradeCard(k: JSONObject, onChanged: () -> Unit) {
                     Pill("Approve", true, Modifier.weight(1f), 40.dp) { if (!busy) send("approve") }
                     Pill("Reject", false, Modifier.weight(1f), 40.dp) { if (!busy) send("reject") }
                 }
+                "ipo" -> {
+                    if (k.optBoolean("applied")) {
+                        Text("✓ Applied · ${k.optString("applied_note")}", style = Type.small.copy(fontWeight = Type.strong), color = c.greenInk)
+                    } else {
+                        Box(Modifier.weight(1f)) { app.mochi.phone.ui.Field(kitta, { v -> kitta = v.filter { it.isDigit() }.take(6) }, "Shares", singleLine = true) }
+                        Pill(if (busy) "Applying…" else "Apply (fingerprint)", true, Modifier.weight(1f), 40.dp) {
+                            val a = ctx as? Activity
+                            val q = kitta.toIntOrNull()
+                            if (busy || a == null) return@Pill
+                            if (q == null || q < k.optInt("min", 10) || q > k.optInt("max", 1_000_000)) { ipoNote = "Between ${k.optInt("min")} and ${k.optInt("max")} shares."; return@Pill }
+                            busy = true
+                            VaultUnlock.send(a, "Apply for ${k.optString("symbol")}: $q shares", "/trading/ipo-apply",
+                                JSONObject().put("companyShareId", k.optInt("id")).put("kitta", q)) { err ->
+                                busy = false
+                                ipoNote = err ?: "Sent once. MeroShare's answer comes as a notification."
+                                scope.launch { delay(3_000); onChanged() }
+                            }
+                        }
+                    }
+                }
                 else -> {
                     Pill("Done", true, Modifier.weight(1f), 40.dp) { if (!busy) send("done") }
                     Pill("Remind in 1 h", false, Modifier.weight(1f), 40.dp) { if (!busy) send("snooze") }
@@ -252,6 +276,7 @@ internal fun TradeCard(k: JSONObject, onChanged: () -> Unit) {
             }
         }
     }
+    if (ipoNote.isNotEmpty()) Text(ipoNote, style = Type.small, color = c.muted, modifier = Modifier.padding(horizontal = Space.m))
     if (open) AlertDialog(onDismissRequest = { open = false }, confirmButton = { TextButton({ open = false }) { Text("Close") } },
         title = { Text(title) },
         text = {
@@ -320,7 +345,7 @@ private fun ResearchScreen(onBack: () -> Unit, onHome: () -> Unit) {
     WhileVisible(tick) {
         while (true) { io(scope, { Trading.load(ctx) }) { data = it }; delay(15_000) }
     }
-    val tabs = listOf("Holdings", "Trades", "Watchlist", "Market", "Journal", "Calendar")
+    val tabs = listOf("Holdings", "Trades", "IPO", "Watchlist", "Market", "Journal", "Calendar")
     val pager = rememberPagerState { tabs.size }
     val snap = data?.optJSONObject("snapshot")
     val mode = view ?: snap?.optString("mode") ?: "paper"
@@ -350,9 +375,10 @@ private fun ResearchScreen(onBack: () -> Unit, onHome: () -> Unit) {
                 else when (page) {
                     0 -> HoldingsTab(data!!, mode, { stock = it }) { scope.launch { delay(2_000); tick++ } }
                     1 -> TradesTab(data!!, mode) { stock = it }
-                    2 -> WatchTab(data!!, { stock = it }) { scope.launch { delay(2_000); tick++ } }
-                    3 -> MarketTab(data!!) { stock = it }
-                    4 -> JournalTab(data!!, mode)
+                    2 -> IpoTab(data!!) { scope.launch { delay(2_000); tick++ } }
+                    3 -> WatchTab(data!!, { stock = it }) { scope.launch { delay(2_000); tick++ } }
+                    4 -> MarketTab(data!!) { stock = it }
+                    5 -> JournalTab(data!!, mode)
                     else -> CalendarTab(data!!) { stock = it }
                 }
             }
@@ -435,6 +461,9 @@ private fun HoldingRow(h: JSONObject, onTap: () -> Unit) {
                     Badge("T+2 ${it.takeLast(5)}", c.amberBg, c.amberInk)
                 }
                 if (h.optBoolean("wacc_unknown")) Badge("WACC?", c.violetBg, c.violetInk)
+                h.optJSONObject("origin")?.let { o ->
+                    o.keys().asSequence().toList().forEach { kind -> Badge("${o.optInt(kind)} ${if (kind == "secondary") "SEC" else kind.uppercase()}", c.field, c.muted) }
+                }
                 h.optJSONObject("verdict")?.optString("verdict")?.let { v ->
                     Badge(v.uppercase(), when (v) { "sell" -> c.amberBg; "add" -> c.greenBg; else -> c.field }, when (v) { "sell" -> c.danger; "add" -> c.greenInk; else -> c.ink })
                 }
@@ -493,11 +522,42 @@ private fun TradesTab(data: JSONObject, mode: String, onStock: (String) -> Unit)
                 Column(Modifier.weight(1f)) {
                     Text("${if (sell) "SOLD" else "BOUGHT"} ${t.optInt("qty")} ${t.optString("symbol")} @ ${t.optString("price")}",
                         style = Type.body.copy(fontWeight = Type.strong), color = if (sell) c.danger else c.greenInk)
+                    if (t.optString("meroshare").isNotBlank()) Text("✓ in MeroShare ${t.optString("meroshare")}", style = Type.small, color = c.greenInk)
+                    else if (t.optString("mode") == "live") Text("not in MeroShare yet (it shows after settlement)", style = Type.small, color = c.muted)
                     val amount = (t.optString("price").toDoubleOrNull() ?: 0.0) * t.optInt("qty")
                     Text("${t.optString("at").take(16).replace('T', ' ')} · ${rs(amount)} · fees ${rs(t.optString("fees").toDoubleOrNull() ?: 0.0, true)}" +
                         (if (sell) " · tax ${rs(t.optString("tax").toDoubleOrNull() ?: 0.0, true)}" else ""), style = Type.small, color = c.muted)
                 }
                 if (sell) Text("${if (pnl >= 0) "▲ +" else "▼ "}${rs(pnl)}", style = Type.small.copy(fontWeight = Type.strong), color = upDown(c, pnl))
+            }
+        }
+    }
+}
+
+// ---- tab: IPOs, open now (apply) and every application with its result (from MeroShare) ----
+
+@Composable
+private fun IpoTab(data: JSONObject, onChanged: () -> Unit) {
+    val c = LocalMochi.current
+    val snap = data.optJSONObject("snapshot")
+    val open = snap?.optJSONArray("cards").objs().filter { it.optString("type") == "ipo" }
+    val ipo = snap?.optJSONObject("ipo")
+    val applied = ipo?.optJSONArray("applied").objs()
+    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(Space.l), verticalArrangement = Arrangement.spacedBy(Space.s)) {
+        item { Text("Open now" + (ipo?.optString("at")?.takeIf { it.isNotBlank() && it != "null" }?.take(16)?.replace('T', ' ')?.let { " (checked $it)" } ?: ""), style = Type.body.copy(fontWeight = Type.strong), color = c.ink) }
+        if (open.isEmpty()) item { Text("No IPO open for you right now. The daily check runs at 16:10.", style = Type.small, color = c.muted) }
+        items(open, key = { "o" + it.optString("id") }) { TradeCard(it, onChanged) }
+        item { Text("Your applications", style = Type.body.copy(fontWeight = Type.strong), color = c.ink, modifier = Modifier.padding(top = Space.m)) }
+        items(applied, key = { "a" + it.optString("applicantFormId") + it.optString("scrip") }) { a ->
+            val d = a.optJSONObject("detail") ?: JSONObject()
+            val st = d.optString("statusName").ifBlank { a.optString("statusName") }
+            val color = when { st.startsWith("Alloted", true) -> c.greenInk; st.contains("Rejected", true) -> c.danger; else -> c.muted }
+            Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(c.card).padding(Space.m)) {
+                Text("${a.optString("scrip")} · ${a.optString("shareTypeName")}: $st", style = Type.body.copy(fontWeight = Type.strong), color = color)
+                Text("Applied ${d.optInt("appliedKitta")} on ${d.optString("appliedDate").take(10)}" +
+                    (if (d.has("receivedKitta")) " · got ${d.optInt("receivedKitta")}" else "") +
+                    (if (d.has("amount")) " · ${rs(d.optDouble("amount"))}" else ""), style = Type.small, color = c.muted)
+                if (d.optString("meroshareRemark").isNotBlank()) Text(d.optString("meroshareRemark"), style = Type.small, color = c.muted, maxLines = 2, overflow = TextOverflow.Ellipsis)
             }
         }
     }
@@ -973,6 +1033,7 @@ internal fun TradingSettings() {
     val cur = s ?: return Text("Loading…", style = Type.small, color = c.muted)
     var mode by remember(cur) { mutableStateOf(cur.optString("mode", "paper")) }
     var auto by remember(cur) { mutableStateOf(cur.optBoolean("auto_trade", false)) }
+    var autoIpo by remember(cur) { mutableStateOf(cur.optBoolean("auto_apply_ipo", false)) }
     val fields = listOf("max_per_trade" to "Max money per trade (Rs)", "max_pct_one_stock" to "Max % of the book in one stock",
         "daily_loss_limit" to "Daily loss limit (Rs)", "weekly_loss_limit" to "Weekly loss limit (Rs)",
         "cgt_short" to "Capital gains tax ≤ 1 year (%)", "cgt_long" to "Capital gains tax > 1 year (%)")
@@ -999,6 +1060,14 @@ internal fun TradingSettings() {
             }
             Switch(auto, { auto = it }, colors = SwitchDefaults.colors(checkedTrackColor = c.ink, checkedThumbColor = c.bg))
         }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text("Auto-apply IPOs", style = Type.body, color = c.ink)
+                Text("The daily MeroShare check (16:10) applies by itself for IPOs of ordinary shares for the general public, with the minimum shares (usually 10), once each. Others stay a card for you.",
+                    style = Type.small, color = c.muted)
+            }
+            Switch(autoIpo, { autoIpo = it }, colors = SwitchDefaults.colors(checkedTrackColor = c.ink, checkedThumbColor = c.bg))
+        }
         fields.forEach { (k, label) ->
             Text(label, style = Type.small, color = c.muted)
             app.mochi.phone.ui.Field(values[k]!!.value, { values[k]!!.value = it }, label, singleLine = true)
@@ -1006,7 +1075,7 @@ internal fun TradingSettings() {
         Text("NEPSE holidays (YYYY-MM-DD, comma-separated): no trading, T+2 skips them", style = Type.small, color = c.muted)
         app.mochi.phone.ui.Field(holidays, { holidays = it }, "2026-11-12, 2026-12-25", singleLine = false)
         Pill("Save trading settings", true, Modifier.fillMaxWidth()) {
-            val out = JSONObject().put("mode", mode).put("auto_trade", auto)
+            val out = JSONObject().put("mode", mode).put("auto_trade", auto).put("auto_apply_ipo", autoIpo)
             fields.forEach { (k, _) -> values[k]!!.value.toDoubleOrNull()?.let { out.put(k, it) } }
             out.put("holidays", JSONArray(holidays.split(',', ' ', '\n').map { it.trim() }.filter { it.matches(Regex("""\d{4}-\d{2}-\d{2}""")) }))
             io(scope, { Trading.saveSettings(ctx, out) }, { note = it.message ?: "failed" }) { note = "Saved."; s = it.optJSONObject("settings") }
@@ -1061,4 +1130,26 @@ private fun MeroShareAccount() {
         }
     }
     if (note.isNotEmpty()) Text(note, style = Type.small, color = c.muted)
+    var pin by remember { mutableStateOf("") }
+    var crn by remember { mutableStateOf("") }
+    var note2 by remember { mutableStateOf("") }
+    Text("For applying to IPOs: your MeroShare transaction PIN (4 digits) and CRN (from your bank's C-ASBA). Same vault, root-only.",
+        style = Type.small, color = c.muted, modifier = Modifier.padding(top = Space.s))
+    Box(Modifier.fillMaxWidth().clip(RoundedCornerShape(24.dp)).background(c.field).padding(Space.l)) {
+        if (pin.isEmpty()) Text("Transaction PIN", style = Type.body, color = c.muted)
+        androidx.compose.foundation.text.BasicTextField(pin, { v -> pin = v.filter { it.isDigit() }.take(4) }, singleLine = true,
+            textStyle = Type.body.copy(color = c.ink), cursorBrush = androidx.compose.ui.graphics.SolidColor(c.ink),
+            visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(),
+            modifier = Modifier.fillMaxWidth().semantics { contentDescription = "Transaction PIN" })
+    }
+    app.mochi.phone.ui.Field(crn, { crn = it.trim() }, "CRN number", singleLine = true)
+    Pill("Save PIN + CRN (fingerprint)", true, Modifier.fillMaxWidth()) {
+        if (pin.length != 4 || crn.isBlank()) { note2 = "PIN is 4 digits; CRN too, please."; return@Pill }
+        VaultUnlock.send(a, "Save the IPO PIN and CRN", "/trading/creds",
+            JSONObject().put("meroshare", JSONObject().put("pin", pin).put("crn", crn))) { err ->
+            note2 = err ?: "Saved on the server."
+            if (err == null) { pin = ""; crn = "" }
+        }
+    }
+    if (note2.isNotEmpty()) Text(note2, style = Type.small, color = c.muted)
 }
