@@ -154,7 +154,12 @@ object Mochi {
         runCatching { quick.newCall(req).execute().close() }
     }
 
-    /** "RAM 68% · Storage 47% (26 GB free)" for the screen headers; asked only while a screen is open. Blocking. */
+    /** The server's SSH logins at the last /stats: {user, from, ip, since, yours}. Empty if none (or an older server). */
+    @Volatile var lastLogins: List<JSONObject> = emptyList()
+        private set
+
+    /** "RAM 68% · Storage 47% (26 GB free) · 1 logged in" for the screen headers; asked only while a screen is
+     *  open. Blocking. */
     fun ramLabel(c: Context): String {
         val req = Request.Builder().url("${ringUrl(c)}/stats").header("Authorization", "Bearer ${token(c)}").build()
         quick.newCall(req).execute().use { r ->
@@ -162,7 +167,16 @@ object Mochi {
             // storage too (an older server answers RAM only)
             val disk = if (o.has("disk")) " · Storage ${o.getInt("disk")}% (${o.optDouble("disk_free_gb").let {
                 if (it >= 10) it.toInt().toString() else "%.1f".format(it) }} GB free)" else ""
-            return "RAM ${o.getInt("ram")}%$disk"
+            // SSH logins (a login from a device that isn't one of December's shows as a warning)
+            val arr = o.optJSONArray("logins")
+            lastLogins = if (arr == null) emptyList() else (0 until arr.length()).mapNotNull { arr.optJSONObject(it) }
+            val strangers = lastLogins.count { !it.optBoolean("yours") }
+            val logins = when {
+                arr == null -> ""
+                strangers > 0 -> " · ⚠ $strangers unknown login${if (strangers > 1) "s" else ""}"
+                else -> " · ${lastLogins.size} logged in"
+            }
+            return "RAM ${o.getInt("ram")}%$disk$logins"
         }
     }
 

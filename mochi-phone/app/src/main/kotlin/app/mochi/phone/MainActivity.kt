@@ -208,6 +208,7 @@ private fun HomeScreen(go: (String) -> Unit) {
     var notice by remember { mutableStateOf(Mochi.inbox(ctx).firstOrNull()) }
     var unread by remember { mutableIntStateOf(Mochi.unreadInbox(ctx)) }
     var ram by remember { mutableStateOf("") }
+    var showLogins by remember { mutableStateOf(false) }
     var ask by remember { mutableStateOf("") }
     var fixList by remember { mutableStateOf(fixes(ctx)) }
     var showSetup by remember { mutableStateOf(false) }
@@ -258,11 +259,23 @@ private fun HomeScreen(go: (String) -> Unit) {
             // greeting, connection, Mochi
             Row(Modifier.fillMaxWidth().padding(top = Space.xl), verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(Space.xs)) {
+                    val stranger = Mochi.lastLogins.any { !it.optBoolean("yours") }
                     Text(when {
                         !configured -> "Set up Mochi to start"
                         RingService.connected -> listOf("Connected", ram).filter { it.isNotEmpty() }.joinToString(" · ")
                         else -> "Not connected. Is Tailscale on?"
-                    }, style = Type.small, color = c.muted)
+                    }, style = Type.small, color = if (stranger && RingService.connected) c.danger else c.muted,
+                        modifier = Modifier.clip(RoundedCornerShape(8.dp)).clickable(role = Role.Button) { showLogins = !showLogins })
+                    // tap the line: who is logged in to the server over SSH, from which device, since when
+                    if (showLogins && RingService.connected) {
+                        if (Mochi.lastLogins.isEmpty()) Text("Nobody is logged in over SSH.", style = Type.small, color = c.muted)
+                        Mochi.lastLogins.forEach { l ->
+                            val since = l.optString("since").split(" ").getOrNull(2)?.take(5) ?: ""
+                            Text("${l.optString("user")} from ${l.optString("from")}${if (since.isNotEmpty()) " since $since" else ""}" +
+                                if (l.optBoolean("yours")) "" else "  (NOT one of your devices)",
+                                style = Type.small, color = if (l.optBoolean("yours")) c.muted else c.danger)
+                        }
+                    }
                     Text(greeting(), style = Type.display, color = c.ink)
                 }
                 // Mochi, with today's tokens per model under it (Gemini is estimated from the call audio)
