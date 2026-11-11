@@ -176,23 +176,60 @@ private fun MoneyLine(money: JSONObject?) {
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun SummaryStrip(mode: String, b: JSONObject, nepsePct: Double?, money: JSONObject? = null) {
     val c = LocalMochi.current
     val paper = mode == "paper"
+    val groups = b.optJSONObject("groups")
+    val kinds = listOf("ipo" to "IPO shares", "secondary" to "Secondary (bought)", "other" to "Bonus, rights, merger")
+        .filter { groups?.has(it.first) == true }
+    val pager = rememberPagerState(pageCount = { 2 + kinds.size })
     Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(24.dp)).background(if (paper) c.blueBg else c.greenBg).padding(Space.l),
         verticalArrangement = Arrangement.spacedBy(2.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(rs(b.optDouble("value", 0.0)), style = Type.display, color = c.ink, modifier = Modifier.weight(1f))
-            Text(if (paper) "PAPER" else "LIVE", style = Type.small.copy(fontWeight = Type.strong),
-                color = if (paper) c.blueInk else c.greenInk)
+        HorizontalPager(pager, Modifier.fillMaxWidth(), verticalAlignment = Alignment.Top) { page ->
+            Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                when (page) {
+                    0 -> {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(rs(b.optDouble("value", 0.0)), style = Type.display, color = c.ink, modifier = Modifier.weight(1f))
+                            Text(if (paper) "PAPER" else "LIVE", style = Type.small.copy(fontWeight = Type.strong),
+                                color = if (paper) c.blueInk else c.greenInk)
+                        }
+                        val pnl = b.optDouble("pnl", 0.0)
+                        Text("${if (pnl >= 0) "▲ +" else "▼ "}${rs(pnl)} (${pct(b.dbl("pnl_pct")).replace("▲ ", "").replace("▼ ", "")}) on ${rs(b.optDouble("invested", 0.0))} invested",
+                            style = Type.body, color = upDown(c, pnl))
+                        Text("market value · today ${pct(if (b.optDouble("value", 0.0) > 0) b.optDouble("today", 0.0) / b.optDouble("value") * 100 else null)}" +
+                            (nepsePct?.let { " · NEPSE ${pct(it)}" } ?: ""), style = Type.small, color = c.muted)
+                    }
+                    1 -> {
+                        val sold = b.optJSONObject("if_sold") ?: JSONObject()
+                        val pnl = sold.optDouble("pnl", 0.0)
+                        Text(rs(sold.optDouble("net", 0.0)), style = Type.display, color = c.ink)
+                        Text("${if (pnl >= 0) "▲ +" else "▼ "}${rs(pnl)} real profit after everything", style = Type.body, color = upDown(c, pnl))
+                        Text("if you sold all today: fees ${rs(sold.optDouble("fees", 0.0), true)} · tax ${rs(sold.optDouble("tax", 0.0), true)} (7.5% ≤ 1 year, 5% longer)",
+                            style = Type.small, color = c.muted)
+                    }
+                    else -> {
+                        val (k, label) = kinds[page - 2]
+                        val g = groups!!.optJSONObject(k) ?: JSONObject()
+                        val pnl = g.optDouble("pnl", 0.0); val cost = g.optDouble("cost", 0.0)
+                        Text(rs(g.optDouble("value", 0.0)), style = Type.display, color = c.ink)
+                        Text("${if (pnl >= 0) "▲ +" else "▼ "}${rs(pnl)}" + (if (cost > 0) " (${"%.1f".format(pnl / cost * 100)}%)" else ""),
+                            style = Type.body, color = upDown(c, pnl))
+                        Text("$label · ${g.optInt("qty")} shares in ${g.optInt("stocks")} stocks · cost ${rs(cost)}", style = Type.small, color = c.muted)
+                    }
+                }
+            }
         }
-        val pnl = b.optDouble("pnl", 0.0)
-        Text("${if (pnl >= 0) "▲ +" else "▼ "}${rs(pnl)} (${pct(b.dbl("pnl_pct")).replace("▲ ", "").replace("▼ ", "")}) all time",
-            style = Type.body, color = upDown(c, pnl))
-        Text("today ${pct(if (b.optDouble("value", 0.0) > 0) b.optDouble("today", 0.0) / b.optDouble("value") * 100 else null)} · " +
-            "limit ${rs(b.optDouble("collateral", 0.0))}" + (nepsePct?.let { " · NEPSE ${pct(it)}" } ?: ""),
-            style = Type.small, color = c.muted)
+        Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.CenterHorizontally),
+            verticalAlignment = Alignment.CenterVertically) {
+            repeat(pager.pageCount) { i ->
+                val on = pager.currentPage == i
+                Box(Modifier.size(if (on) 8.dp else 6.dp).clip(CircleShape).background(if (on) c.ink else c.muted.copy(alpha = 0.4f)))
+            }
+        }
+        Text("limit ${rs(b.optDouble("collateral", 0.0))}", style = Type.small, color = c.muted)
         MoneyLine(money)
     }
 }
@@ -471,6 +508,11 @@ private fun HoldingRow(h: JSONObject, onTap: () -> Unit) {
             val since = h.optInt("held_days", -1).takeIf { it >= 0 }?.let { " · ${it} d" } ?: ""
             Text("${"%.1f".format(h.optDouble("avg"))} → ${h.dbl("ltp")?.let { "%.1f".format(it) } ?: "–"} · " +
                 "${rs(h.optDouble("pnl"))} · today ${pct(h.dbl("today_pct"))}$since",
+                style = Type.small, color = c.muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            val sold = h.optJSONObject("if_sold")
+            val bought = h.optString("since").takeIf { it.isNotBlank() && it != "null" }
+            if (sold != null || bought != null) Text((bought?.let { "since $it" } ?: "") +
+                (sold?.let { (if (bought != null) " · " else "") + "sold today: ${rs(it.optDouble("net"))} (tax ${rs(it.optDouble("tax"), true)})" } ?: ""),
                 style = Type.small, color = c.muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
         Column(horizontalAlignment = Alignment.End) {
@@ -1038,7 +1080,7 @@ internal fun TradingSettings() {
         "daily_loss_limit" to "Daily loss limit (Rs)", "weekly_loss_limit" to "Weekly loss limit (Rs)",
         "cgt_short" to "Capital gains tax ≤ 1 year (%)", "cgt_long" to "Capital gains tax > 1 year (%)")
     val defaults = mapOf("max_per_trade" to "50000", "max_pct_one_stock" to "25", "daily_loss_limit" to "10000",
-        "weekly_loss_limit" to "25000", "cgt_short" to "5", "cgt_long" to "3.75")
+        "weekly_loss_limit" to "25000", "cgt_short" to "7.5", "cgt_long" to "5")
     val values = remember(cur) { fields.associate { (k, _) -> k to mutableStateOf(if (cur.has(k)) cur.optString(k).removeSuffix(".0") else defaults[k]!!) } }
     var holidays by remember(cur) { mutableStateOf(cur.optJSONArray("holidays")?.let { a -> (0 until a.length()).joinToString(", ") { a.optString(it) } } ?: "") }
     var collateral by remember { mutableStateOf("") }
