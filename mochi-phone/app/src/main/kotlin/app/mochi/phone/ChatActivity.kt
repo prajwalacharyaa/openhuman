@@ -70,6 +70,7 @@ import app.mochi.phone.ui.Type
 import app.mochi.phone.ui.io
 import app.mochi.phone.ui.WhileVisible
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import org.json.JSONObject
 
 /**
@@ -116,6 +117,9 @@ class ChatActivity : ComponentActivity() {
 /** One thing Mochi did while answering. */
 data class Step(val label: String, val done: Boolean)
 
+/** A message written while Mochi was still answering: sent by itself, in order, when the answer is done. */
+data class Queued(val text: String, val files: List<Attachment>)
+
 /** Plain words for a tool name. */
 fun stepLabel(tool: String): String {
     val t = tool.lowercase()
@@ -156,6 +160,9 @@ fun ChatScreen(initialThread: String?, newChat: Boolean, initialText: String?, s
     val files = remember { mutableStateListOf<Attachment>() }
     var streaming by remember { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
+    val queue = remember { mutableStateListOf<Queued>() }
+    var paused by remember { mutableStateOf(false) }          // December pressed Stop: the queue waits for him
+    var priority by remember { mutableStateOf<Queued?>(null) } // "Send now": goes out as soon as the current answer is stopped
     var input by remember { mutableStateOf(if (sendNow) "" else initialText.orEmpty()) }
     var mode by remember { mutableStateOf(Mochi.mode(ctx)) }
     var status by remember { mutableStateOf("") }
@@ -196,15 +203,14 @@ fun ChatScreen(initialThread: String?, newChat: Boolean, initialText: String?, s
         }
     }
 
-    fun send(text: String) {
-        val body = Attachments.message(text, files)
+    fun send(text: String, attach: List<Attachment> = files.toList(), fromQueue: Boolean = false) {
+        val body = Attachments.message(text, attach)
         val id = thread
         if (body.isBlank() || id == null) return
         messages.add(JSONObject().put("id", "local-${System.nanoTime()}").put("sender", "user")
             .put("content", text.ifBlank { "(attachment)" }))
-        input = ""
-        val sending = files.toList()
-        files.clear()
+        val sending = attach
+        if (!fromQueue) { input = ""; files.clear() }   // a queued one goes out without touching what is being typed now
         busy = true; streaming = ""; steps.clear(); status = ""
         // files: show how much is uploaded (a photo or a PDF can take a while on mobile data)
         if (sending.isNotEmpty()) { uploadNames = sending.joinToString(", ") { it.name }; uploading = 0f }
@@ -212,11 +218,36 @@ fun ChatScreen(initialThread: String?, newChat: Boolean, initialText: String?, s
         val onProgress: ((Float) -> Unit)? = if (sending.isEmpty()) null else { p -> main.post { uploading = p } }
         // an agent's chat runs on the agent's own model (quick / deep words still switch it)
         io(scope, { Mochi.send(ctx, id, body, model = if (agent != null) null else Mochi.modelFor(mode), progress = onProgress) },
-            { busy = false; uploading = null; files.addAll(sending); status = "Not sent: can't reach Mochi. (${it.message})" }) {
+            { busy = false; uploading = null
+                if (fromQueue) { queue.add(0, Queued(text, sending)); paused = true } else files.addAll(sending)
+                status = "Not sent: can't reach Mochi. (${it.message})" }) {
             uploading = null
             reload()
         }
     }
+
+    /** Next message out of the queue (the "Send now" one first), only when Mochi isn't busy and December hasn't stopped it. */
+    fun drain() {
+        if (busy || thread == null) return
+        priority?.let { p -> priority = null; send(p.text, p.files, fromQueue = true); return }
+        if (paused || queue.isEmpty()) return
+        val q = queue.removeAt(0)
+        send(q.text, q.files, fromQueue = true)
+    }
+    fun enqueue(text: String) {
+        if (Attachments.message(text, files).isBlank()) return
+        queue.add(Queued(text, files.toList())); input = ""; files.clear()
+    }
+    /** Stop what Mochi is writing and send this one first (the rest of the queue follows after it). */
+    fun sendNow(item: Queued) {
+        queue.remove(item)
+        priority = item
+        if (busy) {
+            thread?.let { id -> io(scope, { Mochi.cancel(ctx, id) }) { } }   // the cancel's own event ends the run
+            scope.launch { delay(4_000); if (priority != null) { busy = false; streaming = ""; steps.clear() } }
+        }
+    }
+    LaunchedEffect(busy, queue.size, paused, priority) { if (!busy) drain() }
 
     // start or open the conversation
     LaunchedEffect(Unit) {
@@ -379,6 +410,20 @@ fun ChatScreen(initialThread: String?, newChat: Boolean, initialText: String?, s
                 else androidx.compose.material3.LinearProgressIndicator(modifier = Modifier.fillMaxWidth().height(4.dp)
                     .clip(RoundedCornerShape(2.dp)), color = c.blueInk, trackColor = c.field)
             }
+            if (queue.isNotEmpty()) Column(verticalArrangement = Arrangement.spacedBy(Space.xs)) {
+                Text(if (paused) "Waiting (you stopped the reply): ${queue.size}" else "Queued: ${queue.size}, sent one by one after the answer",
+                    style = Type.small, color = c.muted)
+                queue.toList().forEach { q ->
+                    Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(c.field).padding(start = Space.m, top = Space.xs, bottom = Space.xs, end = Space.xs),
+                        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Space.s)) {
+                        Text(q.text.ifBlank { "(attachment)" }, style = Type.small, color = c.ink, maxLines = 2, overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f))
+                        Text("Send now", style = Type.small.copy(fontWeight = Type.strong), color = c.blueInk,
+                            modifier = Modifier.clip(RoundedCornerShape(12.dp)).clickable { sendNow(q) }.padding(horizontal = Space.s, vertical = Space.xs))
+                        RoundButton(Icons2.Close, "Remove from the queue", c.card, c.ink, 32.dp) { queue.remove(q) }
+                    }
+                }
+            }
             if (files.isNotEmpty()) LazyRow(horizontalArrangement = Arrangement.spacedBy(Space.s)) {
                 items(files.toList()) { a -> AttachmentChip(a) { files.remove(a) } }
             }
@@ -399,10 +444,12 @@ fun ChatScreen(initialThread: String?, newChat: Boolean, initialText: String?, s
                 Field(input, { input = it }, "Message " + (agent?.let { Agents.display(it, listOfNotNull(agentInfo)) } ?: "Mochi"), Modifier.weight(1f))
                 if (busy) {
                     StopButton {
+                        paused = queue.isNotEmpty()   // stopping means stop: what is queued waits for December
                         thread?.let { id ->
                             io(scope, { Mochi.cancel(ctx, id) }) { busy = false; streaming = ""; steps.clear(); reload() }
                         }
                     }
+                    RoundButton(Icons2.Send, "Queue this message: it is sent after the answer", c.ink, c.bg) { enqueue(input) }
                 } else {
                     // on this chat's call: Silent (Mochi answers in text only); otherwise: call Mochi in this chat
                     if (agent != null) {
@@ -419,7 +466,7 @@ fun ChatScreen(initialThread: String?, newChat: Boolean, initialText: String?, s
                             MainActivity.callMochi(ctx)
                         }
                     }
-                    RoundButton(Icons2.Send, "Send", c.ink, c.bg) { send(input) }
+                    RoundButton(Icons2.Send, "Send", c.ink, c.bg) { paused = false; send(input) }
                 }
             }
         }
