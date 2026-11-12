@@ -100,6 +100,8 @@ enum class VisualKind(val label: String, val hint: String, val designed: Boolean
     Carousel("Carousel", "Swipeable pages, 5-8 (a PDF)", true, "a carousel (PDF, 5-8 pages) designed from its points"),
     Chart("Chart", "Its real numbers, drawn", true, "a chart of its real numbers"),
     Video("Video", "A short animated video", true, "a short video"),
+    Launch("Launch video", "A 15-25 s launch film of the project, from its code (brag)", true,
+        "a launch video of the project, made by Iris with her brag skill (15-25 s)"),
 }
 
 /**
@@ -153,7 +155,8 @@ internal fun VisualPicker(fit: String, why: String, onPhoto: () -> Unit,
                     }
                 }
             } else {
-                val usable = styles.filter { k != VisualKind.Video || it.video }
+                val moving = k == VisualKind.Video || k == VisualKind.Launch
+                val usable = styles.filter { !moving || it.video }
                 val groups = listOf("All") + usable.map { it.group }.distinct()
                 LazyRow(horizontalArrangement = Arrangement.spacedBy(Space.s)) {
                     items(groups) { g -> Pill(g, g == group, height = 36.dp) { group = g } }
@@ -174,7 +177,7 @@ internal fun VisualPicker(fit: String, why: String, onPhoto: () -> Unit,
                         StyleCard(s, picked?.id == s.id) { picked = s }
                     }
                 }
-                if (k == VisualKind.Video) Row(verticalAlignment = Alignment.CenterVertically,
+                if (moving) Row(verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(Space.s)) {
                     Pill(if (voice) "✓ Voice-over" else "Voice-over", voice, height = 36.dp) { voice = !voice }
                     Text(if (voice) "Narrated, music under it" else "Silent or music only", style = Type.small, color = c.muted)

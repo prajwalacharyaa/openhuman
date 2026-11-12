@@ -530,7 +530,7 @@ private fun DraftEditor(d: JSONObject, status: JSONObject, onClose: () -> Unit, 
                 why = original.optString("video_why").ifBlank { d.optString("video_why") },
                 onPhoto = { pickMany.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageAndVideo)) },
                 onAsk = { kind, style, extra, voice ->
-                    if (kind == VisualKind.Video) {
+                    if (kind == VisualKind.Video || kind == VisualKind.Launch) {
                         videoStatus = "requested"
                         work("Asked for a video. It shows up here when it's ready.") {
                             save(); LinkedIn.requestVideo(ctx, id, voice, visualRequest(id, kind, style, extra))
