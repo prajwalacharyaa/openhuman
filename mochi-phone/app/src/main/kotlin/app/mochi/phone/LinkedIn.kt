@@ -10,6 +10,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -18,6 +19,9 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
@@ -112,8 +116,8 @@ object LinkedIn {
     /** The approval page's address (the login link sits on the same tailnet listener); its image is under it. */
     fun approveUrl(status: JSONObject, id: String) = status.optString("login_url").removeSuffix("/linkedin/login") + "/approve/$id"
 
-    fun image(url: String): ImageBitmap? = runCatching {
-        Mochi.http.newCall(Request.Builder().url("$url/image").build()).execute().use { r ->
+    fun image(url: String, n: Int = 0): ImageBitmap? = runCatching {
+        Mochi.http.newCall(Request.Builder().url(if (n > 0) "$url/image/$n" else "$url/image").build()).execute().use { r ->
             val bytes = r.body?.bytes() ?: return null
             if (!r.isSuccessful) null else BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.asImageBitmap()
         }
@@ -345,6 +349,9 @@ private fun DraftEditor(d: JSONObject, status: JSONObject, onClose: () -> Unit, 
     var hasDoc by remember { mutableStateOf(d.optBoolean("has_document")) }
     var removeDoc by remember { mutableStateOf(false) }
     var picking by remember { mutableStateOf(false) }
+    var use by remember { mutableStateOf(d.optString("use")) }                 // which media goes out
+    var gallery by remember { mutableStateOf<List<ImageBitmap>>(emptyList()) }   // all of a multi-image draft
+    var newImages by remember { mutableStateOf<List<String>>(emptyList()) }      // several photos picked here
     var note by remember { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
     var message by remember { mutableStateOf("") }
@@ -354,23 +361,35 @@ private fun DraftEditor(d: JSONObject, status: JSONObject, onClose: () -> Unit, 
             if (f.has("text")) {
                 original = f; text = f.optString("text"); at = f.optLong("at"); alt = f.optString("alt")
                 hasVideo = f.optBoolean("has_video"); videoStatus = f.optString("video_status"); hasDoc = f.optBoolean("has_document")
+                use = f.optString("use")
             }
             loaded = true
         }
         if (d.optBoolean("has_image")) io(scope, { LinkedIn.image(LinkedIn.approveUrl(status, id)) }) { picture = it }
+        val count = d.optInt("image_count")
+        if (count > 1) io(scope, { (1..count).mapNotNull { LinkedIn.image(LinkedIn.approveUrl(status, id), it) } }) { gallery = it }
     }
-    // a photo or a video from the phone's picker; a video is sent as it is (LinkedIn takes MP4)
-    val pick = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
-        if (uri != null && ctx.contentResolver.getType(uri)?.startsWith("video/") == true) {
+    // several at once from the gallery: images go out together (2-20); LinkedIn takes one video per post
+    val pickMany = rememberLauncherForActivityResult(ActivityResultContracts.PickMultipleVisualMedia(20)) { uris ->
+        if (uris.isEmpty()) return@rememberLauncherForActivityResult
+        val videos = uris.filter { ctx.contentResolver.getType(it)?.startsWith("video/") == true }
+        val photos = uris - videos.toSet()
+        if (videos.isNotEmpty()) {
             busy = true; message = "Sending the video…"
-            io(scope, { LinkedIn.uploadVideo(ctx, id, uri) }, { busy = false; message = it.message ?: "Couldn't send that video" }) {
-                busy = false; hasVideo = true; removeVideo = false; videoStatus = "ready"; message = "Video attached."; onChanged()
+            io(scope, { LinkedIn.uploadVideo(ctx, id, videos.first()) }, { busy = false; message = it.message ?: "Couldn't send that video" }) {
+                busy = false; hasVideo = true; removeVideo = false; videoStatus = "ready"; onChanged()
+                message = if (videos.size > 1) "Video attached (LinkedIn takes one per post: the first one)." else "Video attached."
             }
-        } else if (uri != null) io(scope, { LinkedIn.photo(ctx, uri) to runCatching {
-            ctx.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it)?.asImageBitmap() } }.getOrNull() },
-            { message = "Couldn't read that photo" }) { (b64, bmp) ->
-            if (b64 == null) message = "That isn't a photo the app can use" else {
-                newImage = b64; picture = bmp; hasImage = true; removeImage = false
+        }
+        if (photos.isNotEmpty()) io(scope, { photos.map { u -> LinkedIn.photo(ctx, u) to runCatching {
+            ctx.contentResolver.openInputStream(u)?.use { BitmapFactory.decodeStream(it)?.asImageBitmap() } }.getOrNull() } },
+            { message = "Couldn't read those photos" }) { got ->
+            val ok = got.filter { it.first != null }
+            if (ok.isEmpty()) message = "Those aren't photos the app can use" else {
+                if (ok.size == 1) { newImage = ok[0].first; newImages = emptyList(); gallery = emptyList() }
+                else { newImages = ok.map { it.first!! }; newImage = null; gallery = ok.mapNotNull { it.second } }
+                picture = ok[0].second; hasImage = true; removeImage = false
+                if (videos.isEmpty()) use = "images"
             }
         }
     }
@@ -379,6 +398,8 @@ private fun DraftEditor(d: JSONObject, status: JSONObject, onClose: () -> Unit, 
         if (loaded && at != original.optLong("at")) put("at", at)
         if (loaded && alt != original.optString("alt")) put("alt", alt)
         newImage?.let { put("image_b64", it) }
+        if (newImages.size > 1) put("images_b64", org.json.JSONArray(newImages))
+        if (loaded && use != original.optString("use")) put("use", use)
         if (removeImage) put("no_image", true)
         if (removeVideo) put("no_video", true)
         if (removeDoc) put("no_document", true)
@@ -444,55 +465,70 @@ private fun DraftEditor(d: JSONObject, status: JSONObject, onClose: () -> Unit, 
             // the visual: what goes out with the post (one kind: a video, else a carousel, else the image(s)), and
             // one button to add or change it (kind, then style, in a picker)
             Text("Visual", style = Type.title, color = c.ink)
-            val video = hasVideo && !removeVideo
-            val doc = hasDoc && !removeDoc
-            val image = hasImage && !removeImage
-            val many = d.optInt("image_count")
-            fun openApproval() = ctx.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(LinkedIn.approveUrl(status, id)))
-                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-            when {
-                video -> Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Space.s)) {
-                    Text("A video goes out with it.", style = Type.body, color = c.ink, modifier = Modifier.weight(1f))
-                    Pill("Play", false, height = 36.dp) { LinkedIn.play(ctx, status, id) }
+            val present = listOfNotNull(if (hasVideo && !removeVideo) "video" else null, if (hasDoc && !removeDoc) "document" else null,
+                if (hasImage && !removeImage) "images" else null)
+            val goes = use.takeIf { it in present } ?: present.firstOrNull() ?: ""
+            val many = if (newImages.size > 1) newImages.size else if (newImage != null) 1 else d.optInt("image_count")
+            // every visual on the draft, each viewable; exactly one is marked to go out (LinkedIn takes one kind)
+            val names = mapOf("video" to "Video", "document" to "Carousel", "images" to if (many > 1) "$many images" else "Image")
+            if (present.isEmpty()) Text("No visual yet.", style = Type.small, color = c.muted)
+            present.forEach { k ->
+                val chosen = k == goes
+                Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(c.card)
+                    .border(if (chosen) 2.dp else 1.dp, if (chosen) c.ink else c.line, RoundedCornerShape(16.dp)).padding(Space.m),
+                    verticalArrangement = Arrangement.spacedBy(Space.s)) {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Space.s)) {
+                        Text(names[k]!!, style = Type.title, color = c.ink, modifier = Modifier.weight(1f))
+                        if (present.size > 1) {
+                            if (chosen) Text("Posts this", style = Type.small.copy(fontWeight = Type.strong), color = c.greenInk)
+                            else Pill("Post this instead", false, height = 34.dp) { use = k }
+                        }
+                    }
+                    when (k) {
+                        "video" -> Pill("Play the video", false, Modifier.fillMaxWidth(), height = 40.dp) { LinkedIn.play(ctx, status, id) }
+                        "document" -> {
+                            Text(d.optString("doc_title").ifBlank { "Carousel (PDF)" }, style = Type.small, color = c.muted)
+                            Pill("Open the carousel", false, Modifier.fillMaxWidth(), height = 40.dp) {
+                                ctx.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(LinkedIn.approveUrl(status, id) + "/document"))
+                                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                            }
+                        }
+                        else -> if (many > 1 && gallery.size > 1) {
+                            // all of them, swipe sideways
+                            LazyRow(horizontalArrangement = Arrangement.spacedBy(Space.s)) {
+                                itemsIndexed(gallery) { i, bmp ->
+                                    Image(bmp, contentDescription = "Image ${i + 1} of ${gallery.size}", contentScale = ContentScale.FillHeight,
+                                        modifier = Modifier.height(240.dp).clip(RoundedCornerShape(12.dp)))
+                                }
+                            }
+                            Text("Posted together · swipe to see them all", style = Type.small, color = c.muted)
+                        } else {
+                            picture?.let { Image(it, contentDescription = alt.ifBlank { "The post's image" }, contentScale = ContentScale.FillWidth,
+                                modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp))) }
+                                ?: Text("Loading the image…", style = Type.small, color = c.muted)
+                            if (many <= 1) Field(alt, { alt = it }, "Describe the image (for screen readers)", Modifier.fillMaxWidth())
+                        }
+                    }
+                    Text("Remove", style = Type.small, color = c.danger, modifier = Modifier.clickable(role = Role.Button) {
+                        when (k) {
+                            "video" -> removeVideo = true
+                            "document" -> removeDoc = true
+                            else -> { removeImage = true; newImage = null; newImages = emptyList(); picture = null; gallery = emptyList() }
+                        }
+                    }.padding(vertical = Space.xs))
                 }
-                doc -> Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Space.s)) {
-                    Text("Carousel: ${d.optString("doc_title").ifBlank { "PDF" }}", style = Type.body, color = c.ink,
-                        modifier = Modifier.weight(1f))
-                    Pill("See it", false, height = 36.dp) { openApproval() }
-                }
-                image -> {
-                    picture?.let { Image(it, contentDescription = alt.ifBlank { "The post's image" }, contentScale = ContentScale.FillWidth,
-                        modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp))) }
-                        ?: Text("Loading the image…", style = Type.small, color = c.muted)
-                    if (many > 1) Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Space.s)) {
-                        Text("$many images, posted together", style = Type.small, color = c.muted, modifier = Modifier.weight(1f))
-                        Pill("See all", false, height = 36.dp) { openApproval() }
-                    } else Field(alt, { alt = it }, "Describe the image (for screen readers)", Modifier.fillMaxWidth())
-                }
-                else -> Text("No visual yet.", style = Type.small, color = c.muted)
             }
-            if (video && (image || doc) || doc && image)
-                Text("Also attached: " + listOfNotNull(if (doc && video) "a carousel" else null, if (image) "an image" else null)
-                    .joinToString(" and ") + ", not posted while the ${if (video) "video" else "carousel"} is there.",
-                    style = Type.small, color = c.muted)
+            if (present.size > 1) Text("LinkedIn takes one kind per post; the others stay on the draft.",
+                style = Type.small, color = c.muted)
             when (videoStatus) {
                 "requested" -> Text("Video requested: it shows up here when it's ready.", style = Type.small, color = c.muted)
                 "failed" -> Text("The video couldn't be made: ${original.optString("video_error")}", style = Type.small, color = c.danger)
             }
-            Row(horizontalArrangement = Arrangement.spacedBy(Space.s)) {
-                Pill(if (video || doc || image) "Change visual" else "Add a visual", true, Modifier.weight(1f)) { picking = true }
-                if (video || doc || image) Pill("Remove", false, Modifier.weight(1f)) {
-                    when {
-                        video -> removeVideo = true
-                        doc -> removeDoc = true
-                        else -> { removeImage = true; newImage = null; picture = null }
-                    }
-                }
-            }
+            Pill(if (present.isEmpty()) "Add a visual" else "Add another visual", true, Modifier.fillMaxWidth()) { picking = true }
             if (picking) VisualPicker(
                 fit = original.optString("video_fit").ifBlank { d.optString("video_fit") },
                 why = original.optString("video_why").ifBlank { d.optString("video_why") },
-                onPhoto = { pick.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageAndVideo)) },
+                onPhoto = { pickMany.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageAndVideo)) },
                 onAsk = { kind, style, extra, voice ->
                     if (kind == VisualKind.Video) {
                         videoStatus = "requested"
