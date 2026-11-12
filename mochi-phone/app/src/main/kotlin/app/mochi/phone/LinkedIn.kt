@@ -307,6 +307,8 @@ private fun PostCard(d: JSONObject, bg: Color, line: String, busy: Boolean, onOp
         Text(listOf(line, "${d.optInt("chars")} characters", when {
             d.optBoolean("has_video") -> "with video"
             d.optString("video_status") == "requested" -> "video coming"
+            d.optBoolean("has_document") -> "with a carousel"
+            d.optInt("image_count") > 1 -> "with ${d.optInt("image_count")} images"
             d.optBoolean("has_image") -> "with image"
             else -> "" })
             .filter { it.isNotBlank() }.joinToString(" · "), style = Type.small, color = c.muted, maxLines = 3,
@@ -445,6 +447,15 @@ private fun DraftEditor(d: JSONObject, status: JSONObject, onClose: () -> Unit, 
                     ?: Text("Loading the image…", style = Type.small, color = c.muted)
                 Field(alt, { alt = it }, "Describe the image (for people using screen readers)", Modifier.fillMaxWidth())
             }
+            // several images or a carousel PDF: the approval page shows all of it, exactly as it goes out
+            val many = d.optInt("image_count")
+            if (d.optBoolean("has_document") || many > 1) {
+                Text(if (d.optBoolean("has_document")) "Posted as a carousel: ${d.optString("doc_title").ifBlank { "PDF" }}"
+                     else "$many images, posted together", style = Type.small, color = c.muted)
+                Pill(if (d.optBoolean("has_document")) "See the carousel" else "See all $many images", true) {
+                    ctx.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(LinkedIn.approveUrl(status, id))).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                }
+            }
             Row(horizontalArrangement = Arrangement.spacedBy(Space.s)) {
                 Pill(if (hasImage && !removeImage) "Replace photo / video" else "Add photo / video", false, Modifier.weight(1f)) {
                     pick.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageAndVideo))
@@ -455,14 +466,17 @@ private fun DraftEditor(d: JSONObject, status: JSONObject, onClose: () -> Unit, 
             }
             Text("Or ask Nadia for one:", style = Type.small, color = c.muted)
             // two a row, so each label fits its button
-            listOf("Screenshot" to "a screenshot of the project it's about", "Quote card" to "a quote card from its strongest line",
-                "Number card" to "a number card with its key number", "Chart" to "a simple chart of its numbers").chunked(2).forEach { row ->
+            listOf("Screenshot" to "a screenshot of the project it's about",
+                "Designed image" to "an image designed for it by the designer (mochi-draw), in December's style",
+                "Carousel" to "a carousel (PDF, 5-8 pages) the designer draws from its points (mochi-draw pages --pdf)",
+                "Chart" to "a chart of its real numbers, drawn by the designer").chunked(2).forEach { row ->
                 Row(horizontalArrangement = Arrangement.spacedBy(Space.s)) {
                     row.forEach { (label, what) ->
                         Pill(label, false, Modifier.weight(1f), height = 44.dp) {
                             work("Asked Nadia for $label. It shows up here when it's attached.") {
                                 LinkedIn.ask(ctx, "December asks for an image on LinkedIn draft $id (from Nadia's page in the app): $what. " +
-                                    "Attach it with mochi-linkedin edit $id --image <file> --alt \"...\"; keep the text as it is.")
+                                    "Attach it with mochi-linkedin edit $id --image <file> --alt \"...\" (several: --image per file), " +
+                                    "or a carousel with mochi-linkedin document $id <file.pdf> --title \"...\"; keep the text as it is.")
                             }
                         }
                     }
