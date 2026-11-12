@@ -78,6 +78,7 @@ jobs:
             voice::live live_harness voice_shell voice_recap memory::lifecycle claude_session_cap layout_migration::service \
             protected_literal literal_credential_paths the_bus_logger_names_events security::pairing \
             memory::sources::sync memory::backfill harness_context_ladder title_and_cancellation_tests shell::tests::timeout_tests \
+            web_chat::ops::start_chat \
             2>&1 | tee test.log
           # tinyagents comes from our fork (Claude Code driver fixes): run that driver's own tests too
           cargo test --manifest-path vendor/tinyagents/Cargo.toml -p tinyagents-harness --lib -- providers::claude_code 2>&1 | tee -a test.log
