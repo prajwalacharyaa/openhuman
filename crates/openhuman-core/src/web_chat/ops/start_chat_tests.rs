@@ -75,3 +75,11 @@ fn plain_string_conversions_build_other_variant() {
     let from_borrowed: StartChatError = "message is required".into();
     assert!(matches!(from_borrowed, StartChatError::Other(ref m) if m == "message is required"));
 }
+
+#[test]
+fn a_calls_handed_on_turn_is_not_interrupted_by_another_client() {
+    assert!(protects_from("mochi-ask", "phone-app"));
+    assert!(!protects_from("mochi-ask", "mochi-ask"), "the call's own asks already queue as followups");
+    assert!(!protects_from("phone-app", "phone-app"), "December's own turns are interrupted as before");
+    assert!(!protects_from("phone-app", "mochi-ask"));
+}

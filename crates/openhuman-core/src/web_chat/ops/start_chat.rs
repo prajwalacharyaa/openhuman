@@ -345,6 +345,23 @@ async fn start_chat_inner(
         Some("parallel") => QueueMode::Parallel,
         _ => QueueMode::Interrupt,
     };
+    // A turn handed on from a voice call (an approved browser task, say) is work December is waiting
+    // for: a message from another client queues behind it instead of cancelling it (2026-11-12: "phone or
+    // laptop?" typed in the app cancelled the approved task, and the call heard "I wasn't able to"). The
+    // app's Stop still cancels it (channel_web_cancel).
+    let parsed_mode = if matches!(parsed_mode, QueueMode::Interrupt)
+        && IN_FLIGHT
+            .lock()
+            .await
+            .get(&map_key)
+            .is_some_and(|running| protects_from(&running.client_id, &client_id))
+    {
+        log::info!("[web-channel] a call's handed-on turn is running: queueing as followup thread_id={thread_id}");
+        QueueMode::Followup
+    } else {
+        parsed_mode
+    };
+    let owner_client_id = client_id.clone();
 
     // Parallel mode: spawn an independent forked turn that runs alongside any
     // in-flight turn for this thread. It does not touch IN_FLIGHT (no
@@ -691,6 +708,7 @@ async fn start_chat_inner(
                 handle,
                 run_queue: turn_run_queue,
                 cancel_token,
+                client_id: owner_client_id,
             },
         );
     }
@@ -723,6 +741,14 @@ fn dispatch_followups(followups: Vec<crate::agent::queued_turn::QueuedTurn>) {
             },
         ));
     }
+}
+
+/// The client a voice call hands its requests on as (`mochi-ask`, tiny-setup).
+const CALL_HANDOFF_CLIENT: &str = "mochi-ask";
+
+/// Whether a running turn started by `running` must not be interrupted by a message from `incoming`.
+pub(super) fn protects_from(running: &str, incoming: &str) -> bool {
+    running == CALL_HANDOFF_CLIENT && incoming != CALL_HANDOFF_CLIENT
 }
 
 #[cfg(test)]

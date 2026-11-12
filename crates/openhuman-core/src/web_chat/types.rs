@@ -93,6 +93,9 @@ pub(super) struct InFlightEntry {
     /// handle is retained only as a hard backstop if cooperative cancellation
     /// does not land within a grace period.
     pub(super) cancel_token: tokio_util::sync::CancellationToken,
+    /// Who started this turn (`mochi-ask`, the phone app, …): a turn handed on from a call is not
+    /// interrupted by another client's message (see `start_chat`).
+    pub(super) client_id: String,
 }
 
 /// A concurrent, forked (`QueueMode::Parallel`) turn on a thread. Tracked in a

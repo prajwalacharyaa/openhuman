@@ -73,13 +73,40 @@ pub(crate) fn claude_reply_note(event: &WebChannelEvent, thread_id: &str) -> Opt
                  warning.)\n\n{answer}"
             ))
         }
+        // 2026-11-12: an approved task stopped by a newer message came out as "I wasn't able to complete that"
+        "chat_error" if event.error_type.as_deref() == Some("cancelled") => Some(
+            "(Server note, not December speaking: the request you handed on was stopped before it finished, so \
+             it is NOT done. If December asked you to stop it, just confirm it's stopped. Otherwise (a newer \
+             message stopped it) tell December that plainly in one sentence and ask whether to run it again.)"
+                .to_string(),
+        ),
         "chat_error" => Some(format!(
             "(Server note, not December speaking: Claude couldn't finish the request you handed it{}. \
-             Tell December briefly.)",
+             Tell December briefly, with the reason.)",
             event.message.as_deref().map(|m| format!(": {m}")).unwrap_or_default()
         )),
         _ => None,
     }
+}
+
+/// Whether a note carries Claude's finished answer (the model's next words retell it: they aren't saved
+/// again, the answer is already in the chat).
+pub(crate) fn is_answer_note(note: &str) -> bool {
+    [ANSWER_MARK, EARLIER_ANSWER_MARK, TYPED_ANSWER_MARK].iter().any(|mark| note.contains(mark))
+}
+
+const ANSWER_MARK: &str = "Claude finished the request you handed it.";
+const EARLIER_ANSWER_MARK: &str = "a request handed on earlier in this call, before the phone was passed, is finished";
+const TYPED_ANSWER_MARK: &str = "Claude answered what December typed into the chat.";
+
+/// Whether Claude's answer ends by asking December something (a choice, a yes/no): December's next words
+/// are the answer, and must go back to Claude.
+pub(crate) fn asks_december(answer: &str) -> bool {
+    let answer = answer.trim();
+    let tail: String = answer.chars().rev().take(300).collect::<Vec<_>>().into_iter().rev().collect::<String>().to_lowercase();
+    // 2026-11-12 the four-option answer ended "just say the word if you want me to build and PR it": no "?"
+    const OFFERS: &[&str] = &["say the word", "want me to", "should i ", "shall i ", "let me know if", "which one", "do you want"];
+    tail.contains('?') || OFFERS.iter().any(|offer| tail.contains(offer))
 }
 
 /// The most chats from earlier in the same call (before the phone was passed) a session also listens to.
@@ -112,18 +139,30 @@ pub(crate) fn earlier_reply_note(event: &WebChannelEvent, earlier: &[String]) ->
     if event.client_id != ASK_CLIENT || !earlier.iter().any(|t| *t == event.thread_id) {
         return None;
     }
-    claude_reply_note(event, &event.thread_id).map(|note| {
-        note.replacen(
-            "Claude finished the request you handed it.",
-            "a request handed on earlier in this call, before the phone was passed, is finished (it was asked in              another speaker's chat; say whose it was if that helps, e.g. \"Nadia's plan is ready\").",
-            1,
-        )
-        .replacen(
-            "Claude couldn't finish the request you handed it",
-            "a request handed on earlier in this call, before the phone was passed, couldn't be finished",
-            1,
-        )
-    })
+    match event.event.as_str() {
+        // short, in December's language now: 2026-11-12 Samir's whole analysis was read out in Nepali while
+        // December, speaking English, was asking about something else
+        "chat_done" => {
+            let answer = event.full_response.as_deref().unwrap_or_default().trim();
+            if answer.is_empty() {
+                return None;
+            }
+            let answer: String = answer.chars().take(MAX_ANSWER_CHARS).collect();
+            Some(format!(
+                "(Server note, not December speaking: {EARLIER_ANSWER_MARK} (it was asked in another speaker's \
+                 chat). When December isn't in the middle of something with you, tell them in one or two short \
+                 sentences, in the language December is speaking to you now: whose it was (e.g. \"Samir's \
+                 analysis is ready\") and its main point. The full answer stays in that chat; say more only if \
+                 December asks.)\n\n{answer}"
+            ))
+        }
+        "chat_error" => Some(
+            "(Server note, not December speaking: a request handed on earlier in this call, before the phone was \
+             passed, couldn't be finished. Tell December briefly.)"
+                .to_string(),
+        ),
+        _ => None,
+    }
 }
 
 /// A turn December typed into this call's chat (any client but `mochi-ask`).
@@ -210,6 +249,51 @@ impl NoteGate {
     }
 }
 
+/// Keeps the model's spoken retelling of Claude's answer out of the chat: the answer is saved there already, so
+/// the chat showed every answer twice (2026-11-12). Late final transcripts of the same turn are skipped too.
+#[derive(Debug, Default)]
+pub(crate) struct Retelling {
+    pending: bool,
+    active: bool,
+    ended: bool,
+}
+
+impl Retelling {
+    /// A note went to the model.
+    pub(crate) fn note_sent(&mut self, note: &str) {
+        if is_answer_note(note) {
+            self.pending = true;
+        }
+    }
+
+    /// The model's audio is playing.
+    pub(crate) fn agent_spoke(&mut self) {
+        if self.pending {
+            self.pending = false;
+            self.active = true;
+            self.ended = false;
+        } else if self.ended {
+            self.active = false;
+            self.ended = false;
+        }
+    }
+
+    /// December's words were finalised: what the model says next answers them.
+    pub(crate) fn user_spoke(&mut self) {
+        *self = Self::default();
+    }
+
+    /// The model's turn ended.
+    pub(crate) fn turn_over(&mut self) {
+        self.ended = true;
+    }
+
+    /// Whether the model's final transcript now is a retelling (not saved).
+    pub(crate) fn skips_agent_line(&self) -> bool {
+        self.active
+    }
+}
+
 /// What the handoff and lookup checks need to know about a session event.
 #[derive(Clone, Copy)]
 pub(crate) enum HandoffEvent<'a> {
@@ -223,12 +307,19 @@ pub(crate) enum HandoffEvent<'a> {
 
 /// Words of a status update about work handed off earlier ("Claude is still working on it", "I'll update you
 /// the moment Claude finishes"): not a new handoff.
-const STATUS_UPDATE: &[&str] = &["still", "keeping an eye", "update you", "let you know", "finish", "is done", "ready"];
+/// "is ready", not "ready": "I'll get that ready for you" is a promise, not a status (2026-11-12: it slipped
+/// through, nothing was handed on, and December found out 20 minutes later).
+const STATUS_UPDATE: &[&str] = &[
+    "still", "keeping an eye", "update you", "let you know", "finish", "is done", "is ready", "'s ready", "are ready",
+];
 
-/// How the model, speaking as itself, says it took a request on ("I'm on it", "looking into it").
+/// How the model, speaking as itself, says it took a request on ("I'm on it", "looking into it", "I'll get
+/// that ready").
 const SELF_HANDOFF: &[&str] = &[
     "i'm on it", "i am on it", "on it.", "looking into it", "look into it", "get back to you", "i'll find out",
-    "हेर्छु", "पत्ता लगाउँछु",
+    "i'll get that", "i'll get it", "i'll get started", "i'll go with", "i'll start", "i'll fix", "i'll make that",
+    "i'll handle", "i'll take care", "i'll set that up", "i'll set it up", "getting that ready", "i'll kick",
+    "हेर्छु", "पत्ता लगाउँछु", "गरिदिन्छु", "मिलाइदिन्छु", "सुरु गर्छु",
 ];
 
 /// Whether the model's words claim the work was taken on ("Claude is on it", "I'm on it, I'll get back to you").
@@ -331,12 +422,20 @@ const FRESH_WORDS: &[&str] = &[
     "check if", "verify", "is it true", "is that true", "are you sure", "genuine",
     "current", "right now", "research", "look up", "look it up", "search for", "find out",
     "समाचार", "न्युज", "खबर", "ताजा", "मौसम", "सेयर",
+    // travel: distances, routes, buses and tickets change and the model's guess sounds sure (2026-11-12)
+    // ("bus" alone, or "the bus", would match "the business")
+    "how far", "distance", "route", "a bus ", "the bus ", "by bus", "bus to", "buses", "bus park", "ticket",
+    "दूरी", "टाढा", "टिकट", "गाडी",
 ];
 /// How December asks whether Claude is still working or done.
 const STATUS_ASKED: &[&str] = &[
     "is claude", "claude is", "has claude", "if claude", "claude still", "claude done", "claude finished",
     "claude doing", "claude's doing", "क्लाउडले", "are you done", "is it done", "any update",
     "how's it going", "how is it going", "is it ready", "सकियो",
+    // 2026-11-12: "tell me what is happening" and "काम भयो त कि बाँकी छ?" were answered from memory, wrongly
+    "what is happening", "what's happening", "what's going on", "what is going on", "what are you doing",
+    "was it done", "is that done", "is the edit done", "status", "progress",
+    "भयो कि", "भयो त", "बाँकी छ", "के हुँदै", "कहाँ पुग्यो",
 ];
 /// ...unless December asks about something already said ("yesterday's news from our last chat").
 const PAST_WORDS: &[&str] = &["yesterday", "previous", "earlier", "last time", "हिजो", "अघिल्लो", "पहिले"];
@@ -487,23 +586,150 @@ pub(crate) struct CallChecks {
     handoff: HandoffCheck,
     lookup: LookupCheck,
     nudged: bool,
+    /// Claude is working on a request in this call's chat right now.
+    brain_busy: bool,
+    /// Claude's last answer asked December something; December hasn't spoken since.
+    claude_asked: bool,
+    /// December spoke after Claude asked: this turn must hand the answer on.
+    answer_due: bool,
+    said_not_started: bool,
+    said_cancelled: bool,
+    /// When the model said it's checking, in this turn.
+    checking_at: Option<Instant>,
+    last_tool: Option<Instant>,
+    last_shell: Option<Instant>,
 }
 
+/// Sent when December answered a question Claude asked and the turn handed nothing on.
+pub(crate) const ANSWER_NUDGE: &str = "(Server check, not December speaking: Claude's last answer asked December \
+to decide or confirm something, and December has answered, but you didn't send it on, so nobody is acting on it. If \
+December's words answer Claude's question, run mochi-ask now with their answer and what it's about (e.g. \"December \
+picked option 1 for the portfolio brush fix: do it\"), then confirm in a few words. If December was talking about \
+something else, ignore this note.)";
+
+/// Sent when the model says the work hasn't started while Claude is working on it.
+pub(crate) const BUSY_NUDGE: &str = "(Server check, not December speaking: you said the work hasn't started or is \
+waiting, but Claude IS working on a request in this chat right now. Correct that in one short sentence. If December \
+asks how far it is, run mochi-ask --result.)";
+
+/// Sent when the model says it cancelled something without running anything.
+pub(crate) const CANCEL_NUDGE: &str = "(Server check, not December speaking: you said you cancelled or stopped \
+something, but you ran no command, so nothing was cancelled. If December wants Claude's work stopped, run mochi-ask \
+--cancel now and say what it shows. If the work had already finished, tell December that instead.)";
+
+/// Sent when the model searched, then said it's still checking and stopped without an answer.
+pub(crate) const HANGING_NUDGE: &str = "(Server check, not December speaking: you searched, then said you're \
+checking and stopped without an answer. If what you found answers it, tell December now. If it doesn't, hand it on \
+with mochi-ask and say so in a few words.)";
+
+/// How the model says the work hasn't begun (2026-11-12: said twice while Claude was building the fix).
+const NOT_STARTED_SAID: &[&str] = &[
+    "haven't started", "have not started", "hasn't started", "not started", "nothing has been",
+    "waiting for your approval", "सुरु भएको छैन", "सुरु गरेको छैन", "स्वीकृति कुर",
+];
+/// How the model says it cancelled something itself (2026-11-12: "मैले त्यसलाई क्यान्सिल गरिदिएँ", nothing ran).
+const CANCEL_SAID: &[&str] = &[
+    "i cancelled", "i've cancelled", "i have cancelled", "i canceled", "i've canceled", "cancelled it",
+    "canceled it", "cancelled that", "i stopped it", "i've stopped it", "क्यान्सिल गरिदिएँ", "क्यान्सिल गरें",
+    "रद्द गरें", "रद्द गरिदिएँ",
+];
+/// How the model says it is checking right now (not "I checked").
+const CHECKING_NOW: &[&str] =
+    &["checking", "let me check", "searching", "looking it up", "let me look", "हेर्दै", "खोज्दै"];
+
+/// A tool started this soon before "checking" was said is the check it announced.
+const CHECK_GRACE: Duration = Duration::from_secs(3);
+/// A shell command this recent can be the cancel the model talks about.
+const CANCEL_COVERS: Duration = Duration::from_secs(30);
+
 impl CallChecks {
+    /// Claude started a turn in this call's chat.
+    pub(crate) fn brain_started(&mut self) {
+        self.brain_busy = true;
+    }
+
+    /// Claude's turn in this call's chat ended; `asked` when its answer asks December something.
+    pub(crate) fn brain_finished(&mut self, asked: bool) {
+        self.brain_busy = false;
+        self.claude_asked = asked;
+    }
+
     /// The one nudge this event calls for, if any.
     pub(crate) fn on_event(&mut self, event: HandoffEvent<'_>, now: Instant) -> Option<&'static str> {
         if matches!(event, HandoffEvent::UserSaid(_)) {
             self.nudged = false;
         }
-        // both always see the event, so their state stays right even when only one may speak
+        // all always see the event, so their state stays right even when only one may speak
+        let wrong = self.call_facts(event, now);
         let claimed = self.handoff.on_event(event, now);
         let unchecked = self.lookup.on_event(event, now);
-        let nudge = claimed.or(unchecked)?;
+        let nudge = wrong.or(claimed).or(unchecked)?;
         if self.nudged {
             return None;
         }
         self.nudged = true;
         Some(nudge)
+    }
+
+    /// What the model said against what is really going on in this call.
+    fn call_facts(&mut self, event: HandoffEvent<'_>, now: Instant) -> Option<&'static str> {
+        match event {
+            HandoffEvent::UserSaid(_) => {
+                if self.claude_asked {
+                    self.claude_asked = false;
+                    self.answer_due = true;
+                }
+                self.said_not_started = false;
+                self.said_cancelled = false;
+                self.checking_at = None;
+            }
+            HandoffEvent::AgentSaid(text) => {
+                let text = text.to_lowercase().replace('\u{2019}', "'");
+                if self.brain_busy && NOT_STARTED_SAID.iter().any(|w| text.contains(w)) {
+                    self.said_not_started = true;
+                }
+                if CANCEL_SAID.iter().any(|w| text.contains(w)) {
+                    self.said_cancelled = true;
+                }
+                if CHECKING_NOW.iter().any(|w| text.contains(w)) {
+                    self.checking_at.get_or_insert(now);
+                } else if text.chars().count() > 40 {
+                    self.checking_at = None; // it went on to answer
+                }
+            }
+            HandoffEvent::ToolStarted(name) => {
+                self.last_tool = Some(now);
+                if name == "shell" {
+                    self.last_shell = Some(now);
+                    self.answer_due = false;
+                }
+                self.checking_at = None;
+            }
+            HandoffEvent::TurnComplete => {
+                let shelled = self.last_shell.is_some_and(|at| now.duration_since(at) < CANCEL_COVERS);
+                // searched before saying "checking", nothing after it: the answer never came
+                let hanging = self.checking_at.is_some_and(|said| {
+                    self.last_tool.is_some_and(|tool| tool + CHECK_GRACE < said && said.duration_since(tool) < HANDOFF_COVERS)
+                });
+                let nudge = if self.said_not_started {
+                    Some(BUSY_NUDGE)
+                } else if self.said_cancelled && !shelled {
+                    Some(CANCEL_NUDGE)
+                } else if self.answer_due {
+                    Some(ANSWER_NUDGE)
+                } else if hanging {
+                    Some(HANGING_NUDGE)
+                } else {
+                    None
+                };
+                self.said_not_started = false;
+                self.said_cancelled = false;
+                self.answer_due = false;
+                self.checking_at = None;
+                return nudge;
+            }
+        }
+        None
     }
 }
 

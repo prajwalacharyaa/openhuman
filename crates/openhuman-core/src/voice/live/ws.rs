@@ -20,7 +20,8 @@ use tinyagents_live::LiveAgentEvent;
 
 use super::error::LiveVoiceError;
 use super::handoff::{
-    claude_reply_note, earlier_reply_note, earlier_threads, CallChecks, HandoffEvent, NoteGate, NUDGE,
+    asks_december, claude_reply_note, earlier_reply_note, earlier_threads, CallChecks, HandoffEvent, NoteGate,
+    Retelling, NUDGE,
 };
 use super::persist::{reads_phone, TranscriptPersister};
 use super::timing::{self, TimingEvent, VoiceTiming};
@@ -231,6 +232,15 @@ pub async fn handle_live_voice_ws(socket: WebSocket, config: Arc<Config>) {
     let mut timing = VoiceTiming::default();
     let mut checks = CallChecks::default();
     let mut notes = NoteGate::default();
+    let mut retell = Retelling::default();
+    // Claude may already be working in this chat (the call was redialled or the phone passed back mid-task):
+    // 2026-11-12 the new session said "I haven't started" while the fix was being built.
+    if crate::web_chat::channel_web_queue_status(&thread_id)
+        .await
+        .is_ok_and(|status| status.value.get("active").and_then(|v| v.as_bool()) == Some(true))
+    {
+        checks.brain_started();
+    }
     // Lets out notes that waited for December to finish talking when no model turn ends to carry them.
     let mut note_tick = tokio::time::interval(Duration::from_secs(1));
     note_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
@@ -290,6 +300,16 @@ pub async fn handle_live_voice_ws(socket: WebSocket, config: Arc<Config>) {
             chat = chat_events.recv() => {
                 match chat {
                     Ok(chat) => {
+                        if chat.thread_id == thread_id {
+                            match chat.event.as_str() {
+                                "inference_start" => checks.brain_started(),
+                                "chat_done" => checks.brain_finished(asks_december(
+                                    chat.full_response.as_deref().unwrap_or_default(),
+                                )),
+                                "chat_error" => checks.brain_finished(false),
+                                _ => {}
+                            }
+                        }
                         let note = claude_reply_note(&chat, &thread_id).or_else(|| {
                             let note = earlier_reply_note(&chat, &earlier);
                             if note.is_some() {
@@ -300,6 +320,7 @@ pub async fn handle_live_voice_ws(socket: WebSocket, config: Arc<Config>) {
                         if let Some(note) = note {
                             tracing::info!(session_id, "{LOG_PREFIX} Claude's answer arrived: passing it to the call");
                             if let Some(now) = notes.offer(note, std::time::Instant::now()) {
+                                retell.note_sent(&now);
                                 let _ = sender.send_text(now).await;
                             }
                         }
@@ -311,6 +332,7 @@ pub async fn handle_live_voice_ws(socket: WebSocket, config: Arc<Config>) {
             }
             _ = note_tick.tick() => {
                 if let Some(waited) = notes.tick(std::time::Instant::now()) {
+                    retell.note_sent(&waited);
                     let _ = sender.send_text(waited).await;
                 }
             }
@@ -347,14 +369,22 @@ pub async fn handle_live_voice_ws(socket: WebSocket, config: Arc<Config>) {
                     }
                 }
                 match &event {
-                    LiveAgentEvent::Live(LiveEvent::Audio(_)) => notes.agent_audio(),
-                    LiveAgentEvent::Live(LiveEvent::InputTranscript { .. }) => {
-                        notes.heard(std::time::Instant::now())
+                    LiveAgentEvent::Live(LiveEvent::Audio(_)) => {
+                        notes.agent_audio();
+                        retell.agent_spoke();
+                    }
+                    LiveAgentEvent::Live(LiveEvent::InputTranscript { is_final, .. }) => {
+                        notes.heard(std::time::Instant::now());
+                        if *is_final {
+                            retell.user_spoke();
+                        }
                     }
                     LiveAgentEvent::Live(LiveEvent::Interrupted) => notes.interrupted(std::time::Instant::now()),
                     // after the model's turn; while December is still talking the notes keep waiting
                     LiveAgentEvent::Live(LiveEvent::TurnComplete { .. }) => {
+                        retell.turn_over();
                         if let Some(waited) = notes.turn_over(std::time::Instant::now()) {
+                            retell.note_sent(&waited);
                             let _ = sender.send_text(waited).await;
                         }
                     }
@@ -391,6 +421,8 @@ pub async fn handle_live_voice_ws(socket: WebSocket, config: Arc<Config>) {
                     let sent = match outbound {
                         Outbound::Json(frame) => sink.send(json_message(&frame)).await,
                         Outbound::Audio(pcm) => sink.send(Message::Binary(pcm)).await,
+                        // a retelling of Claude's answer: the answer itself is in the chat already
+                        Outbound::Persist(TranscriptRole::Agent, _) if retell.skips_agent_line() => Ok(()),
                         Outbound::Persist(role, text) => {
                             persister.save(role, &text).await;
                             Ok(())

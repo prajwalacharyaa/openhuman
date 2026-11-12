@@ -316,3 +316,114 @@ fn giving_in_without_checking_is_caught_in_more_words() {
     assert!(concedes("I made a mistake by relying on an outdated source. I'm sorry for the confusion this caused."));
     assert!(!concedes("Rajan Bikram Thapa is the newly appointed chairman of the Nepal Insurance Authority."));
 }
+
+/// 2026-11-12 call: each of these got past the checks.
+#[test]
+fn promises_status_questions_and_travel_are_caught() {
+    assert!(claims_handoff("I'll go with the first option, adding a solid base fill. I'll get that ready for you."));
+    assert!(!claims_handoff("Claude's answer is ready."));
+    assert!(asks_status("Okay, tell me what is happening."));
+    assert!(asks_status("काम भयो त कि बाँकी छ?"));
+    assert!(asks_fresh("Can you check what distance it is from Thali to Dubachaur?"));
+    assert!(asks_fresh("आमालाई दुबाचौर जाने गाडीको टिकट चाहिएको थियो"));
+    assert!(!asks_fresh("How is the business going?"), "\"bus\" inside \"business\" is not travel");
+}
+
+#[test]
+fn says_it_hasnt_started_while_claude_works() {
+    let t0 = std::time::Instant::now();
+    let later = |s: u64| t0 + std::time::Duration::from_secs(s);
+    let mut checks = CallChecks::default();
+    checks.brain_started();
+    checks.on_event(HandoffEvent::UserSaid("Okay, did it start?"), t0);
+    checks.on_event(HandoffEvent::AgentSaid("I haven't started the brush fix yet."), later(1));
+    assert_eq!(checks.on_event(HandoffEvent::TurnComplete, later(2)), Some(BUSY_NUDGE));
+    // once Claude is done, the same words are no longer contradicted
+    checks.brain_finished(false);
+    checks.on_event(HandoffEvent::UserSaid("And the other one?"), later(60));
+    checks.on_event(HandoffEvent::AgentSaid("That one hasn't started."), later(61));
+    assert_eq!(checks.on_event(HandoffEvent::TurnComplete, later(62)), None);
+}
+
+#[test]
+fn a_cancel_needs_a_command() {
+    let t0 = std::time::Instant::now();
+    let later = |s: u64| t0 + std::time::Duration::from_secs(s);
+    let mut checks = CallChecks::default();
+    checks.on_event(HandoffEvent::UserSaid("होइन, पर्दैन त्यो।"), t0);
+    checks.on_event(HandoffEvent::AgentSaid("हुन्छ, मैले त्यसलाई क्यान्सिल गरिदिएँ।"), later(1));
+    assert_eq!(checks.on_event(HandoffEvent::TurnComplete, later(2)), Some(CANCEL_NUDGE));
+    // with mochi-ask --cancel run, it's true
+    checks.on_event(HandoffEvent::UserSaid("Stop it."), later(60));
+    checks.on_event(HandoffEvent::ToolStarted("shell"), later(61));
+    checks.on_event(HandoffEvent::AgentSaid("I cancelled it."), later(62));
+    assert_eq!(checks.on_event(HandoffEvent::TurnComplete, later(63)), None);
+}
+
+#[test]
+fn an_answer_to_claudes_question_goes_back_to_claude() {
+    assert!(asks_december("Four options. I haven't changed anything yet, just say the word if you want me to build it."));
+    assert!(asks_december("Which one should I use?"));
+    assert!(!asks_december("Done. Pull request 18 is up."));
+    let t0 = std::time::Instant::now();
+    let later = |s: u64| t0 + std::time::Duration::from_secs(s);
+    let mut checks = CallChecks::default();
+    checks.brain_finished(true);
+    checks.on_event(HandoffEvent::UserSaid("Choose whichever one is proper."), t0);
+    checks.on_event(HandoffEvent::AgentSaid("Okay, the first option then."), later(1));
+    assert_eq!(checks.on_event(HandoffEvent::TurnComplete, later(2)), Some(ANSWER_NUDGE));
+    // handed on: nothing to say
+    let mut checks = CallChecks::default();
+    checks.brain_finished(true);
+    checks.on_event(HandoffEvent::UserSaid("The first one."), t0);
+    checks.on_event(HandoffEvent::ToolStarted("shell"), later(1));
+    checks.on_event(HandoffEvent::AgentSaid("Sent, on it."), later(2));
+    assert_eq!(checks.on_event(HandoffEvent::TurnComplete, later(3)), None);
+}
+
+#[test]
+fn searching_then_saying_checking_without_an_answer_is_caught() {
+    let t0 = std::time::Instant::now();
+    let later = |s: u64| t0 + std::time::Duration::from_secs(s);
+    let mut checks = CallChecks::default();
+    checks.on_event(HandoffEvent::UserSaid("Where is the place called Dubachaur?"), t0);
+    checks.on_event(HandoffEvent::ToolStarted("web_search_tool"), later(1));
+    checks.on_event(HandoffEvent::ToolStarted("web_search_tool"), later(4));
+    checks.on_event(HandoffEvent::AgentSaid("I'm checking the road distance right now."), later(12));
+    assert_eq!(checks.on_event(HandoffEvent::TurnComplete, later(13)), Some(HANGING_NUDGE));
+    // "let me check" and then the search: normal
+    let mut checks = CallChecks::default();
+    checks.on_event(HandoffEvent::UserSaid("What's the weather in Pokhara?"), t0);
+    checks.on_event(HandoffEvent::AgentSaid("Let me check."), later(1));
+    checks.on_event(HandoffEvent::ToolStarted("web_search_tool"), later(2));
+    assert_eq!(checks.on_event(HandoffEvent::TurnComplete, later(3)), None);
+}
+
+#[test]
+fn a_retelling_of_claudes_answer_is_not_saved_again() {
+    let mut retell = Retelling::default();
+    retell.note_sent("(Server note, not December speaking: Claude finished the request you handed it. Tell…)\n\nDone.");
+    assert!(!retell.skips_agent_line());
+    retell.agent_spoke();
+    assert!(retell.skips_agent_line(), "the model is retelling the answer");
+    retell.turn_over();
+    assert!(retell.skips_agent_line(), "its late final transcript is skipped too");
+    retell.agent_spoke();
+    assert!(!retell.skips_agent_line(), "the next turn is saved");
+    retell.note_sent("(Server check, not December speaking: you said you're on it…)");
+    retell.agent_spoke();
+    assert!(!retell.skips_agent_line(), "nudges aren't answers");
+}
+
+#[test]
+fn a_cancelled_request_is_reported_as_not_done() {
+    let cancelled = WebChannelEvent {
+        event: "chat_error".into(),
+        client_id: "mochi-ask".into(),
+        thread_id: "t1".into(),
+        message: Some("Cancelled by newer request".into()),
+        error_type: Some("cancelled".into()),
+        ..Default::default()
+    };
+    assert!(claude_reply_note(&cancelled, "t1").unwrap().contains("it is NOT done"));
+}
