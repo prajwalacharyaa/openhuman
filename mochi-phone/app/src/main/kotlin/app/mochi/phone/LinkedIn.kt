@@ -120,11 +120,9 @@ object LinkedIn {
     }.getOrNull()
 
     /** December asks for a video (noted on the draft; the request itself goes to Nadia through Mochi). Blocking. */
-    fun requestVideo(c: Context, id: String, voice: Boolean) {
+    fun requestVideo(c: Context, id: String, voice: Boolean, request: String) {
         post(c, "/linkedin/drafts/$id/request-video", JSONObject())
-        ask(c, "December requests a video for LinkedIn draft $id (from Nadia's page in the app), " +
-            (if (voice) "WITH a voice-over. " else "without a voice-over (music only if it helps). ") +
-            "Make it with mochi-video from the post's own lines and attach it with mochi-linkedin video $id <mp4>; keep the text as it is.")
+        ask(c, request + if (voice) " The video has a voice-over (December asked)." else " No voice-over (music only if it helps).")
     }
 
     /** Plays the draft's video in the phone's own player (streamed from the approval page over Tailscale). */
@@ -344,7 +342,9 @@ private fun DraftEditor(d: JSONObject, status: JSONObject, onClose: () -> Unit, 
     var hasVideo by remember { mutableStateOf(d.optBoolean("has_video")) }
     var removeVideo by remember { mutableStateOf(false) }
     var videoStatus by remember { mutableStateOf(d.optString("video_status")) }
-    var withVoice by remember { mutableStateOf(false) }
+    var hasDoc by remember { mutableStateOf(d.optBoolean("has_document")) }
+    var removeDoc by remember { mutableStateOf(false) }
+    var picking by remember { mutableStateOf(false) }
     var note by remember { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
     var message by remember { mutableStateOf("") }
@@ -353,7 +353,7 @@ private fun DraftEditor(d: JSONObject, status: JSONObject, onClose: () -> Unit, 
         io(scope, { LinkedIn.full(ctx, id) }) { f ->
             if (f.has("text")) {
                 original = f; text = f.optString("text"); at = f.optLong("at"); alt = f.optString("alt")
-                hasVideo = f.optBoolean("has_video"); videoStatus = f.optString("video_status")
+                hasVideo = f.optBoolean("has_video"); videoStatus = f.optString("video_status"); hasDoc = f.optBoolean("has_document")
             }
             loaded = true
         }
@@ -381,6 +381,7 @@ private fun DraftEditor(d: JSONObject, status: JSONObject, onClose: () -> Unit, 
         newImage?.let { put("image_b64", it) }
         if (removeImage) put("no_image", true)
         if (removeVideo) put("no_video", true)
+        if (removeDoc) put("no_document", true)
     }
     val dirty = changes.length() > 0
     fun work(after: String, block: () -> Unit) {
@@ -440,82 +441,69 @@ private fun DraftEditor(d: JSONObject, status: JSONObject, onClose: () -> Unit, 
                 if (at > 0) Pill("Clear", false) { at = 0 }
             }
 
-            // image
-            if (hasImage && !removeImage) {
-                picture?.let { Image(it, contentDescription = alt.ifBlank { "The post's image" }, contentScale = ContentScale.FillWidth,
-                    modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp))) }
-                    ?: Text("Loading the image…", style = Type.small, color = c.muted)
-                Field(alt, { alt = it }, "Describe the image (for people using screen readers)", Modifier.fillMaxWidth())
-            }
-            // several images or a carousel PDF: the approval page shows all of it, exactly as it goes out
+            // the visual: what goes out with the post (one kind: a video, else a carousel, else the image(s)), and
+            // one button to add or change it (kind, then style, in a picker)
+            Text("Visual", style = Type.title, color = c.ink)
+            val video = hasVideo && !removeVideo
+            val doc = hasDoc && !removeDoc
+            val image = hasImage && !removeImage
             val many = d.optInt("image_count")
-            if (d.optBoolean("has_document") || many > 1) {
-                Text(if (d.optBoolean("has_document")) "Posted as a carousel: ${d.optString("doc_title").ifBlank { "PDF" }}"
-                     else "$many images, posted together", style = Type.small, color = c.muted)
-                Pill(if (d.optBoolean("has_document")) "See the carousel" else "See all $many images", true) {
-                    ctx.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(LinkedIn.approveUrl(status, id))).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            fun openApproval() = ctx.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(LinkedIn.approveUrl(status, id)))
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            when {
+                video -> Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Space.s)) {
+                    Text("A video goes out with it.", style = Type.body, color = c.ink, modifier = Modifier.weight(1f))
+                    Pill("Play", false, height = 36.dp) { LinkedIn.play(ctx, status, id) }
                 }
+                doc -> Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Space.s)) {
+                    Text("Carousel: ${d.optString("doc_title").ifBlank { "PDF" }}", style = Type.body, color = c.ink,
+                        modifier = Modifier.weight(1f))
+                    Pill("See it", false, height = 36.dp) { openApproval() }
+                }
+                image -> {
+                    picture?.let { Image(it, contentDescription = alt.ifBlank { "The post's image" }, contentScale = ContentScale.FillWidth,
+                        modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp))) }
+                        ?: Text("Loading the image…", style = Type.small, color = c.muted)
+                    if (many > 1) Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Space.s)) {
+                        Text("$many images, posted together", style = Type.small, color = c.muted, modifier = Modifier.weight(1f))
+                        Pill("See all", false, height = 36.dp) { openApproval() }
+                    } else Field(alt, { alt = it }, "Describe the image (for screen readers)", Modifier.fillMaxWidth())
+                }
+                else -> Text("No visual yet.", style = Type.small, color = c.muted)
+            }
+            if (video && (image || doc) || doc && image)
+                Text("Also attached: " + listOfNotNull(if (doc && video) "a carousel" else null, if (image) "an image" else null)
+                    .joinToString(" and ") + ", not posted while the ${if (video) "video" else "carousel"} is there.",
+                    style = Type.small, color = c.muted)
+            when (videoStatus) {
+                "requested" -> Text("Video requested: it shows up here when it's ready.", style = Type.small, color = c.muted)
+                "failed" -> Text("The video couldn't be made: ${original.optString("video_error")}", style = Type.small, color = c.danger)
             }
             Row(horizontalArrangement = Arrangement.spacedBy(Space.s)) {
-                Pill(if (hasImage && !removeImage) "Replace photo / video" else "Add photo / video", false, Modifier.weight(1f)) {
-                    pick.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageAndVideo))
-                }
-                if (hasImage && !removeImage) Pill("Remove image", false, Modifier.weight(1f)) {
-                    removeImage = true; newImage = null; picture = null
-                }
-            }
-            Text("Or ask Nadia for one:", style = Type.small, color = c.muted)
-            // two a row, so each label fits its button
-            listOf("Screenshot" to "a screenshot of the project it's about",
-                "Designed image" to "an image designed for it by the designer (mochi-draw), in December's style",
-                "Carousel" to "a carousel (PDF, 5-8 pages) the designer draws from its points (mochi-draw pages --pdf)",
-                "Chart" to "a chart of its real numbers, drawn by the designer").chunked(2).forEach { row ->
-                Row(horizontalArrangement = Arrangement.spacedBy(Space.s)) {
-                    row.forEach { (label, what) ->
-                        Pill(label, false, Modifier.weight(1f), height = 44.dp) {
-                            work("Asked Nadia for $label. It shows up here when it's attached.") {
-                                LinkedIn.ask(ctx, "December asks for an image on LinkedIn draft $id (from Nadia's page in the app): $what. " +
-                                    "Attach it with mochi-linkedin edit $id --image <file> --alt \"...\" (several: --image per file), " +
-                                    "or a carousel with mochi-linkedin document $id <file.pdf> --title \"...\"; keep the text as it is.")
-                            }
-                        }
+                Pill(if (video || doc || image) "Change visual" else "Add a visual", true, Modifier.weight(1f)) { picking = true }
+                if (video || doc || image) Pill("Remove", false, Modifier.weight(1f)) {
+                    when {
+                        video -> removeVideo = true
+                        doc -> removeDoc = true
+                        else -> { removeImage = true; newImage = null; picture = null }
                     }
                 }
             }
-
-            // video: play / remove, or ask for one (green when Nadia thinks the post suits video, red when not)
-            Text("Video", style = Type.title, color = c.ink)
-            if (hasVideo && !removeVideo) {
-                Text("A video is attached. It's posted instead of the image.", style = Type.small, color = c.muted)
-                Row(horizontalArrangement = Arrangement.spacedBy(Space.s)) {
-                    Pill("Play video", true, Modifier.weight(1f)) { LinkedIn.play(ctx, status, id) }
-                    Pill("Remove video", false, Modifier.weight(1f)) { removeVideo = true }
-                }
-            } else {
-                val fit = original.optString("video_fit").ifBlank { d.optString("video_fit") }
-                val why = original.optString("video_why").ifBlank { d.optString("video_why") }
-                when (videoStatus) {
-                    "requested" -> Text("Video requested: Nadia is making it. It shows up here when it's attached.",
-                        style = Type.small, color = c.muted)
-                    "failed" -> Text("The video couldn't be made: ${original.optString("video_error")}", style = Type.small, color = c.danger)
-                }
-                if (fit.isNotBlank()) Text((if (fit == "good") "Good for a video: " else "Not ideal for a video: ") + why,
-                    style = Type.small, color = if (fit == "good") c.greenInk else c.danger)
-                if (videoStatus != "requested") {
-                    // voice-over is December's choice only; music Nadia adds when it helps
-                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Space.s)) {
-                        Pill(if (withVoice) "✓ With voice-over" else "With voice-over", withVoice, height = 36.dp) { withVoice = !withVoice }
-                        Text(if (withVoice) "Narrated, music under it" else "Silent or music only", style = Type.small, color = c.muted)
-                    }
-                    VideoButton(fit) {
-                        val voice = withVoice
-                        work("Asked Nadia for a video (about a minute to make once she starts).") {
-                            save(); LinkedIn.requestVideo(ctx, id, voice)
-                        }
+            if (picking) VisualPicker(
+                fit = original.optString("video_fit").ifBlank { d.optString("video_fit") },
+                why = original.optString("video_why").ifBlank { d.optString("video_why") },
+                onPhoto = { pick.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageAndVideo)) },
+                onAsk = { kind, style, extra, voice ->
+                    if (kind == VisualKind.Video) {
                         videoStatus = "requested"
+                        work("Asked for a video. It shows up here when it's ready.") {
+                            save(); LinkedIn.requestVideo(ctx, id, voice, visualRequest(id, kind, style, extra))
+                        }
+                    } else work("Asked for ${kind.label.lowercase()}. It shows up here when it's ready.") {
+                        save(); LinkedIn.ask(ctx, visualRequest(id, kind, style, extra))
                     }
-                }
-            }
+                },
+                onClose = { picking = false })
 
             // ask for changes
             Field(note, { note = it }, "Suggest changes (Nadia and Mark rework it)", Modifier.fillMaxWidth()) {
@@ -545,21 +533,5 @@ private fun DraftEditor(d: JSONObject, status: JSONObject, onClose: () -> Unit, 
                 }
             }
         }
-    }
-}
-
-/** Request video: green when Nadia rated the post good for video, red when she didn't, neutral when she hasn't said. */
-@Composable
-private fun VideoButton(fit: String, onClick: () -> Unit) {
-    val c = LocalMochi.current
-    val (bg, ink) = when (fit) {
-        "good" -> c.greenInk to Color.White
-        "poor" -> c.danger to Color.White
-        else -> c.field to c.ink
-    }
-    Box(Modifier.fillMaxWidth().heightIn(min = 44.dp).clip(RoundedCornerShape(22.dp)).background(bg)
-        .clickable(role = Role.Button, onClick = onClick).padding(horizontal = Space.l, vertical = Space.m),
-        contentAlignment = Alignment.Center) {
-        Text(if (fit == "poor") "Request video anyway" else "Request video", style = Type.body.copy(fontWeight = Type.strong), color = ink)
     }
 }

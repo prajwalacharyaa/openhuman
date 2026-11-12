@@ -105,8 +105,13 @@ object Agents {
     fun latest(name: String): Doing.Event? =
         Doing.events.lastOrNull { it.who == who(name) && (it.kind == "step" || it.kind == "line") }
 
+    /** Working from a job's start until its "Finished replying" (2026-11-12: Iris writing a long file and Nadia waiting
+     *  on Iris showed as resting for minutes); a job that never finished counts for [OPEN_MS] at most. */
     fun working(name: String, now: Long = System.currentTimeMillis()) =
-        latest(name)?.let { now - it.at < Doing.BUSY_MS && it.text != "Finished replying" } == true
+        Doing.events.lastOrNull { it.who == who(name) && it.kind in setOf("task", "step", "line") }
+            ?.let { now - it.at < OPEN_MS && it.text != "Finished replying" } == true
+
+    private const val OPEN_MS = 20 * 60_000L
 
     /** The agent's jobs, newest first (each job is its own task in the feed). */
     fun tasks(name: String): List<Doing.TaskView> =
