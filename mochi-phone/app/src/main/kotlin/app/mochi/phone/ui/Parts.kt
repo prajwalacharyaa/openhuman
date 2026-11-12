@@ -131,6 +131,10 @@ object Icons2 {
     }
 }
 
+/** The floating mute button's colour while the mic is on: charcoal in light and dark (the theme's ink is near-white
+ *  in dark mode, which made a white button with an invisible white icon). Muted stays red. */
+val MuteFabIdle = Color(0xFF2B2F36)
+
 @Composable
 fun LineIcon(icon: ImageVector, tint: Color, size: Dp = 20.dp, label: String? = null) =
     Icon(icon, contentDescription = label, tint = tint, modifier = Modifier.size(size))

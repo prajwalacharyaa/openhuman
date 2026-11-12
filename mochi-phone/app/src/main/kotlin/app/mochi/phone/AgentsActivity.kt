@@ -1,6 +1,7 @@
 package app.mochi.phone
 
 import app.mochi.phone.ui.LineIcon
+import app.mochi.phone.ui.MuteFabIdle
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.foundation.clickable
@@ -360,7 +361,7 @@ private fun AgentDoingPage(name: String, agent: Agents.Agent?, tokens: Doing.Tok
     // floating mute while a call is on (every agent's page, as on Mochi's Doing screen)
     var muteTick by remember { mutableStateOf(0) }
     if (Call.active) Box(Modifier.align(Alignment.BottomEnd).padding(Space.xl).size(64.dp).clip(CircleShape)
-        .background(if (Call.muted || Call.frozen) c.danger else c.ink)
+        .background(if (Call.muted || Call.frozen) c.danger else MuteFabIdle)
         .clickable(role = Role.Button) { if (Call.frozen) Call.unfreeze() else Call.muted = !Call.muted; muteTick++ }
         .semantics { contentDescription = if (Call.muted) "Unmute" else "Mute" }, contentAlignment = Alignment.Center) {
         key(muteTick) { LineIcon(if (Call.muted || Call.frozen) Icons2.MicOff else Icons2.Mic, Color.White, 28.dp) }

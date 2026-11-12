@@ -43,6 +43,8 @@ object AppLock {
     private val EXEMPT: Set<Class<*>> = setOf(CallActivity::class.java, ConfirmActivity::class.java, AssistActivity::class.java,
         LockActivity::class.java)
     private var started = 0
+    /** A screen of the app is on view: Android then lets it open another one by itself (see [AppNav]). */
+    val visible get() = started > 0
     private var leftAt = 0L            // when the last screen of Mochi went to the background (0: never opened)
     private var unlocked = false
 

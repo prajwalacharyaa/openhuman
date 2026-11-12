@@ -100,7 +100,14 @@
         <!-- Samir's Research page (holdings, watchlist, market, journal, calendar) -->
         <activity
             android:name=".ResearchActivity"
-            android:exported="false" />
+            android:exported="false"
+            android:launchMode="singleTop" />
+        <!-- Samir's chart popup: over whatever screen is on (see after the chart in Trading.kt) -->
+        <activity
+            android:name=".ChartActivity"
+            android:exported="false"
+            android:launchMode="singleTop"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
         <activity
             android:name=".AgentsActivity"
             android:exported="false"

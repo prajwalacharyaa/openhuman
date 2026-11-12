@@ -74,6 +74,10 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.clipRect
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.tween
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
@@ -85,6 +89,7 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import app.mochi.phone.ui.Icons2
 import app.mochi.phone.ui.LineIcon
+import app.mochi.phone.ui.MuteFabIdle
 import app.mochi.phone.ui.LocalMochi
 import app.mochi.phone.ui.MochiColors
 import app.mochi.phone.ui.MochiTheme
@@ -460,19 +465,38 @@ private fun PlacedDialog(k: JSONObject, onDismiss: () -> Unit, onDone: (Double, 
 // ---- the Research page: swipe tabs, back and home, floating mute ----
 
 class ResearchActivity : ComponentActivity() {
+    /** A tab or a stock asked for by Mochi or Samir ("show my watchlist", "open NABIL"), with when (a new ask reapplies). */
+    private var requested by mutableStateOf<Triple<String?, String?, Long>?>(null)
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
-        setContent { MochiTheme { ResearchScreen(onBack = { finish() }, onHome = {
+        take(intent)
+        setContent { MochiTheme { ResearchScreen(requested, onBack = { finish() }, onHome = {
             startActivity(Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP))
             finish()
         }) } }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        take(intent)
+    }
+
+    private fun take(i: Intent?) {
+        val tab = i?.getStringExtra(EXTRA_TAB); val stock = i?.getStringExtra(EXTRA_STOCK)
+        if (tab != null || stock != null) requested = Triple(tab, stock, System.nanoTime())
+    }
+
+    companion object {
+        const val EXTRA_TAB = "tab"
+        const val EXTRA_STOCK = "stock"
     }
 }
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun ResearchScreen(onBack: () -> Unit, onHome: () -> Unit) {
+private fun ResearchScreen(requested: Triple<String?, String?, Long>?, onBack: () -> Unit, onHome: () -> Unit) {
     val ctx = LocalContext.current
     val c = LocalMochi.current
     val scope = rememberCoroutineScope()
@@ -487,6 +511,11 @@ private fun ResearchScreen(onBack: () -> Unit, onHome: () -> Unit) {
     val pager = rememberPagerState(initialPage = 1) { tabs.size }
     val tabRow = rememberLazyListState()
     LaunchedEffect(pager.currentPage) { tabRow.animateScrollToItem(max(0, pager.currentPage - 1)) }
+    LaunchedEffect(requested) {
+        val r = requested ?: return@LaunchedEffect
+        r.first?.let { t -> tabs.indexOfFirst { it.equals(t, ignoreCase = true) }.takeIf { it >= 0 }?.let { pager.animateScrollToPage(it) } }
+        r.second?.let { stock = it }
+    }
     val snap = data?.optJSONObject("snapshot")
     val mode = view ?: snap?.optString("mode") ?: "paper"
     Box(Modifier.fillMaxSize().background(c.bg).systemBarsPadding()) {
@@ -525,7 +554,7 @@ private fun ResearchScreen(onBack: () -> Unit, onHome: () -> Unit) {
         }
         // floating mute while a call is on (as on the Doing screen)
         if (Call.active) Box(Modifier.align(Alignment.BottomEnd).padding(Space.xl).size(64.dp).clip(CircleShape)
-            .background(if (Call.muted || Call.frozen) c.danger else c.ink)
+            .background(if (Call.muted || Call.frozen) c.danger else MuteFabIdle)
             .clickable(role = Role.Button) { if (Call.frozen) Call.unfreeze() else Call.muted = !Call.muted; tick++ }
             .semantics { contentDescription = if (Call.muted) "Unmute" else "Mute" }, contentAlignment = Alignment.Center) {
             LineIcon(if (Call.muted || Call.frozen) Icons2.MicOff else Icons2.Mic, Color.White, 28.dp)
@@ -1238,13 +1267,14 @@ private fun KeyValue(k: String, v: String) {
 
 private val LINE_OPTIONS = listOf("sma20" to "20-day average", "sma50" to "50-day average", "sma200" to "200-day average",
     "boll" to "Bollinger bands", "sr" to "Support / resistance", "buy" to "Your buy price", "stop" to "Stop-loss",
-    "target" to "Target", "wk52" to "52-week high / low")
+    "target" to "Target", "wk52" to "52-week high / low", "rsi" to "RSI pane", "macd" to "MACD pane")
 
 /** Candlesticks drawn here (no chart library: the app stays small). Pinch to zoom, drag to move back in time;
  *  "Lines" picks the overlays. Averages and bands are worked out from all the bars, so a 200-day line works zoomed in. */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun PriceChart(all: List<JSONObject>, ind: JSONObject?, buy: Double?, stop: Double?, target: Double?) {
+internal fun PriceChart(all: List<JSONObject>, ind: JSONObject?, buy: Double?, stop: Double?, target: Double?,
+                        control: JSONObject? = null) {
     val c = LocalMochi.current
     if (all.size < 2) { Text("Not enough days yet.", style = Type.small, color = c.muted); return }
     var count by remember(all.size) { mutableIntStateOf(min(60, all.size)) }
@@ -1252,6 +1282,22 @@ private fun PriceChart(all: List<JSONObject>, ind: JSONObject?, buy: Double?, st
     var drag by remember { mutableFloatStateOf(0f) }
     var on by remember { mutableStateOf(setOf("sma20", "sr", "buy", "stop", "target")) }
     var menu by remember { mutableStateOf(false) }
+    // Samir drives the popup chart: its range, lines and drawings (`mochi-phone chart`); each new one is drawn in, step by step
+    val seq = control?.optLong("seq") ?: 0L
+    LaunchedEffect(seq, all.size) {
+        if (control == null) return@LaunchedEffect
+        count = when (control.optString("range").lowercase()) { "1m" -> 21; "3m" -> 63; "6m" -> 125; "1y", "all" -> all.size; else -> count }
+            .coerceIn(min(10, all.size), all.size)
+        end = all.size
+        control.optJSONArray("show")?.let { a -> on = (0 until a.length()).map { a.optString(it) }.toSet() }
+    }
+    val drawn = remember { Animatable(1f) }
+    LaunchedEffect(seq) { if (control != null) { drawn.snapTo(0f); drawn.animateTo(1f, tween(2800, easing = LinearEasing)) } }
+    val lineChart = control?.optString("type") == "line"
+    val dayIndex = remember(all) { all.withIndex().associate { (i, b) -> b.optString("day") to i } }
+    val levels = control?.optJSONArray("levels").objs()
+    val trends = control?.optJSONArray("trends").objs()
+    val marks = control?.optJSONArray("marks").objs()
     val closes = remember(all) { all.map { it.optDouble("close") } }
     val avgs = remember(all) {
         listOf(20, 50, 200).associateWith { n -> closes.indices.map { i -> if (i < n - 1) null else closes.subList(i - n + 1, i + 1).average() } }
@@ -1269,6 +1315,7 @@ private fun PriceChart(all: List<JSONObject>, ind: JSONObject?, buy: Double?, st
             add(Triple(recent.minOf { it.optDouble("low") }, "Support", c.greenInk))
         }
         if ("wk52" in on) { ind?.dbl("wk52_high")?.let { add(Triple(it, "52w high", c.muted)) }; ind?.dbl("wk52_low")?.let { add(Triple(it, "52w low", c.muted)) } }
+        levels.forEach { l -> l.dbl("price")?.let { add(Triple(it, l.optString("label"), levelColor(c, l.optString("kind")))) } }
     }
     val e = end.coerceIn(min(count, all.size), all.size)
     val st = max(0, e - count)
@@ -1313,7 +1360,13 @@ private fun PriceChart(all: List<JSONObject>, ind: JSONObject?, buy: Double?, st
         }) {
             val w = size.width / bars.size
             fun y(v: Double) = size.height * (1 - ((v - lo) / span).toFloat())
-            bars.forEachIndexed { i, b ->
+            fun stage(k: Int) = ((drawn.value * 4f) - k).coerceIn(0f, 1f)   // 0 averages, 1 levels, 2 trends, 3 marks
+            fun xOf(i: Int) = w * (i - st) + w / 2
+            if (lineChart) {
+                val p = Path()
+                bars.forEachIndexed { i, b -> val v = b.optDouble("close"); if (!v.isNaN()) { if (i == 0) p.moveTo(xOf(st + i), y(v)) else p.lineTo(xOf(st + i), y(v)) } }
+                drawPath(p, c.ink, style = Stroke(width = 2.dp.toPx()))
+            } else bars.forEachIndexed { i, b ->
                 val o = b.optDouble("open").takeIf { !it.isNaN() } ?: b.optDouble("close")
                 val cl = b.optDouble("close"); val h = b.optDouble("high"); val l = b.optDouble("low")
                 if (cl.isNaN() || h.isNaN() || l.isNaN()) return@forEachIndexed
@@ -1325,7 +1378,7 @@ private fun PriceChart(all: List<JSONObject>, ind: JSONObject?, buy: Double?, st
             }
             fun series(v: List<Double?>, color: Color, width: Float) {
                 val p = Path(); var started = false
-                for (i in st until e) {
+                for (i in st until st + ((e - st) * stage(0)).roundToInt()) {
                     val a = v[i] ?: continue
                     val px = w * (i - st) + w / 2
                     if (!started) { p.moveTo(px, y(a)); started = true } else p.lineTo(px, y(a))
@@ -1340,13 +1393,42 @@ private fun PriceChart(all: List<JSONObject>, ind: JSONObject?, buy: Double?, st
                 series(mid.indices.map { i -> mid[i]?.let { m -> sd20[i]?.let { m + 2 * it } } }, c.violetInk.copy(alpha = 0.5f), 1.dp.toPx())
                 series(mid.indices.map { i -> mid[i]?.let { m -> sd20[i]?.let { m - 2 * it } } }, c.violetInk.copy(alpha = 0.5f), 1.dp.toPx())
             }
-            lines.forEach { (v, label, color) ->
+            val f = stage(1)
+            if (f > 0f) lines.forEach { (v, label, color) ->
                 if (v !in lo..hi) return@forEach
-                drawLine(color, Offset(0f, y(v)), Offset(size.width, y(v)), 1.dp.toPx(),
+                drawLine(color, Offset(0f, y(v)), Offset(size.width * f, y(v)), 1.dp.toPx(),
                     pathEffect = androidx.compose.ui.graphics.PathEffect.dashPathEffect(floatArrayOf(10f, 8f)))
                 val t = "$label ${"%.1f".format(v)}"
                 val m = tm.measure(t, labelStyle)
-                drawText(tm, t, Offset(size.width - m.size.width - 4f, (y(v) - m.size.height - 2f).coerceAtLeast(0f)), labelStyle.copy(color = color))
+                drawText(tm, t, Offset(size.width - m.size.width - 4f, (y(v) - m.size.height - 2f).coerceAtLeast(0f)), labelStyle.copy(color = color.copy(alpha = f)))
+            }
+            // trend lines Samir drew: from one (day, price) to another, drawn in from the left
+            val g = stage(2)
+            if (g > 0f) clipRect {
+                trends.forEach { t ->
+                    val a = t.optJSONArray("from"); val b = t.optJSONArray("to")
+                    val i0 = dayIndex[a?.optString(0)] ?: return@forEach; val i1 = dayIndex[b?.optString(0)] ?: return@forEach
+                    val p0 = Offset(xOf(i0), y(a!!.optDouble(1))); val p1 = Offset(xOf(i1), y(b!!.optDouble(1)))
+                    val color = levelColor(c, t.optString("kind"))
+                    drawLine(color, p0, p0 + (p1 - p0) * g, 2.dp.toPx())
+                    if (g >= 1f && t.optString("label").isNotBlank())
+                        drawText(tm, t.optString("label"), Offset(p1.x.coerceAtMost(size.width - 90f).coerceAtLeast(0f), (p1.y - 28f).coerceAtLeast(0f)), labelStyle.copy(color = color))
+                }
+            }
+            // candle patterns Samir pointed at: a marker over the bar with its name
+            val h = stage(3)
+            if (h > 0f) marks.forEach { m ->
+                val i = dayIndex[m.optString("day")] ?: return@forEach
+                if (i !in st until e) return@forEach
+                val top = all[i].optDouble("high").takeIf { !it.isNaN() } ?: return@forEach
+                val color = levelColor(c, m.optString("kind")).copy(alpha = h)
+                drawCircle(color, max(3f, w * 0.3f).coerceAtMost(8f), Offset(xOf(i), (y(top) - 10f).coerceAtLeast(6f)))
+                val label = m.optString("label").take(18)
+                if (label.isNotBlank()) {
+                    val mm = tm.measure(label, labelStyle)
+                    drawText(tm, label, Offset((xOf(i) - mm.size.width / 2f).coerceIn(0f, max(0f, size.width - mm.size.width)),
+                        (y(top) - 14f - mm.size.height).coerceAtLeast(0f)), labelStyle.copy(color = color))
+                }
             }
             drawText(tm, "%.1f".format(hi), Offset(2f, 0f), labelStyle.copy(color = c.muted))
             val bl = tm.measure("%.1f".format(lo), labelStyle)
@@ -1359,6 +1441,12 @@ private fun PriceChart(all: List<JSONObject>, ind: JSONObject?, buy: Double?, st
                 val h = (vols[i] / vmax).toFloat() * size.height
                 drawRect(if (up) c.greenInk.copy(alpha = 0.45f) else c.danger.copy(alpha = 0.45f), Offset(w * i + w * 0.15f, size.height - h), Size(w * 0.7f, h))
             }
+        }
+        if ("rsi" in on) IndicatorPane("RSI 14 (above 70 stretched, below 30 washed out)", rsiSeries(closes), st, e,
+            listOf(30.0, 70.0), 0.0, 100.0, c.violetInk)
+        if ("macd" in on) {
+            val (macd, signal) = remember(all) { macdSeries(closes) }
+            IndicatorPane("MACD 12/26 (blue) vs signal 9 (amber)", macd, st, e, listOf(0.0), null, null, c.blueInk, signal, c.amberInk)
         }
         val legend = buildList {
             if ("sma20" in on) add("20-day" to c.blueInk); if ("sma50" in on) add("50-day" to c.amberInk)
@@ -1507,4 +1595,142 @@ private fun MeroShareAccount() {
         }
     }
     if (note2.isNotEmpty()) Text(note2, style = Type.small, color = c.muted)
+}
+
+// ---- Samir's chart popup (`mochi-phone chart`): the chart he drives, what the candles say, his view ----
+
+/** Colour for a level, trend line or mark Samir drew, by its kind. */
+private fun levelColor(c: MochiColors, kind: String): Color = when (kind.lowercase()) {
+    "support", "up", "bullish", "target" -> c.greenInk
+    "resistance", "neutral" -> c.amberInk
+    "entry", "buy" -> c.blueInk
+    "stop", "down", "bearish" -> c.danger
+    else -> c.violetInk
+}
+
+private fun emaSeries(x: List<Double?>, n: Int): List<Double?> {
+    val out = MutableList<Double?>(x.size) { null }
+    val k = 2.0 / (n + 1); var prev: Double? = null; var seen = 0; var sum = 0.0
+    for (i in x.indices) {
+        val v = x[i] ?: continue
+        if (prev == null) { sum += v; seen++; if (seen == n) { prev = sum / n; out[i] = prev } }
+        else { prev = v * k + prev * (1 - k); out[i] = prev }
+    }
+    return out
+}
+
+/** RSI 14, Wilder's smoothing (as mochi-market's). */
+private fun rsiSeries(closes: List<Double>, n: Int = 14): List<Double?> {
+    val x = closes.map { it.takeIf { v -> !v.isNaN() } }
+    val out = MutableList<Double?>(x.size) { null }
+    var g = 0.0; var l = 0.0; var count = 0
+    for (i in 1 until x.size) {
+        val a = x[i] ?: continue; val b = x[i - 1] ?: continue
+        val d = a - b; count++
+        if (count <= n) { g += max(d, 0.0); l += max(-d, 0.0); if (count == n) { g /= n; l /= n } else continue }
+        else { g = (g * (n - 1) + max(d, 0.0)) / n; l = (l * (n - 1) + max(-d, 0.0)) / n }
+        out[i] = if (l == 0.0) 100.0 else 100 - 100 / (1 + g / l)
+    }
+    return out
+}
+
+/** MACD (EMA 12 − EMA 26) and its 9-day signal line. */
+private fun macdSeries(closes: List<Double>): Pair<List<Double?>, List<Double?>> {
+    val x = closes.map { it.takeIf { v -> !v.isNaN() } }
+    val e12 = emaSeries(x, 12); val e26 = emaSeries(x, 26)
+    val macd = x.indices.map { i -> e12[i]?.let { a -> e26[i]?.let { a - it } } }
+    return macd to emaSeries(macd, 9)
+}
+
+/** A small indicator chart under the prices, over the same days. */
+@Composable
+private fun IndicatorPane(label: String, v: List<Double?>, st: Int, e: Int, guides: List<Double>, min0: Double?, max0: Double?,
+                          color: Color, v2: List<Double?>? = null, color2: Color = color) {
+    val c = LocalMochi.current
+    Text(label, style = Type.small, color = c.muted)
+    Canvas(Modifier.fillMaxWidth().height(64.dp)) {
+        val win = (st until e).flatMap { listOfNotNull(v.getOrNull(it), v2?.getOrNull(it)) }
+        if (win.isEmpty()) return@Canvas
+        val lo = min0 ?: (win + guides).min(); val hi = max0 ?: (win + guides).max()
+        val span = (hi - lo).takeIf { it > 0 } ?: 1.0
+        val w = size.width / max(1, e - st)
+        fun y(x: Double) = size.height * (1 - ((x - lo) / span).toFloat())
+        guides.forEach { gd ->
+            drawLine(c.line, Offset(0f, y(gd)), Offset(size.width, y(gd)), 1.dp.toPx(),
+                pathEffect = androidx.compose.ui.graphics.PathEffect.dashPathEffect(floatArrayOf(8f, 6f)))
+        }
+        fun line(s: List<Double?>, col: Color) {
+            val p = Path(); var started = false
+            for (i in st until e) {
+                val a = s.getOrNull(i) ?: continue
+                val px = w * (i - st) + w / 2
+                if (!started) { p.moveTo(px, y(a)); started = true } else p.lineTo(px, y(a))
+            }
+            if (started) drawPath(p, col, style = Stroke(width = 1.5.dp.toPx()))
+        }
+        line(v, color); v2?.let { line(it, color2) }
+    }
+}
+
+/** The popup's page: the chart Samir drives, his words now, what each candle pattern means, and his saved view. */
+@Composable
+internal fun ChartPopup(spec: JSONObject, onClose: () -> Unit) {
+    val ctx = LocalContext.current
+    val c = LocalMochi.current
+    val scope = rememberCoroutineScope()
+    val symbol = spec.optString("symbol")
+    var d by remember(symbol) { mutableStateOf<JSONObject?>(null) }
+    LaunchedEffect(symbol) {
+        repeat(12) {   // a stock the server hasn't prepared is ready ~10 s after it's asked for
+            io(scope, { Trading.stock(ctx, symbol) }) { d = it }
+            delay(if (d?.optBoolean("pending") == true || d == null) 3_000 else 60_000)
+            if (d != null && d?.optBoolean("pending") != true) return@LaunchedEffect
+        }
+    }
+    Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.55f)).systemBarsPadding().padding(Space.m)) {
+        Column(Modifier.fillMaxSize().clip(RoundedCornerShape(24.dp)).background(c.bg)) {
+            Row(Modifier.fillMaxWidth().padding(start = Space.l, end = Space.s, top = Space.s, bottom = Space.s),
+                verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text(listOf(symbol, spec.optString("range").uppercase()).filter { it.isNotBlank() }.joinToString(" · "),
+                        style = Type.title, color = c.ink)
+                    spec.optString("title").takeIf { it.isNotBlank() }?.let {
+                        Text(it, style = Type.small, color = c.muted, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    }
+                }
+                RoundButton(Icons2.Close, "Close", c.field, c.ink, 44.dp, onClose)
+            }
+            val x = d
+            if (x == null || x.optBoolean("pending")) {
+                Text("Getting $symbol's chart…", style = Type.body, color = c.muted, modifier = Modifier.padding(Space.xl))
+                return@Column
+            }
+            val bars = x.optJSONArray("bars").objs()
+            val pos = x.optJSONObject("position")
+            val mine = pos?.optJSONObject("live") ?: pos?.optJSONObject("paper")
+            val ind = x.optJSONObject("indicators")
+            Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = Space.l),
+                verticalArrangement = Arrangement.spacedBy(Space.m)) {
+                PriceChart(bars, ind, mine?.dbl("avg"), mine?.optString("stop")?.toDoubleOrNull(),
+                    mine?.optString("target")?.toDoubleOrNull(), spec)
+                spec.optString("note").takeIf { it.isNotBlank() }?.let { note ->
+                    Panel("Samir now") { Text(note, style = Type.body, color = c.ink) }
+                }
+                val marks = spec.optJSONArray("marks").objs()
+                if (marks.isNotEmpty()) Panel("What the candles say") {
+                    marks.forEach { m ->
+                        Column(Modifier.padding(vertical = 4.dp)) {
+                            Text("${m.optString("day").takeLast(5)}  ${m.optString("label")}", style = Type.small.copy(fontWeight = Type.strong),
+                                color = levelColor(c, m.optString("kind")))
+                            m.optString("meaning").takeIf { it.isNotBlank() }?.let { Text(it, style = Type.small, color = c.muted) }
+                        }
+                    }
+                }
+                VerdictPanel(mine?.optJSONObject("verdict"))
+                Text("A reading of past prices: patterns and lines raise or lower the odds, they never promise the next move.",
+                    style = Type.small, color = c.muted)
+                Spacer(Modifier.height(Space.l))
+            }
+        }
+    }
 }

@@ -73,6 +73,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import app.mochi.phone.ui.Icons2
 import app.mochi.phone.ui.LineIcon
+import app.mochi.phone.ui.MuteFabIdle
 import app.mochi.phone.ui.LocalMochi
 import app.mochi.phone.ui.Mascot
 import app.mochi.phone.ui.MochiColors
@@ -317,7 +318,7 @@ private fun DoingScreen(onBack: () -> Unit) {
         // bottom right: call Mochi here (loading while it connects), then mute / unmute while the call is on
         val callOn = Call.active && !connecting
         Box(Modifier.align(Alignment.BottomEnd).systemBarsPadding().padding(Space.xl).size(64.dp).clip(CircleShape)
-            .background(when { connecting -> c.amberInk; callOn && (Call.muted || Call.frozen) -> c.danger; callOn -> c.ink; else -> c.coral })
+            .background(when { connecting -> c.amberInk; callOn && (Call.muted || Call.frozen) -> c.danger; callOn -> MuteFabIdle; else -> c.coral })
             .clickable(role = Role.Button) {
                 when {
                     connecting -> Unit

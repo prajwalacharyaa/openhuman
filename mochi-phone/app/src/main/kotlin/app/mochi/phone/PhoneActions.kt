@@ -47,6 +47,11 @@ object PhoneActions {
                     else -> fail("already passing the phone")
                 }
             }
+            // "open settings" / "show my holdings": a screen of this app (a fixed list, see AppNav)
+            "app.open" -> AppNav.open(c, args.optString("screen"), args.optString("arg"))
+            // Samir's chart popup: shown or changed while December watches, closed by them (×) or by Samir
+            "chart.show" -> ChartBus.show(c, args)
+            "chart.close" -> ChartBus.close()
             else -> fail("unknown action $action")
         }
     } catch (e: SecurityException) {
