@@ -66,6 +66,20 @@ const BIG_UI_WORDS: &[&str] = &[
 const LIGHT_CHARS: usize = 160;
 /// Most of an agent's notes put into its direct chat.
 const AGENT_NOTES_BYTES: usize = 20_000;
+/// Sections of OpenHuman's prompt that are about its own tools: the `<tool_call>` text protocol with its tool
+/// list, which tool to route to, its sub-agent tools, its skill runner, MCP through `tool_search` and its
+/// workspace rules. The Claude Code CLI has its own tools, skills and agents and can call none of these
+/// (OpenHuman's MCP server gives it web search and memory under other names), so they were ~19 of the ~29 KB
+/// sent with every session, and Mochi sometimes tried the tools they name (`web_search_tool`: no such tool).
+const NOT_FOR_CLAUDE_CODE: &[&str] = &[
+    "## Routing",
+    "## Sub-agents",
+    "## Tool Use Protocol",
+    "## Workspace",
+    "## Installed Skills",
+    "## Capabilities not in your tool list",
+    "## Connected MCP Servers",
+];
 /// How much of a session transcript's end is read to find its last call's size.
 const TAIL_BYTES: u64 = 1 << 20;
 
@@ -197,6 +211,13 @@ impl SessionCap {
             request.messages.insert(0, tinyinference_llm::Message::system(self.agent_note(agent)));
             if let Some(metadata) = request.metadata.as_object_mut() {
                 metadata.insert("claude_agent".into(), agent.into());
+            }
+        }
+        if agent.is_none() {
+            for message in &mut request.messages {
+                if matches!(message, tinyinference_llm::Message::System(_)) {
+                    *message = tinyinference_llm::Message::system(without_sections(&message.text(), NOT_FOR_CLAUDE_CODE));
+                }
             }
         }
         let _guard = self.lock.lock().unwrap_or_else(PoisonError::into_inner);
@@ -350,6 +371,33 @@ pub(crate) fn is_light(words: &str) -> bool {
         && words.chars().count() <= LIGHT_CHARS
         && !words.contains("```")
         && !WORK_WORDS.iter().any(|w| words.contains(w))
+}
+
+/// `text` without the markdown sections under `headings` (each runs to the next heading of its level or higher;
+/// `#` lines inside code fences aren't headings).
+pub(crate) fn without_sections(text: &str, headings: &[&str]) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut skipping: Option<usize> = None;
+    let mut fenced = false;
+    for line in text.split_inclusive('\n') {
+        let bare = line.trim_end();
+        if bare.starts_with("```") {
+            fenced = !fenced;
+        }
+        let level = bare.bytes().take_while(|b| *b == b'#').count();
+        if !fenced && level > 0 && bare[level..].starts_with(' ') {
+            if skipping.is_some_and(|skipped| level <= skipped) {
+                skipping = None;
+            }
+            if skipping.is_none() && headings.contains(&bare) {
+                skipping = Some(level);
+            }
+        }
+        if skipping.is_none() {
+            out.push_str(line);
+        }
+    }
+    out
 }
 
 /// Keeps the system messages and the last `keep` others: what a new session is opened with.

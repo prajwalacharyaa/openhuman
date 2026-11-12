@@ -218,3 +218,18 @@ fn agent_names_and_displays() {
     assert_eq!(agent_display("mark"), "Mark");
     assert_eq!(agent_display("sy"), "SY");
 }
+
+#[test]
+fn openhumans_own_tool_sections_dont_go_to_claude_code() {
+    let prompt = "# Mochi\nhi\n## Routing\n- `tool_search`\n## Grounding and tool use\nkeep\n## Tool Use Protocol\n\
+                  ```\n# not a heading\n```\n### Available Tools\n- **shell**\n## Current Date & Time\nnow\n\
+                  # Writing style\nplain\n## Workspace\njail\n## Installed Skills\n- **x**\n";
+    let kept = without_sections(prompt, NOT_FOR_CLAUDE_CODE);
+    assert_eq!(kept, "# Mochi\nhi\n## Grounding and tool use\nkeep\n## Current Date & Time\nnow\n# Writing style\nplain\n");
+    // in a chat: Mochi's prompt loses them, an agent's note is its own
+    let (_dir, cap) = setup(&[call(40_000)]);
+    let mut asked = said("thread-1", "hello");
+    asked.messages.insert(0, tinyinference_llm::Message::system(prompt));
+    let out = cap.rekey(asked);
+    assert_eq!(out.messages[0].text(), kept);
+}
