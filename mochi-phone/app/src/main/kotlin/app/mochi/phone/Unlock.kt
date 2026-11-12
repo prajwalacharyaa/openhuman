@@ -75,8 +75,18 @@ object VaultUnlock {
             JSONObject(r.body?.string() ?: "{}")
         }
 
+    /** The saved Claude accounts: names and the last 4 characters of each token, never a token. Blocking; throws. */
+    fun claudeAccounts(c: Context): JSONObject =
+        Mochi.http.newCall(Request.Builder().url("${url(c)}/claude/accounts").build()).execute().use { r ->
+            val reply = JSONObject(r.body?.string() ?: "{}")
+            if (!r.isSuccessful) throw IllegalStateException(reply.optString("error", "the server said ${r.code}"))
+            reply
+        }
+
     private fun post(c: Context, path: String, body: JSONObject): JSONObject =
-        Mochi.http.newCall(Request.Builder().url(url(c) + path).post(body.toString().toRequestBody(JSON)).build())
+        // switching a Claude account tests the token and restarts Mochi: that can take a minute
+        (if (path.startsWith("/claude")) Mochi.http.newBuilder().readTimeout(150, java.util.concurrent.TimeUnit.SECONDS).build() else Mochi.http)
+            .newCall(Request.Builder().url(url(c) + path).post(body.toString().toRequestBody(JSON)).build())
             .execute().use { r ->
                 val reply = JSONObject(r.body?.string() ?: "{}")
                 if (!r.isSuccessful) throw IllegalStateException(reply.optString("error", "the server said ${r.code}"))

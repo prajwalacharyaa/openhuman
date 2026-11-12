@@ -102,6 +102,8 @@ fun SettingsScreen(onBack: () -> Unit) {
                 }
             }
 
+            if (Mochi.configured(ctx)) Section("Claude accounts") { ClaudeAccounts() }
+
             if (Mochi.configured(ctx)) Section("Trading (Samir)") { TradingSettings() }
 
             Section("Appearance") {
