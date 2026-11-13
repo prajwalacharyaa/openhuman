@@ -11,8 +11,11 @@ use crate::agent::session_host::types::OpenHumanSessionHost;
 use crate::agent::tinyagents::live_harness::LiveToolSurface;
 use crate::agent::tinyagents::ToolPolicyEnforcement;
 
-/// Tools a voice call never gets: editing files and sub-agents (which can't reach Claude anyway).
-const NOT_BY_VOICE: &[&str] = &["apply_patch", "spawn_async_subagent", "continue_subagent", "list_subagents"];
+/// Tools a voice call never gets: editing files, sub-agents (which can't reach Claude anyway), and the managed
+/// answer service (no account on this server: 2026-11-13 a test call sent a research request to it instead of
+/// handing it on).
+const NOT_BY_VOICE: &[&str] =
+    &["apply_patch", "spawn_async_subagent", "continue_subagent", "list_subagents", "web_answer_tool"];
 
 impl OpenHumanSessionHost {
     /// The durable tools, the visible names and the tool policy of this
