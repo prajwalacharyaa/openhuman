@@ -345,21 +345,25 @@ async fn start_chat_inner(
         Some("parallel") => QueueMode::Parallel,
         _ => QueueMode::Interrupt,
     };
-    // A turn handed on from a voice call (an approved browser task, say) is work December is waiting
-    // for: a message from another client queues behind it instead of cancelling it (2026-11-12: "phone or
-    // laptop?" typed in the app cancelled the approved task, and the call heard "I wasn't able to"). The
-    // app's Stop still cancels it (channel_web_cancel).
-    let parsed_mode = if matches!(parsed_mode, QueueMode::Interrupt)
-        && IN_FLIGHT
-            .lock()
-            .await
-            .get(&map_key)
-            .is_some_and(|running| protects_from(&running.client_id, &client_id))
-    {
-        log::info!("[web-channel] a call's handed-on turn is running: queueing as followup thread_id={thread_id}");
-        QueueMode::Followup
-    } else {
-        parsed_mode
+    // A message that arrives while a turn is running in this chat waits behind it instead of cancelling it,
+    // unless the client asked for an interrupt in so many words. The app's Stop still cancels
+    // (channel_web_cancel). 2026-11-12: "phone or laptop?" typed in the app cancelled a call's approved task.
+    // 2026-11-13: "can you check that" typed 24 s after a request cancelled it, and "??" cancelled sixteen
+    // minutes of work on the same request; each time the new turn knew nothing of the first message.
+    let running_client = IN_FLIGHT
+        .lock()
+        .await
+        .get(&map_key)
+        .map(|running| running.client_id.clone());
+    let parsed_mode = match running_client {
+        Some(running)
+            if matches!(parsed_mode, QueueMode::Interrupt)
+                && waits_behind(&running, &client_id, queue_mode.as_deref()) =>
+        {
+            log::info!("[web-channel] a turn is running in this chat: queueing as followup thread_id={thread_id}");
+            QueueMode::Followup
+        }
+        _ => parsed_mode,
     };
     let owner_client_id = client_id.clone();
 
@@ -749,6 +753,12 @@ const CALL_HANDOFF_CLIENT: &str = "mochi-ask";
 /// Whether a running turn started by `running` must not be interrupted by a message from `incoming`.
 pub(super) fn protects_from(running: &str, incoming: &str) -> bool {
     running == CALL_HANDOFF_CLIENT && incoming != CALL_HANDOFF_CLIENT
+}
+
+/// Whether a message with no queue lane of its own waits behind the turn `running` started: always, unless the
+/// client asked to interrupt (`asked` is its `queue_mode`), and a call's handed-on turn even then.
+pub(super) fn waits_behind(running: &str, incoming: &str, asked: Option<&str>) -> bool {
+    asked != Some("interrupt") || protects_from(running, incoming)
 }
 
 #[cfg(test)]

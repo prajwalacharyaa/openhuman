@@ -391,6 +391,12 @@ fn searching_then_saying_checking_without_an_answer_is_caught() {
     checks.on_event(HandoffEvent::ToolStarted("web_search_tool"), later(4));
     checks.on_event(HandoffEvent::AgentSaid("I'm checking the road distance right now."), later(12));
     assert_eq!(checks.on_event(HandoffEvent::TurnComplete, later(13)), Some(HANGING_NUDGE));
+    // handed on with the helper, then "I'm on it, checking…": the right line, not a hanging search
+    let mut checks = CallChecks::default();
+    checks.on_event(HandoffEvent::UserSaid("The word solid is invisible on my portfolio site."), t0);
+    checks.on_event(HandoffEvent::ToolStarted("shell"), later(1));
+    checks.on_event(HandoffEvent::AgentSaid("I'm on it, checking the site's styling for that invisible text now."), later(7));
+    assert_eq!(checks.on_event(HandoffEvent::TurnComplete, later(8)), None);
     // "let me check" and then the search: normal
     let mut checks = CallChecks::default();
     checks.on_event(HandoffEvent::UserSaid("What's the weather in Pokhara?"), t0);

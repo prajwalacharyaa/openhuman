@@ -18,6 +18,25 @@ fn a_call_runs_only_mochis_helpers() {
 }
 
 #[test]
+fn a_calls_mochi_ask_names_the_calls_own_chat() {
+    let thread = Some("thread-559f6859-55f8-4b52-91af-b8ab53ac2198");
+    assert_eq!(
+        with_call_thread("mochi-ask \"Samir, what is my portfolio holding?\"", thread).as_deref(),
+        Some("mochi-ask --thread thread-559f6859-55f8-4b52-91af-b8ab53ac2198 \"Samir, what is my portfolio holding?\"")
+    );
+    assert_eq!(
+        with_call_thread("mochi-ask --result", thread).as_deref(),
+        Some("mochi-ask --thread thread-559f6859-55f8-4b52-91af-b8ab53ac2198 --result")
+    );
+    assert!(voice_may_run(&with_call_thread("mochi-ask --cancel", thread).unwrap()), "still a voice helper");
+    assert_eq!(with_call_thread("mochi-ask --thread x --result", thread), None, "already named");
+    assert_eq!(with_call_thread("mochi-phone screen trading", thread), None);
+    assert_eq!(with_call_thread("mochi-asking \"x\"", thread), None);
+    assert_eq!(with_call_thread("mochi-ask \"x\"", None), None, "no chat known: the helper picks as before");
+    assert_eq!(with_call_thread("mochi-ask \"x\"", Some("a b; rm -rf")), None, "never an id that isn't one");
+}
+
+#[test]
 fn a_calls_cat_reads_only_the_workspace() {
     assert!(voice_may_run("cat /home/openhuman/OpenHuman/workspace/youtube/report.md"));
     assert!(voice_may_run("mochi-phone contacts \"mum\" | cat"), "stdin is fine");

@@ -603,9 +603,10 @@ impl OpenHumanTurnPrelude {
             context.push_str(&block);
         }
         // What was said by voice in this thread since the last typed exchange
-        // (voice turns are saved to the thread, not to this transcript).
+        // (voice turns are saved to the thread, not to this transcript), and
+        // typed messages a stopped turn left unanswered.
         if let Some(block) =
-            voice_recap::recap_block(&self.workspace_dir, self.thread_id.as_deref()).await
+            voice_recap::recap_block(&self.workspace_dir, self.thread_id.as_deref(), original_user_message).await
         {
             context.push_str(&block);
         }

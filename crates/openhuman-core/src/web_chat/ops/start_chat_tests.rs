@@ -83,3 +83,11 @@ fn a_calls_handed_on_turn_is_not_interrupted_by_another_client() {
     assert!(!protects_from("phone-app", "phone-app"), "December's own turns are interrupted as before");
     assert!(!protects_from("phone-app", "mochi-ask"));
 }
+
+#[test]
+fn a_new_message_waits_behind_a_running_turn_unless_an_interrupt_is_asked() {
+    assert!(waits_behind("mochi-phone", "mochi-phone", None), "a typed follow-up never cancels the work in hand");
+    assert!(waits_behind("mochi-ask", "mochi-phone", None));
+    assert!(!waits_behind("mochi-phone", "mochi-phone", Some("interrupt")));
+    assert!(waits_behind("mochi-ask", "mochi-phone", Some("interrupt")), "a call's handed-on turn is never cancelled by a message");
+}

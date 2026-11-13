@@ -707,10 +707,13 @@ impl CallChecks {
             }
             HandoffEvent::TurnComplete => {
                 let shelled = self.last_shell.is_some_and(|at| now.duration_since(at) < CANCEL_COVERS);
-                // searched before saying "checking", nothing after it: the answer never came
-                let hanging = self.checking_at.is_some_and(|said| {
-                    self.last_tool.is_some_and(|tool| tool + CHECK_GRACE < said && said.duration_since(tool) < HANDOFF_COVERS)
-                });
+                // searched before saying "checking", nothing after it: the answer never came. Not after a helper
+                // (shell): "I'm on it, checking…" is the right line once mochi-ask has the request, and "Checking
+                // the status file shows…" is an answer (2026-11-13: both were nudged, one into a failed command).
+                let hanging = self.last_shell != self.last_tool
+                    && self.checking_at.is_some_and(|said| {
+                        self.last_tool.is_some_and(|tool| tool + CHECK_GRACE < said && said.duration_since(tool) < HANDOFF_COVERS)
+                    });
                 let nudge = if self.said_not_started {
                     Some(BUSY_NUDGE)
                 } else if self.said_cancelled && !shelled {

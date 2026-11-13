@@ -64,9 +64,61 @@ pub(super) fn recap(messages: &[ConversationMessage]) -> Option<String> {
     ))
 }
 
-/// Reads the thread and builds [`recap`]; `None` without a thread or when
-/// the thread can't be read (the turn runs either way).
-pub(super) async fn recap_block(workspace_dir: &Path, thread_id: Option<&str>) -> Option<String> {
+/// Most unanswered typed messages carried into one turn.
+const MAX_UNANSWERED: usize = 4;
+/// Characters kept per unanswered typed message.
+const MAX_UNANSWERED_CHARS: usize = 1500;
+
+/// Typed messages December sent since the last reply that no turn answered
+/// (the turn was stopped or interrupted, failed, or the engine restarted),
+/// oldest first, without the message this turn is for (`current`; the client
+/// has usually appended it to the thread already). A stopped turn's message
+/// never reaches the session transcript, so the next turn would not know it:
+/// on 2026-11-13 "can you check that" arrived without the request it was
+/// about, and the reply was "your message cuts off".
+pub(super) fn unanswered_typed<'a>(messages: &'a [ConversationMessage], current: &str) -> Vec<&'a ConversationMessage> {
+    let mut start = messages.len();
+    while start > 0 && !is_voice(&messages[start - 1]) && messages[start - 1].sender == "user" {
+        start -= 1;
+    }
+    let mut run: Vec<&ConversationMessage> =
+        messages[start..].iter().filter(|m| !m.content.trim().is_empty()).collect();
+    let current = current.trim();
+    let is_current = |m: &ConversationMessage| {
+        let text = m.content.trim();
+        current.is_empty() || current.contains(text) || text.contains(current)
+    };
+    if run.last().is_some_and(|m| is_current(*m)) {
+        run.pop();
+    }
+    run[run.len().saturating_sub(MAX_UNANSWERED)..].to_vec()
+}
+
+/// The context block for [`unanswered_typed`], or `None` when every earlier
+/// typed message was answered.
+pub(super) fn unanswered_block(messages: &[ConversationMessage], current: &str) -> Option<String> {
+    let earlier = unanswered_typed(messages, current);
+    if earlier.is_empty() {
+        return None;
+    }
+    let lines: Vec<String> = earlier
+        .iter()
+        .map(|m| {
+            let text: String = m.content.trim().chars().take(MAX_UNANSWERED_CHARS).collect();
+            format!("User: {text}")
+        })
+        .collect();
+    Some(format!(
+        "[December wrote this just before in this conversation and it got no answer (that turn was stopped \
+         or did not finish). It is part of what they are asking now.]\n{}\n\n",
+        lines.join("\n")
+    ))
+}
+
+/// Reads the thread and builds [`recap`] and [`unanswered_block`] (`current`
+/// is this turn's own message); `None` without a thread, when the thread
+/// can't be read (the turn runs either way), or when there is neither.
+pub(super) async fn recap_block(workspace_dir: &Path, thread_id: Option<&str>, current: &str) -> Option<String> {
     let thread_id = thread_id?;
     let messages = crate::threads::store::blocking::get_messages(
         workspace_dir.to_path_buf(),
@@ -77,7 +129,8 @@ pub(super) async fn recap_block(workspace_dir: &Path, thread_id: Option<&str>) -
         tracing::debug!(thread_id, "[session_host:voice_recap] thread unreadable: {error}");
     })
     .ok()?;
-    recap(&messages)
+    let block = [recap(&messages), unanswered_block(&messages, current)].into_iter().flatten().collect::<String>();
+    (!block.is_empty()).then_some(block)
 }
 
 #[cfg(test)]

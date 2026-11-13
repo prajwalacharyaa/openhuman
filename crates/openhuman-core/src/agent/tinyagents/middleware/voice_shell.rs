@@ -83,6 +83,20 @@ fn cat_reads_only_workspace(part: &str) -> bool {
     })
 }
 
+/// `command` with the call's own chat named for `mochi-ask` (`--thread <id>`), when it is a plain `mochi-ask …`.
+/// Without it the helper guesses "the chat with the newest message": on 2026-11-13 an earlier answer landed in
+/// Mochi's chat the same second December asked Samir something on a passed call, and Samir's question went to
+/// Mochi's chat (two minutes through a sub-agent instead of Samir's own chat).
+pub(crate) fn with_call_thread(command: &str, thread: Option<&str>) -> Option<String> {
+    let thread = thread?;
+    let rest = command.trim_start().strip_prefix("mochi-ask")?;
+    let safe = !thread.is_empty() && thread.chars().all(|c| c.is_ascii_alphanumeric() || c == '-');
+    if !safe || !rest.starts_with(char::is_whitespace) || rest.contains("--thread") {
+        return None;
+    }
+    Some(format!("mochi-ask --thread {thread}{rest}"))
+}
+
 /// The detail of a voice tool call for the "What Mochi is doing" step (mochi-activity reads it from the journal):
 /// the command, query or text, on one line. Nothing for December's phone (contacts, messages): just the helper.
 pub(crate) fn step_detail(name: &str, args: &serde_json::Value) -> String {
@@ -142,15 +156,15 @@ impl ToolMiddleware<(), crate::agent::tinyagents::host::OpenHumanRunContext> for
         &self,
         ctx: &RunContext<crate::agent::tinyagents::host::OpenHumanRunContext>,
         state: &(),
-        call: TaToolCall,
+        mut call: TaToolCall,
         next: ToolHandler<'_, (), crate::agent::tinyagents::host::OpenHumanRunContext>,
     ) -> TaResult<MiddlewareToolOutcome> {
         let name = call.name.clone();
         let detail = step_detail(&call.name, &call.arguments);
         tracing::info!("[voice-live] tool {}: {}", name, detail);
         if call.name == "shell" {
-            let command = call.arguments.get("command").and_then(|c| c.as_str()).unwrap_or_default();
-            if !voice_may_run(command) {
+            let command = call.arguments.get("command").and_then(|c| c.as_str()).unwrap_or_default().to_string();
+            if !voice_may_run(&command) {
                 tracing::warn!("[voice-live] shell command outside the voice helpers: refused");
                 return Ok(MiddlewareToolOutcome::Result(TaToolResult::error(
                     "Not on a call: by voice you run only mochi-ask, mochi-phone, mochi-remind, mochi-watch, \
@@ -158,6 +172,9 @@ impl ToolMiddleware<(), crate::agent::tinyagents::host::OpenHumanRunContext> for
                      then tell December Claude is on it."
                         .to_string(),
                 )));
+            }
+            if let Some(named) = with_call_thread(&command, ctx.data.thread_id.as_deref()) {
+                call.arguments["command"] = serde_json::Value::String(named);
             }
         }
         let mut many_searches = false;
