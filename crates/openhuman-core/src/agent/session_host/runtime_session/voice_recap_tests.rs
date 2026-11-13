@@ -94,3 +94,20 @@ fn answered_messages_and_voice_are_not_unanswered() {
     assert_eq!(kept.len(), MAX_UNANSWERED);
     assert_eq!(kept.last().unwrap().content, "m7");
 }
+
+#[test]
+fn a_typed_message_in_the_other_language_names_its_language() {
+    let nepali_reply = "\u{0939}\u{094B}, \u{0905}\u{0939}\u{093F}\u{0932}\u{0947} \u{0928}\u{0948} \u{0939}\u{0947}\u{0930}\u{0947}\u{0901}";
+    let thread = vec![msg("agent", nepali_reply, false), msg("user", "did you check todays holdings?", false)];
+    let block = language_block(&thread, "did you check todays holdings?").unwrap();
+    assert!(block.contains("answer in English"), "{block}");
+    // same language as the last reply: nothing to say
+    let same = vec![msg("agent", "Yes, checked.", false), msg("user", "and yesterday?", false)];
+    assert!(language_block(&same, "and yesterday?").is_none());
+    // a call's handed-on request is wrapped in English whatever December spoke
+    let mut ask = msg("user", "(Asked on a voice call) what should I do", false);
+    ask.id = "voice-ask-1".into();
+    assert!(language_block(&[msg("agent", nepali_reply, false), ask], "(Asked on a voice call) what should I do").is_none());
+    assert_eq!(written_in("ok"), None);
+    assert_eq!(written_in(nepali_reply), Some("Nepali"));
+}

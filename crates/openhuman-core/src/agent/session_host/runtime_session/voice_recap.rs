@@ -115,6 +115,35 @@ pub(super) fn unanswered_block(messages: &[ConversationMessage], current: &str) 
     ))
 }
 
+/// The language a text is written in, by its script: Devanagari is Nepali, Latin letters English (December
+/// uses only these two); `None` for too little text to tell.
+pub(super) fn written_in(text: &str) -> Option<&'static str> {
+    let nepali = text.chars().filter(|c| ('\u{0900}'..='\u{097F}').contains(c)).count();
+    let english = text.chars().filter(char::is_ascii_alphabetic).count();
+    if nepali + english < 3 {
+        None
+    } else if nepali > english {
+        Some("Nepali")
+    } else {
+        Some("English")
+    }
+}
+
+/// A line naming the language of December's typed message when the last reply in the thread was in the other
+/// one (2026-11-13: an English question typed after a Nepali call got a Nepali answer). Told by the script,
+/// not by a rule in a prompt. Not for a call's handed-on request (its wrapper is English whatever December
+/// spoke): those carry the id prefix `voice-ask-`.
+pub(super) fn language_block(messages: &[ConversationMessage], current: &str) -> Option<String> {
+    let asked = messages.iter().rev().find(|m| m.sender == "user")?;
+    if is_voice(asked) || asked.id.starts_with("voice-ask-") {
+        return None;
+    }
+    let own = written_in(current)?;
+    let last = messages.iter().rev().find(|m| m.sender != "user" && !m.content.trim().is_empty())?;
+    let before = written_in(&last.content)?;
+    (own != before).then(|| format!("[December wrote this message in {own}: answer in {own}.]\n\n"))
+}
+
 /// Reads the thread and builds [`recap`] and [`unanswered_block`] (`current`
 /// is this turn's own message); `None` without a thread, when the thread
 /// can't be read (the turn runs either way), or when there is neither.
@@ -129,7 +158,10 @@ pub(super) async fn recap_block(workspace_dir: &Path, thread_id: Option<&str>, c
         tracing::debug!(thread_id, "[session_host:voice_recap] thread unreadable: {error}");
     })
     .ok()?;
-    let block = [recap(&messages), unanswered_block(&messages, current)].into_iter().flatten().collect::<String>();
+    let block = [recap(&messages), unanswered_block(&messages, current), language_block(&messages, current)]
+        .into_iter()
+        .flatten()
+        .collect::<String>();
     (!block.is_empty()).then_some(block)
 }
 

@@ -144,7 +144,14 @@ December fully, hand the question to Claude with mochi-ask now, with everything 
 searching again.)";
 
 /// `wrap_tool`: refuse a shell command outside [`VOICE_COMMANDS`]. Installed on live (voice) harnesses only.
-pub(crate) struct VoiceShellMiddleware;
+pub(crate) struct VoiceShellMiddleware {
+    /// A test call (`dry_run` in its start frame): after the gate, a tool call is logged in full and answered
+    /// without running, so a rule file's test sentence can be replayed through the real model and gate.
+    pub(crate) dry_run: bool,
+}
+
+/// What a test call's tool gets back instead of running.
+pub(crate) const DRY_RUN_RESULT: &str = "(Test call: this was not run. Say \"done\" in one word.)";
 
 #[async_trait]
 impl ToolMiddleware<(), crate::agent::tinyagents::host::OpenHumanRunContext> for VoiceShellMiddleware {
@@ -176,6 +183,11 @@ impl ToolMiddleware<(), crate::agent::tinyagents::host::OpenHumanRunContext> for
             if let Some(named) = with_call_thread(&command, ctx.data.thread_id.as_deref()) {
                 call.arguments["command"] = serde_json::Value::String(named);
             }
+        }
+        if self.dry_run {
+            let asked = call.arguments.to_string();
+            tracing::info!("[voice-live] test call, not run: {} {}", name, asked.chars().take(600).collect::<String>());
+            return Ok(MiddlewareToolOutcome::Result(TaToolResult::success(DRY_RUN_RESULT.to_string())));
         }
         let mut many_searches = false;
         if call.name.contains("web_search") {

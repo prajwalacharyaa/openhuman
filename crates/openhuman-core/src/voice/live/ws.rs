@@ -156,12 +156,14 @@ pub(crate) fn parse_start(message: &Message) -> Result<LiveStartRequest, LiveVoi
             client_id,
             input_sample_rate,
             agent,
+            dry_run,
         }) => Ok(LiveStartRequest {
             provider,
             thread_id,
             client_id,
             input_sample_rate,
             agent,
+            dry_run,
         }),
         Ok(_) => Err(LiveVoiceError::invalid(
             "the first frame must be a start frame",
@@ -196,6 +198,7 @@ pub async fn handle_live_voice_ws(socket: WebSocket, config: Arc<Config>) {
         }
     };
 
+    let dry_run = request.dry_run;
     let started = match session::start(config.clone(), request, &session_id).await {
         Ok(started) => started,
         Err(error) => {
@@ -226,8 +229,11 @@ pub async fn handle_live_voice_ws(socket: WebSocket, config: Arc<Config>) {
         thread_id.clone(),
         session_id.clone(),
         provider.clone(),
-    )
-    .with_memory_log(config.clone());
+    );
+    // a test call's sentences are not December's: they stay out of memory
+    if !dry_run {
+        persister = persister.with_memory_log(config.clone());
+    }
     let timing_on = timing::enabled_from(std::env::var(timing::TIMING_ENV).ok().as_deref());
     let mut timing = VoiceTiming::default();
     let mut checks = CallChecks::default();

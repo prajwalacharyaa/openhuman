@@ -121,6 +121,8 @@ pub(crate) struct LiveStartRequest {
     pub(crate) input_sample_rate: u32,
     /// A call with one of Mochi's agents ([`AgentVoice`]).
     pub(crate) agent: Option<String>,
+    /// A test call: tools are checked by the voice gate, never run.
+    pub(crate) dry_run: bool,
 }
 
 /// A running session plus what the transport needs to know about it.
@@ -362,7 +364,9 @@ pub(crate) async fn start(
         .map_err(|e| LiveVoiceError::internal(format!("agent build failed: {e}")))?;
     host.set_event_context(format!("voice_live_{session_id}"), "voice");
     host.set_thread_id(Some(&thread_id));
-    let harness = assemble_live_tool_harness(host.live_tool_surface());
+    let mut surface = host.live_tool_surface();
+    surface.dry_run = request.dry_run;
+    let harness = assemble_live_tool_harness(surface);
 
     let recent = crate::threads::store::blocking::get_messages(
         config.workspace_dir.clone(),

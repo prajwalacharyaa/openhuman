@@ -56,6 +56,7 @@ fn surface(allowed: &[&str]) -> LiveToolSurface {
         allowed: allowed.iter().map(|s| (*s).to_string()).collect(),
         tool_policy: None,
         has_thread: true,
+        dry_run: false,
     }
 }
 

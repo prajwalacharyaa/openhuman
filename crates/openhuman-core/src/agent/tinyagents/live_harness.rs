@@ -52,6 +52,8 @@ pub(crate) struct LiveToolSurface {
     /// Whether the session is bound to a chat thread (thread-scoped tools are
     /// only offered then).
     pub(crate) has_thread: bool,
+    /// A test call: every tool call is named, checked by the voice gate and answered without running.
+    pub(crate) dry_run: bool,
 }
 
 /// Builds the live session's tool harness.
@@ -63,6 +65,7 @@ pub(crate) fn assemble_live_tool_harness(
         allowed,
         tool_policy,
         has_thread,
+        dry_run,
     } = surface;
     let mut harness: AgentHarness<(), OpenHumanRunContext> = AgentHarness::new();
     harness.with_policy(run_policy_for(LIVE_MAX_TOOL_CALLS, false));
@@ -101,7 +104,7 @@ pub(crate) fn assemble_live_tool_harness(
     harness.push_tool_middleware(Arc::new(middleware::CliRpcOnlyMiddleware::new(
         tool_sets.clone(),
     )));
-    harness.push_tool_middleware(Arc::new(middleware::VoiceShellMiddleware));
+    harness.push_tool_middleware(Arc::new(middleware::VoiceShellMiddleware { dry_run }));
     let route_session = tool_policy
         .as_ref()
         .map(|enforcement| enforcement.session.clone());

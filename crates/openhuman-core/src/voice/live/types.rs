@@ -120,6 +120,10 @@ pub enum ClientFrame {
         /// One of Mochi's agents to talk with ("mark"): its spoken persona and voice instead of Mochi's.
         #[serde(default)]
         agent: Option<String>,
+        /// A test call (mochi-voice-test): tools are named and checked by the voice gate but never run, and
+        /// nothing goes to memory. How a rule file's test sentence is replayed without doing anything.
+        #[serde(default)]
+        dry_run: bool,
     },
     /// A typed user message.
     Text { text: String },

@@ -39,6 +39,7 @@ impl OpenHumanSessionHost {
                 agent_definition_id: self.agent_definition_id.clone(),
             }),
             has_thread: self.thread_id.is_some(),
+            dry_run: false,
         }
     }
 
