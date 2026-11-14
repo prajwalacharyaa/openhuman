@@ -38,6 +38,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.semantics.Role
@@ -266,10 +267,14 @@ class CallActivity : ComponentActivity(), Call.Listener {
                 }
             }
             key(tick) {
-                // while Mochi talks: one big tap stops the rest of that reply (no speech detection needed)
-                if (!incoming && talking) {
-                    Box(Modifier.padding(bottom = Space.m).fillMaxWidth().height(56.dp).clip(RoundedCornerShape(28.dp))
-                        .background(c.ink).clickable(role = Role.Button) { Call.holdOn() }
+                // while Mochi talks: one big tap stops the rest of that reply (no speech detection needed). Always laid
+                // out and only faded in and out: adding and removing it each time Mochi started or stopped talking
+                // crashed the call screen (phone-v67, NullPointerException in a layout pass, 4 times on 2026-11-14)
+                if (!incoming) {
+                    val shown = talking
+                    Box(Modifier.padding(bottom = Space.m).fillMaxWidth().height(56.dp).alpha(if (shown) 1f else 0f)
+                        .clip(RoundedCornerShape(28.dp)).background(c.ink)
+                        .clickable(enabled = shown, role = Role.Button) { Call.holdOn() }
                         .semantics { contentDescription = "Hold on: stop Mochi's answer" }, contentAlignment = Alignment.Center) {
                         Text("Hold on", style = Type.body.copy(fontWeight = Type.strong), color = c.bg)
                     }
