@@ -435,6 +435,10 @@ private fun HomeScreen(go: (String) -> Unit) {
                 Text("Settings", style = Type.small, color = c.muted,
                     modifier = Modifier.clip(RoundedCornerShape(8.dp)).clickable(role = Role.Button) { go("settings") }
                         .padding(vertical = Space.m, horizontal = Space.xs))
+                Text("Books", style = Type.small, color = c.muted,
+                    modifier = Modifier.clip(RoundedCornerShape(8.dp))
+                        .clickable(role = Role.Button) { ctx.startActivity(Intent(ctx, BooksActivity::class.java)) }
+                        .padding(vertical = Space.m, horizontal = Space.xs))
                 Text("Phone abilities", style = Type.small, color = c.muted,
                     modifier = Modifier.clip(RoundedCornerShape(8.dp))
                         .clickable(role = Role.Button) { ctx.startActivity(Intent(ctx, AbilitiesActivity::class.java)) }

@@ -19,7 +19,7 @@ object AppNav {
         "home" to "Home", "chats" to "all chats", "chat" to "the latest chat (arg new: a new chat)",
         "memory" to "Memory", "inbox" to "Inbox", "maps" to "project maps", "settings" to "Settings",
         "doing" to "what Mochi is doing", "agents" to "the agents (arg: an agent's name)",
-        "trading" to "Portfolio & market (arg: a tab, or a stock symbol)", "abilities" to "Phone abilities",
+        "trading" to "Portfolio & market (arg: a tab, or a stock symbol)", "abilities" to "Phone abilities", "books" to "Books (December's library)",
         "call" to "the call screen")
     private val TABS = listOf("trades", "holdings", "ipo", "watchlist", "market", "journal", "calendar")
 
@@ -40,6 +40,7 @@ object AppNav {
                 else if (a.isNotEmpty()) putExtra(ResearchActivity.EXTRA_STOCK, a.uppercase())
             }
             "abilities" -> Intent(c, AbilitiesActivity::class.java)
+            "books" -> Intent(c, BooksActivity::class.java)
             "call" -> if (Call.active) Intent(c, CallActivity::class.java) else return fail("no call is on")
             else -> return fail("no screen called $screen; screens: ${SCREENS.keys.joinToString()}")
         }
