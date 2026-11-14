@@ -89,3 +89,14 @@ fn repeated_and_bursty_searches_are_steered_to_claude() {
     assert_eq!(search_gate("voice-shell-test second query", t0 + std::time::Duration::from_secs(10)), Ok(false));
     assert_eq!(search_gate("voice-shell-test third query", t0 + std::time::Duration::from_secs(20)), Ok(true));
 }
+
+#[test]
+fn a_call_may_read_books_but_not_change_the_library() {
+    assert!(voice_may_run("mochi-books read \"alice\" --chapter 3"));
+    assert!(voice_may_run("mochi-books search all \"the caterpillar\""));
+    assert!(voice_may_run("mochi-books summary alice 2"));
+    assert!(!voice_may_run("mochi-books delete alice"), "deleting is December's tap");
+    assert!(!voice_may_run("mochi-books import /tmp/x.pdf"));
+    assert!(!voice_may_run("mochi-books summary-set alice book"));
+    assert!(!voice_may_run("mochi-books"), "nothing to do is not a read either");
+}

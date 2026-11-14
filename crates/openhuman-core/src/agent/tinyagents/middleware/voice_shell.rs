@@ -16,8 +16,12 @@ use tinytools::ToolResult as TaToolResult;
 /// `cat` reads only Mochi's workspace (see [`cat_reads_only_workspace`]).
 pub(crate) const VOICE_COMMANDS: &[&str] = &[
     "cat", "date", "mochi-ask", "mochi-phone", "mochi-remind", "mochi-watch", "mochi-mail", "mochi-notify",
-    "mochi-call",
+    "mochi-call", "mochi-books",
 ];
+
+/// What a call may do with December's books: read, look things up, see summaries. Adding or deleting a book
+/// is December's tap in the app, never something a misheard sentence can do.
+const VOICE_BOOK_COMMANDS: &[&str] = &["read", "list", "info", "search", "summary"];
 
 /// Whether every command in `command` (split on pipes and `;` / `&&` / `||` / newlines outside quotes) is a
 /// [`VOICE_COMMANDS`] one. Substitutions (`$(…)`, backticks) and redirects to files are refused outright.
@@ -46,6 +50,18 @@ pub(crate) fn voice_may_run(command: &str) -> bool {
         && !programs.is_empty()
         && programs.iter().all(|program| VOICE_COMMANDS.contains(&program.rsplit('/').next().unwrap_or(program)))
         && parts.iter().all(|part| cat_reads_only_workspace(part))
+        && parts.iter().all(|part| books_only_read(part))
+}
+
+/// A `mochi-books` command on a call only reads ([`VOICE_BOOK_COMMANDS`]).
+fn books_only_read(part: &str) -> bool {
+    let mut words = part.split_whitespace();
+    match words.next() {
+        Some(program) if program.rsplit('/').next() == Some("mochi-books") => {
+            words.next().is_some_and(|sub| VOICE_BOOK_COMMANDS.contains(&sub))
+        }
+        _ => true,
+    }
 }
 
 /// Mochi's workspace: the only place a call's `cat` may read (status and report files live there).
