@@ -60,6 +60,10 @@ class AbilitiesActivity : Activity() {
         body.addView(Ui.text(this, "If Android says this setting is restricted: open Settings → Apps → Mochi → ⋮ → " +
             "Allow restricted settings, then try again (Android asks this of apps installed from a file).", 12f, Ui.MUTED)
             .apply { setPadding(0, Ui.dp(this@AbilitiesActivity, 6), 0, 0) })
+        section("Lock the phone after a sleep timer",
+            "\"Stop after 30 minutes\": when the timer (or the night check) ends the call, Mochi also locks the screen " +
+                "so the phone sleeps. Android asks you to allow this once; it is only screen locking.",
+            listOf(Triple("Lock the phone", LockAdmin.allowed(this)) { startActivity(LockAdmin.ask(this)) }))
         section("Assistant button",
             "Make Mochi the phone's digital assistant: the assistant gesture (long-press power, or a corner swipe) " +
                 "then starts a Mochi call. Nothing listens in the background.",

@@ -21,6 +21,9 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -78,6 +81,22 @@ object Books {
 
     fun book(c: Context, id: String): JSONObject = Doing.get(c, "/books/$id")
 
+    private val covers = java.util.concurrent.ConcurrentHashMap<String, androidx.compose.ui.graphics.ImageBitmap>()
+
+    /** A book's cover, small, fetched once per app run (null: it has none, or it couldn't be fetched). */
+    fun cover(c: Context, id: String): androidx.compose.ui.graphics.ImageBitmap? {
+        covers[id]?.let { return it }
+        val req = Request.Builder().url("${Mochi.ringUrl(c)}/books/$id/cover")
+            .header("Authorization", "Bearer ${Mochi.token(c)}").build()
+        Mochi.http.newCall(req).execute().use { r ->
+            if (!r.isSuccessful) return null
+            val bytes = r.body?.bytes() ?: return null
+            val opts = android.graphics.BitmapFactory.Options().apply { inSampleSize = 2 }
+            val bmp = android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size, opts) ?: return null
+            return bmp.asImageBitmap().also { covers[id] = it }
+        }
+    }
+
     fun action(c: Context, id: String, what: String) {
         val req = Request.Builder().url("${Mochi.ringUrl(c)}/books/$id/$what")
             .header("Authorization", "Bearer ${Mochi.token(c)}")
@@ -110,6 +129,23 @@ object Books {
             return runCatching { JSONObject(text).optString("error") }.getOrNull()?.ifBlank { null } ?: "HTTP ${r.code}"
         }
     }
+}
+
+@Composable
+private fun Cover(id: String, hasCover: Boolean, width: androidx.compose.ui.unit.Dp) {
+    val ctx = LocalContext.current
+    val c = LocalMochi.current
+    val scope = rememberCoroutineScope()
+    var img by remember(id) { mutableStateOf<androidx.compose.ui.graphics.ImageBitmap?>(null) }
+    androidx.compose.runtime.LaunchedEffect(id, hasCover) {
+        if (hasCover) io(scope, { runCatching { Books.cover(ctx, id) }.getOrNull() }) { img = it }
+    }
+    val shape = RoundedCornerShape(6.dp)
+    val m = Modifier.width(width).aspectRatio(2f / 3f).clip(shape).background(c.field)
+    val i = img
+    if (i != null) androidx.compose.foundation.Image(i, contentDescription = null, modifier = m,
+        contentScale = androidx.compose.ui.layout.ContentScale.Crop)
+    else Box(m)
 }
 
 @Composable
@@ -184,14 +220,17 @@ private fun BooksScreen(onBack: () -> Unit) {
                         done > 0 -> "Mark is summarizing: $done of $chapters chapters"
                         else -> "Waiting for Mark"
                     }
-                    Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(c.card)
+                    Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(c.card)
                         .clickable(role = Role.Button) { open = b.optString("id"); detail = null }.padding(Space.l),
-                        verticalArrangement = Arrangement.spacedBy(Space.xs)) {
+                        horizontalArrangement = Arrangement.spacedBy(Space.m)) {
+                    Cover(b.optString("id"), b.optBoolean("cover"), 52.dp)
+                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(Space.xs)) {
                         Text(b.optString("title"), style = Type.title, color = c.ink)
                         val author = b.optString("author").takeIf { it.isNotBlank() && it != "null" }
                         Text(listOfNotNull(author, "$chapters chapters", b.optString("format").uppercase()).joinToString(" · "),
                             style = Type.small, color = c.muted)
                         Text(state, style = Type.small, color = if (b.optBoolean("book_summary")) c.greenInk else c.muted)
+                    }
                     }
                 }
             }
@@ -201,6 +240,19 @@ private fun BooksScreen(onBack: () -> Unit) {
             val list = d.optJSONArray("chapter_list")
             LazyColumn(Modifier.weight(1f).fillMaxWidth(), contentPadding = androidx.compose.foundation.layout.PaddingValues(
                 horizontal = Space.l, vertical = Space.m), verticalArrangement = Arrangement.spacedBy(Space.m)) {
+                item {
+                    Row(horizontalArrangement = Arrangement.spacedBy(Space.l), verticalAlignment = Alignment.CenterVertically) {
+                        Cover(d.optString("id"), d.optBoolean("cover"), 96.dp)
+                        Column(verticalArrangement = Arrangement.spacedBy(Space.xs)) {
+                            val author = d.optString("author").takeIf { it.isNotBlank() && it != "null" }
+                            if (author != null) Text(author, style = Type.body, color = c.ink)
+                            Text("${d.optInt("chapters")} parts · ${d.optInt("words")} words", style = Type.small, color = c.muted)
+                            val cur = d.optJSONObject("current")
+                            if (cur != null) Text("Last read: part ${cur.optInt("chapter")}" +
+                                (cur.optInt("page").takeIf { it > 0 }?.let { ", page $it" } ?: ""), style = Type.small, color = c.muted)
+                        }
+                    }
+                }
                 item {
                     Row(horizontalArrangement = Arrangement.spacedBy(Space.s)) {
                         Pill("Read with Mochi", true) { MainActivity.callMochi(ctx) }

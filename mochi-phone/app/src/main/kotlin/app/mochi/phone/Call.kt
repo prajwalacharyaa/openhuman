@@ -68,6 +68,19 @@ object Call {
         set(v) { if (field != v) { field = v; notice() } }
     var speaker = true
         private set
+    /** Sleep timer: when the call ends by itself (ms; 0 = no timer). Set by "stop after 30 minutes" (mochi-phone sleep). */
+    @Volatile var sleepAt = 0L
+        private set
+    /** How fast Mochi's voice plays (0.75 to 1.25, pitch kept): "read slower / faster" (mochi-phone speed). */
+    @Volatile var speed = 1f
+        private set
+    /** When December last said something (ms): the night check asks after a long silence. */
+    @Volatile private var userSpokeAt = 0L
+    /** When the night check asked "still listening?" (ms; 0 = not asked since December last spoke). */
+    @Volatile private var nightAskedAt = 0L
+    /** The goodnight was asked for: the call ends a few seconds later. */
+    @Volatile private var closing = false
+
     /** When this call started (ms): its Claude tokens are the ones used since. */
     @Volatile var startedAtMs = 0L
         private set
@@ -178,6 +191,12 @@ object Call {
         sentBytes = 0
         heardBytes = 0
         lastSpoke = System.currentTimeMillis()
+        userSpokeAt = lastSpoke
+        nightAskedAt = 0L
+        sleepAt = 0L
+        closing = false
+        speed = app.getSharedPreferences("mochi-call", Context.MODE_PRIVATE).getFloat("speed", 1f)
+        main.postDelayed(watch, WATCH_MS)
         main.post { said.clear() }
         callThreads.clear()
         agent = withAgent?.takeIf { agentThread != null && mochiCall == null }
@@ -223,9 +242,86 @@ object Call {
         }, 1_500L * reconnects)
     }
 
+    // ---- sleep timer, night check, speed ------------------------------------------------------------------------
+
+    private const val WATCH_MS = 15_000L
+    /** The night check: from this hour to [NIGHT_END], after [NIGHT_QUIET_MS] of December saying nothing. */
+    private const val NIGHT_START = 21
+    private const val NIGHT_END = 6
+    private const val NIGHT_QUIET_MS = 20 * 60_000L
+    /** No answer this long after "still listening?": goodnight. */
+    private const val NIGHT_ANSWER_MS = 75_000L
+
+    /** Every 15 s while a call is on: the sleep timer and the night check. */
+    private val watch = object : Runnable {
+        override fun run() {
+            if (!active) return
+            val now = System.currentTimeMillis()
+            val hour = java.time.LocalTime.now().hour
+            val night = hour >= NIGHT_START || hour < NIGHT_END
+            when {
+                closing -> {}
+                sleepAt in 1..now -> goodnight("the sleep timer December set is up")
+                nightAskedAt > 0 && now - nightAskedAt > NIGHT_ANSWER_MS -> goodnight("December didn't answer, so they're asleep")
+                night && nightAskedAt == 0L && now - userSpokeAt > NIGHT_QUIET_MS && !frozen -> {
+                    nightAskedAt = now
+                    note("(Server note, not December speaking: it's late and December hasn't said anything for 20 " +
+                        "minutes. Stop where you are and ask once, softly and in a few words, whether they're still " +
+                        "listening. If you were reading, the place is kept.)")
+                }
+            }
+            main.postDelayed(this, WATCH_MS)
+        }
+    }
+
+    /** A server note into the call (the model says it; it isn't December speaking). */
+    private fun note(text: String) {
+        ws?.send(JSONObject().put("type", "text").put("text", text).toString())
+    }
+
+    /** Ends the call after a goodnight: a few words from the voice, then hang up and lock the screen when allowed. */
+    private fun goodnight(why: String) {
+        closing = true
+        note("(Server note, not December speaking: $why. Say goodnight in a few words, nothing else. If you were " +
+            "reading, the place is saved.)")
+        main.postDelayed({
+            if (!active) return@postDelayed
+            end("Ended by the sleep timer")
+            LockAdmin.lockIfAllowed(app)
+        }, 9_000L)
+    }
+
+    /** "Stop after 30 minutes" (mochi-phone sleep): minutes > 0 sets it, "off" clears it, "status" says what's left. */
+    fun sleep(minutes: Int, what: String): String {
+        if (!active) throw IllegalStateException("no call is on")
+        return when (what) {
+            "off" -> { sleepAt = 0L; main.post { notice() }; "the sleep timer is off" }
+            "status" -> if (sleepAt == 0L) "no sleep timer is set"
+                else "the call ends in ${((sleepAt - System.currentTimeMillis()) / 60_000L).coerceAtLeast(0)} minutes"
+            else -> {
+                sleepAt = System.currentTimeMillis() + minutes * 60_000L
+                main.post { notice() }
+                "the call ends in $minutes minutes" + (if (LockAdmin.allowed(app)) ", and the phone locks then" else
+                    " (the screen turns off by itself; to have it lock, December turns on Lock the phone under Phone abilities)")
+            }
+        }
+    }
+
+    /** Minutes left on the sleep timer, or null. */
+    fun sleepLeft(): Long? = sleepAt.takeIf { it > 0 }?.let { ((it - System.currentTimeMillis()) / 60_000L).coerceAtLeast(0) }
+
+    /** "Read slower / faster" (mochi-phone speed): kept for later calls too. */
+    fun setSpeed(v: Float): String {
+        speed = v.coerceIn(0.75f, 1.25f)
+        app.getSharedPreferences("mochi-call", Context.MODE_PRIVATE).edit().putFloat("speed", speed).apply()
+        return if (speed == 1f) "the voice plays at normal speed" else "the voice plays at ${"%.2f".format(speed)}x speed"
+    }
+
     @Synchronized
     fun end(why: String = "You hung up") {
         if (!active) return
+        main.removeCallbacks(watch)
+        sleepAt = 0L
         if (endReason.isEmpty()) endReason = why
         active = false
         Doing.addGeminiToday(app, geminiTokens)
@@ -412,6 +508,8 @@ object Call {
                         freeze(webSocket)
                     } else if (role == "user" && final) {
                         cutTurn = false
+                        userSpokeAt = System.currentTimeMillis()
+                        nightAskedAt = 0L
                         quiet = isStop(line)
                         if (quiet) {
                             // say nothing at all until December speaks again: cut Mochi off and drop its reply
@@ -603,9 +701,14 @@ object Call {
             .setTransferMode(AudioTrack.MODE_STREAM)
             .setBufferSizeInBytes(maxOf(min, rate / 5 * 2)) // ~200 ms: small, so interrupting is quick
             .build()
+        var applied = 1f
         try {
             track.play()
             while (active && ws === socket) {
+                if (applied != speed) {   // slower or faster, same pitch (Android's time-stretch)
+                    applied = speed
+                    runCatching { track.playbackParams = track.playbackParams.setSpeed(applied).setPitch(1f) }
+                }
                 if (flushPlayback) {
                     flushPlayback = false
                     track.pause(); track.flush(); track.play()

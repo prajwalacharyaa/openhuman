@@ -117,6 +117,25 @@
             android:name=".BooksActivity"
             android:exported="false" />
 
+        <!-- the book being read, words highlighted as the voice reads them (mochi-phone book show) -->
+        <activity
+            android:name=".BookActivity"
+            android:exported="false"
+            android:launchMode="singleTop" />
+
+        <!-- locks the screen when a sleep timer ends a call; only the force-lock policy (res/xml/lock_admin.xml) -->
+        <receiver
+            android:name=".LockAdmin"
+            android:exported="true"
+            android:permission="android.permission.BIND_DEVICE_ADMIN">
+            <meta-data
+                android:name="android.app.device_admin"
+                android:resource="@xml/lock_admin" />
+            <intent-filter>
+                <action android:name="android.app.action.DEVICE_ADMIN_ENABLED" />
+            </intent-filter>
+        </receiver>
+
         <activity
             android:name=".AbilitiesActivity"
             android:exported="false"

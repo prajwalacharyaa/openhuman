@@ -52,6 +52,13 @@ object PhoneActions {
             // Samir's chart popup: shown or changed while December watches, closed by them (×) or by Samir
             "chart.show" -> ChartBus.show(c, args)
             "chart.close" -> ChartBus.close()
+            // "stop after 30 minutes" / "read slower": the call's sleep timer and playback speed
+            "call.sleep" -> if (!Call.active) fail("no call is on")
+                else ok(Call.sleep(args.optInt("minutes"), args.optString("what", "set")))
+            "call.speed" -> if (!Call.active) fail("no call is on") else ok(Call.setSpeed(args.optDouble("speed", 1.0).toFloat()))
+            // the book being read, on screen, highlighted as the voice reads
+            "book.show" -> BookView.show(c)
+            "book.close" -> BookView.close()
             else -> fail("unknown action $action")
         }
     } catch (e: SecurityException) {
