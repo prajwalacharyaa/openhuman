@@ -224,6 +224,8 @@ fn an_answer_note_asks_for_the_short_part_only() {
     };
     let note = claude_reply_note(&done, "t1").unwrap();
     assert!(note.contains("say only its \"In short\" part"), "{note}");
+    assert_eq!(from_in_short("Graph exists. Let me query it.In short: a hazard map."), "In short: a hazard map.");
+    assert_eq!(from_in_short("Done, PR 13 is up."), "Done, PR 13 is up.");
     assert!(!note.contains("read all of it out, completely"));
 }
 

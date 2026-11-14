@@ -58,7 +58,7 @@ pub(crate) fn claude_reply_note(event: &WebChannelEvent, thread_id: &str) -> Opt
     }
     match event.event.as_str() {
         "chat_done" => {
-            let answer = event.full_response.as_deref().unwrap_or_default().trim();
+            let answer = from_in_short(event.full_response.as_deref().unwrap_or_default().trim());
             if answer.is_empty() {
                 return None;
             }
@@ -87,6 +87,12 @@ pub(crate) fn claude_reply_note(event: &WebChannelEvent, thread_id: &str) -> Opt
         )),
         _ => None,
     }
+}
+
+/// The answer from its "In short:" line on: Claude's narration before its tool steps ("Graph exists. Let me query
+/// it.") isn't part of it, and was read out as if it were (2026-11-14). Unchanged without that line.
+pub(crate) fn from_in_short(answer: &str) -> &str {
+    answer.find("In short:").map_or(answer, |at| &answer[at..])
 }
 
 /// Whether a note carries Claude's finished answer (the model's next words retell it: they aren't saved
