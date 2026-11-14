@@ -92,7 +92,9 @@ object AppLock {
 class MochiApp : Application() {
     override fun onCreate() {
         super.onCreate()
+        Crashes.install(this)
         registerActivityLifecycleCallbacks(AppLock.watcher)
+        Crashes.sendPending(this)
     }
 }
 
