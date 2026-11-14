@@ -21,7 +21,7 @@ use tinyagents_live::LiveAgentEvent;
 use super::error::LiveVoiceError;
 use super::handoff::{
     asks_december, claude_reply_note, earlier_reply_note, earlier_threads, CallChecks, HandoffEvent, NoteGate,
-    Retelling, NUDGE,
+    Retelling, NUDGE, nudge_kind,
 };
 use super::persist::{reads_phone, TranscriptPersister};
 use super::timing::{self, TimingEvent, VoiceTiming};
@@ -418,7 +418,7 @@ pub async fn handle_live_voice_ws(socket: WebSocket, config: Arc<Config>) {
                         if nudge == NUDGE {
                             tracing::info!(session_id, "{LOG_PREFIX} said it's on it without a handoff call: nudging");
                         } else {
-                            tracing::info!(session_id, "{LOG_PREFIX} a turn that needed a check or command ran none: nudging");
+                            tracing::info!(session_id, kind = nudge_kind(nudge), "{LOG_PREFIX} a turn that needed a check or command ran none: nudging");
                         }
                         let _ = sender.send_text(nudge.to_string()).await;
                     }

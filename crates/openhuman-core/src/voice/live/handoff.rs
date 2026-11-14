@@ -65,11 +65,11 @@ pub(crate) fn claude_reply_note(event: &WebChannelEvent, thread_id: &str) -> Opt
             let answer: String = answer.chars().take(MAX_ANSWER_CHARS).collect();
             Some(format!(
                 "(Server note, not December speaking: Claude finished the request you handed it. \
-                 Tell December now, without waiting to be asked, as yourself (never name Claude). If it's a status or \
-                 the result of a change: one or two sentences. If it's information December asked for (about people, \
-                 places, news, research, how or why): read all of it out, completely and in detail, in natural \
-                 spoken sentences and the same order; don't summarize or drop anything, and keep going to the end. \
-                 If Claude asks December to decide something, name each choice and ask; never drop a choice or a \
+                 Tell December now, without waiting to be asked, as yourself (never name Claude): say only its \
+                 \"In short\" part (or, without one, its main point in one or two sentences), then stop. Keep the \
+                 rest: when December asks for more (\"more\", \"why\", \"which ones\"), answer from it, without \
+                 handing anything on again. Read all of it only if December asked for the full story or details. \
+                 If it asks December to decide something, name each choice and ask; never drop a choice or a \
                  warning.)\n\n{answer}"
             ))
         }
@@ -393,12 +393,6 @@ pub(crate) const STATUS_NUDGE: &str = "(Server check, not December speaking: Dec
 is going and you answered without checking. Run mochi-ask --result now and say what it shows in one short \
 sentence, like \"Still on it\" or \"Done, pull request 13 is up\". Send nothing new.)";
 
-/// Sent to the live model when it gave in to December's pushback without checking.
-pub(crate) const AGREE_NUDGE: &str = "(Server check, not December speaking: you changed your answer because \
-December pushed back, without checking anything. Check now: search with your web search tool, or hand it to \
-Claude with mochi-ask if it's about December's own server, projects or code. If your first answer stands, say \
-so politely; agree only with what the check shows.)";
-
 /// Sent to the live model when December asked about something from before and it answered without memory.
 pub(crate) const MEMORY_NUDGE: &str = "(Server check, not December speaking: December asked about something from \
 before (their plans, an earlier talk, something they told you) and you answered without searching memory. If \
@@ -449,15 +443,6 @@ const LOOKUP_SAID: &[&str] = &[
 /// How the model says it looked in memory (a memory search must back it, not some other tool).
 const MEMORY_SAID: &[&str] = &["checked the memory", "checked your memory", "checked memory", "memory confirms",
     "in your memory", "in my memory", "memory shows"];
-/// How the model gives in to a pushback.
-/// 2026-11-09: "You're right to ask; Rajan Bikram Thapa is indeed…" and "I made a mistake… sorry for the
-/// confusion" flipped a fact without a new search, and none of the first list caught it.
-const AGREE_SAID: &[&str] = &[
-    "you're absolutely right", "you are absolutely right", "i stand corrected", "my mistake", "i was wrong",
-    "you're right", "you are right", "you're correct", "you are correct", "i made a mistake", "sorry for the confusion",
-    "good catch", "my apologies, ", "तपाईं सही", "मेरो गल्ती",
-];
-
 /// Whether December's words ask for something current.
 pub(crate) fn asks_fresh(text: &str) -> bool {
     let text = text.to_lowercase();
@@ -488,12 +473,6 @@ pub(crate) fn announces_lookup(text: &str) -> bool {
     LOOKUP_SAID.iter().any(|w| text.contains(w))
 }
 
-/// Whether the model's words give in to a pushback.
-pub(crate) fn concedes(text: &str) -> bool {
-    let text = text.to_lowercase().replace('\u{2019}', "'");
-    AGREE_SAID.iter().any(|w| text.contains(w))
-}
-
 /// A tool started this soon before December's words were finalised was for them (Gemini often finalises the
 /// transcript only after it has started the tool).
 const LOOKUP_GRACE: Duration = Duration::from_secs(15);
@@ -515,7 +494,7 @@ pub(crate) struct LookupCheck {
 
 impl LookupCheck {
     fn need(&mut self, nudge: &'static str) {
-        let rank = |n: &str| [AGREE_NUDGE, STATUS_NUDGE, LOOKUP_NUDGE, MEMORY_NUDGE].iter().position(|x| *x == n);
+        let rank = |n: &str| [STATUS_NUDGE, LOOKUP_NUDGE, MEMORY_NUDGE].iter().position(|x| *x == n);
         if self.needed.is_none_or(|current| rank(nudge) < rank(current)) {
             self.needed = Some(nudge);
         }
@@ -542,9 +521,6 @@ impl LookupCheck {
             }
             HandoffEvent::AgentSaid(text) => {
                 self.user_turn = false;
-                if concedes(text) {
-                    self.need(AGREE_NUDGE);
-                }
                 if claims_memory(text) {
                     self.need(MEMORY_NUDGE);
                 } else if announces_lookup(text) {
@@ -598,6 +574,17 @@ pub(crate) struct CallChecks {
     checking_at: Option<Instant>,
     last_tool: Option<Instant>,
     last_shell: Option<Instant>,
+}
+
+/// A short name for a nudge, for the log (which check fired is what decides whether it earns its place).
+pub(crate) fn nudge_kind(nudge: &str) -> &'static str {
+    [
+        (NUDGE, "handoff claimed"), (LOOKUP_NUDGE, "lookup"), (STATUS_NUDGE, "status"), (MEMORY_NUDGE, "memory"),
+        (ANSWER_NUDGE, "answer not sent on"), (BUSY_NUDGE, "busy"), (CANCEL_NUDGE, "cancel"), (HANGING_NUDGE, "hanging"),
+    ]
+    .iter()
+    .find(|(text, _)| *text == nudge)
+    .map_or("other", |(_, kind)| *kind)
 }
 
 /// Sent when December answered a question Claude asked and the turn handed nothing on.

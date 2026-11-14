@@ -199,26 +199,32 @@ fn stays_quiet_when_it_looked_or_nothing_current_was_asked() {
 }
 
 #[test]
-fn knows_giving_in() {
-    assert!(concedes("You're absolutely right, and I apologize. I stand corrected."));
-    assert!(!concedes("Right now it is sunny."));
-    assert!(asks_fresh("Also check if this project was actually awarded number one."));
-}
-
-#[test]
-fn nudges_giving_in_without_a_check() {
+fn giving_in_is_not_nudged_any_more() {
+    // 2026-11-14: "you're right" / "sorry for the confusion" drew a re-check nudge and December heard the same
+    // answer two and three times; a correction is left to December's next words
     let t0 = std::time::Instant::now();
     let later = |s: u64| t0 + std::time::Duration::from_secs(s);
     let mut check = LookupCheck::default();
-    check.on_event(HandoffEvent::UserSaid("No, I mean an Anthropic hackathon."), later(60));
-    check.on_event(HandoffEvent::AgentSaid("You're absolutely right, it won. I stand corrected."), later(61));
-    assert_eq!(check.on_event(HandoffEvent::TurnComplete, later(62)), Some(AGREE_NUDGE));
+    check.on_event(HandoffEvent::UserSaid("So altogether that's only about 40 percent?"), later(60));
+    check.on_event(HandoffEvent::AgentSaid("You're right, the rest is the system and caches."), later(61));
+    assert_eq!(check.on_event(HandoffEvent::TurnComplete, later(62)), None);
+    assert!(asks_fresh("Also check if this project was actually awarded number one."));
+    assert_eq!(nudge_kind(LOOKUP_NUDGE), "lookup");
+    assert_eq!(nudge_kind("anything else"), "other");
+}
 
-    // it ran a command: the claim may be true
-    check.on_event(HandoffEvent::UserSaid("Open it in my map."), later(120));
-    check.on_event(HandoffEvent::ToolStarted("shell"), later(121));
-    check.on_event(HandoffEvent::AgentSaid("I've opened the location in your maps app."), later(123));
-    assert_eq!(check.on_event(HandoffEvent::TurnComplete, later(124)), None);
+#[test]
+fn an_answer_note_asks_for_the_short_part_only() {
+    let done = WebChannelEvent {
+        event: "chat_done".into(),
+        client_id: "mochi-ask".into(),
+        thread_id: "t1".into(),
+        full_response: Some("In short: hold, wait for 351.\n\nDetail: volume is a fifth of the average.".into()),
+        ..Default::default()
+    };
+    let note = claude_reply_note(&done, "t1").unwrap();
+    assert!(note.contains("say only its \"In short\" part"), "{note}");
+    assert!(!note.contains("read all of it out, completely"));
 }
 
 #[test]
@@ -310,14 +316,6 @@ fn plans_need_a_memory_search_and_claims_need_a_real_check() {
     assert_eq!(check.on_event(HandoffEvent::TurnComplete, later(2)), Some(LOOKUP_NUDGE));
 }
 
-#[test]
-fn giving_in_without_checking_is_caught_in_more_words() {
-    assert!(concedes("You're right to ask; Rajan Bikram Thapa is indeed the newly appointed chairman."));
-    assert!(concedes("I made a mistake by relying on an outdated source. I'm sorry for the confusion this caused."));
-    assert!(!concedes("Rajan Bikram Thapa is the newly appointed chairman of the Nepal Insurance Authority."));
-}
-
-/// 2026-11-12 call: each of these got past the checks.
 #[test]
 fn promises_status_questions_and_travel_are_caught() {
     assert!(claims_handoff("I'll go with the first option, adding a solid base fill. I'll get that ready for you."));
