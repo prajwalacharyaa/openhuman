@@ -23,6 +23,10 @@ class CallService : Service() {
                 stopSelf()
                 return START_NOT_STICKY
             }
+            ACTION_HOLD -> {
+                Call.holdOn()
+                return START_NOT_STICKY
+            }
             ACTION_MUTE -> { // the notification follows by itself (Call.muted / frozen refresh it)
                 if (Call.active) { if (Call.frozen) Call.unfreeze() else Call.muted = !Call.muted }
                 MochiWidget.update(this, force = true)
@@ -39,6 +43,7 @@ class CallService : Service() {
     companion object {
         const val ACTION_HANG_UP = "app.mochi.phone.HANG_UP"
         const val ACTION_MUTE = "app.mochi.phone.MUTE"
+        const val ACTION_HOLD = "app.mochi.phone.HOLD"
 
         /** The ongoing-call notification: red Hang up, and Mute / Unmute on its right. */
         fun notice(c: Context): Notification {
@@ -46,6 +51,8 @@ class CallService : Service() {
                 Intent(c, CallService::class.java).setAction(ACTION_HANG_UP), PendingIntent.FLAG_IMMUTABLE)
             val mute = PendingIntent.getService(c, 7,
                 Intent(c, CallService::class.java).setAction(ACTION_MUTE), PendingIntent.FLAG_IMMUTABLE)
+            val hold = PendingIntent.getService(c, 8,
+                Intent(c, CallService::class.java).setAction(ACTION_HOLD), PendingIntent.FLAG_IMMUTABLE)
             val open = PendingIntent.getActivity(c, 6,
                 Intent(c, CallActivity::class.java).putExtra(CallActivity.EXTRA_ANSWER, true), PendingIntent.FLAG_IMMUTABLE)
             val muted = Call.muted || Call.frozen
@@ -56,6 +63,8 @@ class CallService : Service() {
                 .setSmallIcon(R.drawable.ic_stat_mochi)
                 .setStyle(Notification.CallStyle.forOngoingCall(Person.Builder().setName("Mochi").build(), hangUp))
                 .addAction(muteAction)
+                // the lock screen's way to stop a long answer
+                .addAction(Notification.Action.Builder(Icon.createWithResource(c, R.drawable.ic_stat_mochi), "Hold on", hold).build())
                 .setContentText(if (muted) "Muted" else null)
                 .setContentIntent(open)
                 .setCategory(Notification.CATEGORY_CALL)

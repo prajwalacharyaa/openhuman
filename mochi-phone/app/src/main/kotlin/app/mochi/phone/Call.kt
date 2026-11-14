@@ -100,6 +100,28 @@ object Call {
     @Volatile private var flushPlayback = false
     /** December said "stop" / "be quiet": Mochi's audio is dropped until December speaks again. */
     @Volatile private var quiet = false
+    /** Hold on (the button or the notification): the rest of the reply Mochi is giving now is dropped; its next
+     *  reply plays. Gemini has no cancel of its own and, at low speech sensitivity, didn't hear "wait wait wait"
+     *  over its own voice (2026-11-14: about 40 s), so this is done here, on the phone. */
+    @Volatile private var cutTurn = false
+    /** When Mochi's voice last arrived (ms): the Hold on button shows while it is talking. */
+    @Volatile var talkingAt = 0L
+        private set
+
+    /** Mochi is talking right now. */
+    fun talking(): Boolean = active && !cutTurn && System.currentTimeMillis() - talkingAt < 1_500
+
+    /** Stop the reply Mochi is giving now, without hearing it out: the call goes on and listens. */
+    fun holdOn(): Boolean {
+        val socket = ws ?: return false
+        if (!active) return false
+        cutTurn = true
+        socket.send("""{"type":"interrupt"}""")
+        playback.clear()
+        flushPlayback = true
+        status("Stopped. Go ahead.")
+        return true
+    }
     /** December said "Mochi, freeze": the mic isn't sent and Mochi says nothing until "Mochi, unfreeze" (heard on
      *  the phone, see [Unfreeze]) or the Unfreeze button. */
     @Volatile var frozen = false
@@ -389,6 +411,7 @@ object Call {
                     if (role == "user" && final && isFreeze(line)) {
                         freeze(webSocket)
                     } else if (role == "user" && final) {
+                        cutTurn = false
                         quiet = isStop(line)
                         if (quiet) {
                             // say nothing at all until December speaks again: cut Mochi off and drop its reply
@@ -411,8 +434,9 @@ object Call {
                     main.postDelayed({ MochiWidget.update(app) }, 300)
                     if (!frozen) status("Checking (${f.optString("name")})…")
                 }
-                "tool_finished", "turn_complete" -> if (!frozen) status("Listening")
-                "interrupted" -> { playback.clear(); flushPlayback = true }
+                "tool_finished" -> if (!frozen) status("Listening")
+                "turn_complete" -> { cutTurn = false; if (!frozen) status("Listening") }
+                "interrupted" -> { playback.clear(); flushPlayback = true; cutTurn = false }
                 // Gemini dropping its session (inactivity, its own time limit, a hiccup) isn't December hanging
                 // up: the same call reconnects, like a dropped connection
                 "error" -> {
@@ -426,7 +450,10 @@ object Call {
 
         override fun onMessage(webSocket: WebSocket, bytes: ByteString) {
             if (webSocket === ws) heardBytes += bytes.size
-            if (webSocket === ws && !quiet) playback.offer(bytes.toByteArray())
+            if (webSocket === ws && !quiet && !cutTurn) {
+                talkingAt = System.currentTimeMillis()
+                playback.offer(bytes.toByteArray())
+            }
         }
 
         override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
@@ -453,7 +480,7 @@ object Call {
     private fun isStop(said: String): Boolean {
         val words = said.lowercase().replace(Regex("[^\\p{L}\\p{M}\\s]"), " ").trim().split(Regex("\\s+")).filter { it.isNotEmpty() }
         if (words.isEmpty() || words.size > 4) return false
-        val phrase = words.joinToString(" ")
+        val phrase = words.distinct().joinToString(" ")
         return STOP.any { phrase == it || phrase == "mochi $it" || phrase == "$it mochi" || phrase == "$it please" }
     }
 
@@ -482,7 +509,8 @@ object Call {
         "stay silent", "go silent", "silence")
 
     private val STOP = setOf("stop", "stop it", "stop talking", "silent", "be silent", "silence", "quiet", "be quiet",
-        "shut up", "hush", "pause", "enough", "chup", "chup lag", "chup basa", "चुप", "चुप लाग", "चुप बस", "रोक")
+        "shut up", "hush", "pause", "enough", "chup", "chup lag", "chup basa", "चुप", "चुप लाग", "चुप बस", "रोक",
+        "wait", "hold on", "hang on", "one second", "one sec", "पर्ख", "एकछिन")
 
     private fun startAudio(socket: WebSocket, outRate: Int) {
         this.outRate = outRate

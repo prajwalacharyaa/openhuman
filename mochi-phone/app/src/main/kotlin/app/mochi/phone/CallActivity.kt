@@ -178,6 +178,9 @@ class CallActivity : ComponentActivity(), Call.Listener {
         val lines = Call.said
         var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
         WhileVisible { while (true) { delay(1_000); now = System.currentTimeMillis() } }
+        // whether Mochi is talking (the Hold on button), looked at often so it shows the moment a reply starts
+        var talking by remember { mutableStateOf(false) }
+        WhileVisible { while (true) { talking = Call.talking(); delay(300) } }
         // follow the newest words: also while a reply grows inside its line (same count, longer text), to the very
         // end of the list (the question card on top shifts the indexes) and to the end of a long reply, not its top.
         // Not while December has scrolled up to read something earlier.
@@ -263,6 +266,14 @@ class CallActivity : ComponentActivity(), Call.Listener {
                 }
             }
             key(tick) {
+                // while Mochi talks: one big tap stops the rest of that reply (no speech detection needed)
+                if (!incoming && talking) {
+                    Box(Modifier.padding(bottom = Space.m).fillMaxWidth().height(56.dp).clip(RoundedCornerShape(28.dp))
+                        .background(c.ink).clickable(role = Role.Button) { Call.holdOn() }
+                        .semantics { contentDescription = "Hold on: stop Mochi's answer" }, contentAlignment = Alignment.Center) {
+                        Text("Hold on", style = Type.body.copy(fontWeight = Type.strong), color = c.bg)
+                    }
+                }
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly,
                     verticalAlignment = Alignment.CenterVertically) {
                     if (incoming) {
