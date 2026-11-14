@@ -128,3 +128,17 @@ fn spots_phone_reads() {
     assert!(!reads_phone("shell", &serde_json::json!({"command": "cat server-status.md"})));
     assert!(!reads_phone("web_search_tool", &serde_json::json!({"query": "mochi-phone"})));
 }
+
+#[test]
+fn an_agent_calls_words_go_to_its_notes_not_the_shared_memory() {
+    let root = tempfile::tempdir().unwrap();
+    let workspace = root.path().join("workspace");
+    std::fs::create_dir_all(&workspace).unwrap();
+    let persister = TranscriptPersister::new(workspace.clone(), "t".into(), "s".into(), "gemini".into())
+        .for_agent("mark".into(), "Mark".into());
+    assert!(persister.memory.is_none());
+    let mut persister = persister;
+    tokio::runtime::Runtime::new().unwrap().block_on(persister.save(TranscriptRole::User, "I miss her."));
+    let block = crate::agent::agent_notes::call_block(&workspace, "mark").unwrap();
+    assert!(block.contains("December: I miss her."), "{block}");
+}

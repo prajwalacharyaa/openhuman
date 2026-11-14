@@ -199,6 +199,7 @@ pub async fn handle_live_voice_ws(socket: WebSocket, config: Arc<Config>) {
     };
 
     let dry_run = request.dry_run;
+    let agent = request.agent.as_deref().and_then(|name| session::agent_voice(&config.workspace_dir, name));
     let started = match session::start(config.clone(), request, &session_id).await {
         Ok(started) => started,
         Err(error) => {
@@ -232,7 +233,10 @@ pub async fn handle_live_voice_ws(socket: WebSocket, config: Arc<Config>) {
     );
     // a test call's sentences are not December's: they stay out of memory
     if !dry_run {
-        persister = persister.with_memory_log(config.clone());
+        persister = match agent {
+            Some(agent) => persister.for_agent(agent.name, agent.display),
+            None => persister.with_memory_log(config.clone()),
+        };
     }
     let timing_on = timing::enabled_from(std::env::var(timing::TIMING_ENV).ok().as_deref());
     let mut timing = VoiceTiming::default();

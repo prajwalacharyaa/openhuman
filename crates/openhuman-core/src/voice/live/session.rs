@@ -196,6 +196,10 @@ pub(crate) fn prompt_for(
             name = agent.display,
             body = agent.body
         ));
+        if let Some(notes) = crate::agent::agent_notes::call_block(workspace_dir, &agent.name) {
+            prompt.push_str("\n\n");
+            prompt.push_str(&notes);
+        }
     } else {
         for file in files.iter().copied() {
             inject_workspace_file(&mut persona, workspace_dir, file);

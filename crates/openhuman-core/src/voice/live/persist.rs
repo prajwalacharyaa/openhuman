@@ -196,6 +196,8 @@ pub(crate) struct TranscriptPersister {
     provider: String,
     sequence: u64,
     memory: Option<VoiceMemoryLog>,
+    /// A call with one of Mochi's agents: (its name, how it is called): the words go to its own notes folder.
+    agent: Option<(String, String)>,
 }
 
 impl TranscriptPersister {
@@ -212,7 +214,16 @@ impl TranscriptPersister {
             provider,
             sequence: 0,
             memory: None,
+            agent: None,
         }
+    }
+
+    /// A call with one of Mochi's agents: its words are kept in that agent's notes (`calls/`), and the shared
+    /// memory log is left off (December, 2026-11-14: a personal talk with an agent stays with that agent).
+    pub(crate) fn for_agent(mut self, name: String, display: String) -> Self {
+        self.memory = None;
+        self.agent = Some((name, display));
+        self
     }
 
     /// Also logs the session's turns into memory (when conversation logging
@@ -271,6 +282,10 @@ impl TranscriptPersister {
     pub(crate) async fn save(&mut self, role: TranscriptRole, text: &str) {
         if let Some(memory) = self.memory.as_mut() {
             memory.record(role, text);
+        }
+        if let Some((name, display)) = self.agent.as_ref() {
+            let speaker = if matches!(role, TranscriptRole::User) { "December" } else { display.as_str() };
+            crate::agent::agent_notes::record_call_line(&self.workspace_dir, name, speaker, text);
         }
         let Some(message) = self.message(role, text) else {
             return;

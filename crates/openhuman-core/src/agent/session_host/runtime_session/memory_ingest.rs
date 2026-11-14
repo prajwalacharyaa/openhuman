@@ -92,6 +92,11 @@ impl OpenHumanTurnPrelude {
             .pending_user_text
             .clone()?;
         let thread_id = self.thread_id.clone()?;
+        // a chat with one of Mochi's agents stays out of the shared memory: the agent keeps its own notes
+        // (December, 2026-11-14), and Mochi's memory isn't recalled into it either
+        if crate::agent::agent_notes::thread_agent(&self.workspace_dir, &thread_id).is_some() {
+            return None;
+        }
         let config = self.memory_config().await?;
         let mut identity = crate::memory::scope::resolve_current(&config);
         if self.omit_memory_context {
