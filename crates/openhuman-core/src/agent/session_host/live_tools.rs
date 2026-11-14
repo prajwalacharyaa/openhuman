@@ -11,23 +11,24 @@ use crate::agent::session_host::types::OpenHumanSessionHost;
 use crate::agent::tinyagents::live_harness::LiveToolSurface;
 use crate::agent::tinyagents::ToolPolicyEnforcement;
 
-/// Tools a voice call never gets: editing files, sub-agents (which can't reach Claude anyway), and the managed
-/// answer service (no account on this server: 2026-11-13 a test call sent a research request to it instead of
-/// handing it on).
-const NOT_BY_VOICE: &[&str] =
-    &["apply_patch", "spawn_async_subagent", "continue_subagent", "list_subagents", "web_answer_tool"];
+/// The only tools a voice call gets: its helpers (shell, behind the voice gate), memory, web search and reading a
+/// page, and the time. Everything else (editing, sub-agents, skills, todo lists, the managed answer service) is
+/// work for Claude through `mochi-ask`: offered to a call, the model used it instead (2026-11-14 test calls: a
+/// repo fix went to `use_skill coding`, research to `web_answer_tool`). A list of what's allowed, not of what
+/// isn't, so a new engine tool doesn't reach calls by itself.
+const VOICE_TOOLS: &[&str] = &["shell", "memory", "web_search_tool", "web_contents_tool", "web_fetch", "resolve_time"];
 
 impl OpenHumanSessionHost {
     /// The durable tools, the visible names and the tool policy of this
     /// session, for a live voice session. Synthesised delegation tools are
     /// left out: a delegate needs the parent turn's execution context, which a
-    /// live session (no model loop on this side) does not have. So are
-    /// [`NOT_BY_VOICE`]: a call hands that work to Claude (`mochi-ask`).
+    /// live session (no model loop on this side) does not have. Only [`VOICE_TOOLS`]
+    /// are offered: a call hands other work to Claude (`mochi-ask`).
     pub(crate) fn live_tool_surface(&self) -> LiveToolSurface {
         let allowed = self
             .visible_tool_names
             .iter()
-            .filter(|name| !NOT_BY_VOICE.contains(&name.as_str()))
+            .filter(|name| VOICE_TOOLS.contains(&name.as_str()))
             .filter(|name| self.tools.iter().any(|tool| tool.name() == name.as_str()))
             .cloned()
             .collect();
