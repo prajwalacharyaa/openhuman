@@ -35,17 +35,16 @@ import app.mochi.phone.ui.Type
 
 /**
  * Settings > "Fingerprint to open Mochi": when on, the app asks for the fingerprint (or the screen lock) when it
- * opens and after it has been in the background for [GRACE_MS]. Mochi's incoming call, the call screen, the
+ * opens, and once unlocked it stays unlocked until the phone's screen is locked (December, 2026-11-14: switching
+ * to another app and back asked again after 30 s). A restarted app asks again. Mochi's incoming call, the call screen, the
  * phone-action confirmations and the assistant overlay are never blocked, so a call can always be answered.
  */
 object AppLock {
-    private const val GRACE_MS = 30_000L
     private val EXEMPT: Set<Class<*>> = setOf(CallActivity::class.java, ConfirmActivity::class.java, AssistActivity::class.java,
         LockActivity::class.java)
     private var started = 0
     /** A screen of the app is on view: Android then lets it open another one by itself (see [AppNav]). */
     val visible get() = started > 0
-    private var leftAt = 0L            // when the last screen of Mochi went to the background (0: never opened)
     private var unlocked = false
 
     private fun prefs(c: Context) = c.getSharedPreferences("mochi-lock", Context.MODE_PRIVATE)
@@ -67,16 +66,13 @@ object AppLock {
 
     fun passed() { unlocked = true }
 
+    /** The phone's screen went off (locked): the next time Mochi is opened it asks again. */
+    fun relock() { unlocked = false }
+
     /** Watches every screen of the app (registered once, by [MochiApp]). */
     val watcher = object : Application.ActivityLifecycleCallbacks {
-        override fun onActivityStarted(a: Activity) {
-            if (started == 0 && unlocked && System.currentTimeMillis() - leftAt > GRACE_MS) unlocked = false
-            started++
-        }
-        override fun onActivityStopped(a: Activity) {
-            started = (started - 1).coerceAtLeast(0)
-            if (started == 0) leftAt = System.currentTimeMillis()
-        }
+        override fun onActivityStarted(a: Activity) { started++ }
+        override fun onActivityStopped(a: Activity) { started = (started - 1).coerceAtLeast(0) }
         override fun onActivityResumed(a: Activity) {
             if (unlocked || !enabled(a) || a.javaClass in EXEMPT) return
             a.startActivity(Intent(a, LockActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NO_ANIMATION))
@@ -94,6 +90,11 @@ class MochiApp : Application() {
         super.onCreate()
         Crashes.install(this)
         registerActivityLifecycleCallbacks(AppLock.watcher)
+        // the screen going off is the phone locking: Mochi locks with it (only while the app is running; a
+        // restarted app starts locked anyway)
+        registerReceiver(object : android.content.BroadcastReceiver() {
+            override fun onReceive(c: Context, i: Intent) = AppLock.relock()
+        }, android.content.IntentFilter(Intent.ACTION_SCREEN_OFF))
         Crashes.sendPending(this)
     }
 }
