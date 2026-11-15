@@ -97,10 +97,10 @@ object Books {
         }
     }
 
-    fun action(c: Context, id: String, what: String) {
+    fun action(c: Context, id: String, what: String, force: Boolean = false) {
         val req = Request.Builder().url("${Mochi.ringUrl(c)}/books/$id/$what")
             .header("Authorization", "Bearer ${Mochi.token(c)}")
-            .post("{}".toRequestBody("application/json".toMediaType())).build()
+            .post(JSONObject().put("force", force).toString().toRequestBody("application/json".toMediaType())).build()
         Mochi.http.newCall(req).execute().use { r -> if (!r.isSuccessful) throw IllegalStateException("HTTP ${r.code}") }
     }
 
@@ -202,9 +202,9 @@ private fun BooksScreen(onBack: () -> Unit) {
                     Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(c.card).padding(Space.l),
                         verticalArrangement = Arrangement.spacedBy(Space.s)) {
                         Text("Add books", style = Type.title, color = c.ink)
-                        Text("PDF, EPUB or MOBI, up to 150 MB. Mark summarizes every chapter and the whole book; on a call, " +
-                            "ask Mochi to read from it or about any chapter. Copy-protected Kindle books and scanned PDFs " +
-                            "can't be read.", style = Type.small, color = c.muted)
+                        Text("PDF, EPUB or MOBI, up to 150 MB. On a call, ask Mochi to read from a book or about any " +
+                            "chapter; tap Summarize on a book (or ask Mochi) for summaries and a full report. " +
+                            "Copy-protected Kindle books and scanned PDFs can't be read.", style = Type.small, color = c.muted)
                         Pill("Choose books", true) {
                             pick.launch(arrayOf("application/pdf", "application/epub+zip", "application/x-mobipocket-ebook",
                                 "application/vnd.amazon.ebook", "application/octet-stream"))
@@ -217,8 +217,8 @@ private fun BooksScreen(onBack: () -> Unit) {
                     val done = b.optInt("chapter_summaries")
                     val state = when {
                         b.optBoolean("book_summary") -> "Summarized"
-                        done > 0 -> "Mark is summarizing: $done of $chapters chapters"
-                        else -> "Waiting for Mark"
+                        done > 0 -> "Summaries: $done of $chapters parts"
+                        else -> "Ready to read"
                     }
                     Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(c.card)
                         .clickable(role = Role.Button) { open = b.optString("id"); detail = null }.padding(Space.l),
@@ -272,7 +272,7 @@ private fun BooksScreen(onBack: () -> Unit) {
                         verticalArrangement = Arrangement.spacedBy(Space.s)) {
                         Text("The whole book", style = Type.title, color = c.ink)
                         val s = d.optString("summary").takeIf { it.isNotBlank() && it != "null" }
-                        Text(s ?: "Mark writes this after the chapter summaries.", style = Type.body,
+                        Text(s ?: "Not summarized yet: tap Summarize the book.", style = Type.body,
                             color = if (s != null) c.ink else c.muted)
                     }
                 }
@@ -293,10 +293,12 @@ private fun BooksScreen(onBack: () -> Unit) {
                 }
                 item {
                     Row(horizontalArrangement = Arrangement.spacedBy(Space.s), verticalAlignment = Alignment.CenterVertically) {
-                        Pill("Summarize again", false) {
+                        // summaries only when December asks: each part, then a full report (a few minutes)
+                        val whole = d.optString("summary").let { it.isNotBlank() && it != "null" }
+                        Pill(if (whole) "Summarize again" else "Summarize the book", !whole) {
                             val id = open ?: return@Pill
-                            io(scope, { Books.action(ctx, id, "summarize") }, { status = "Not sent: ${it.message}" }) {
-                                status = "Mark is summarizing it again."
+                            io(scope, { Books.action(ctx, id, "summarize", force = whole) }, { status = "Not sent: ${it.message}" }) {
+                                status = "Summarizing: every part, then a full report. You get a notification when it's done."
                             }
                         }
                         if (!confirmDelete) Pill("Delete", false) { confirmDelete = true }
