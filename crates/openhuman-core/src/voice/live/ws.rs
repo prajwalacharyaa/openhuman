@@ -243,6 +243,9 @@ pub async fn handle_live_voice_ws(socket: WebSocket, config: Arc<Config>) {
     let mut checks = CallChecks::default();
     let mut notes = NoteGate::default();
     let mut retell = Retelling::default();
+    // reading aloud: the next part is asked for once per part, and only after the voice has said the last one
+    // (2026-11-15: "keep reading" went out after the tool turn too, the same part was read two and three times over)
+    let mut read_spoke = false;
     // Claude may already be working in this chat (the call was redialled or the phone passed back mid-task):
     // 2026-11-12 the new session said "I haven't started" while the fix was being built.
     if crate::web_chat::channel_web_queue_status(&thread_id)
@@ -398,7 +401,9 @@ pub async fn handle_live_voice_ws(socket: WebSocket, config: Arc<Config>) {
                         if let Some(waited) = notes.turn_over(std::time::Instant::now()) {
                             retell.note_sent(&waited);
                             let _ = sender.send_text(waited).await;
-                        } else if let Some(next) = crate::agent::tinyagents::middleware::reading_next(&thread_id) {
+                        } else if let Some(next) = crate::agent::tinyagents::middleware::reading_next(&thread_id)
+                            .filter(|_| std::mem::take(&mut read_spoke))
+                        {
                             // reading aloud: the next part, by itself, until December speaks or it ends
                             tracing::info!(session_id, "{LOG_PREFIX} reading on: the next part");
                             let _ = sender.send_text(format!(
@@ -412,6 +417,14 @@ pub async fn handle_live_voice_ws(socket: WebSocket, config: Arc<Config>) {
                     if reads_phone(&call.name, &call.args) {
                         persister.mark_private(); // December's phone data stays out of memory
                     }
+                }
+                match &event {
+                    // a tool started: what the voice says next is that tool's part, not the last one
+                    LiveAgentEvent::ToolStarted { .. } => read_spoke = false,
+                    LiveAgentEvent::Live(LiveEvent::OutputTranscript { text, is_final: true }) if !text.trim().is_empty() => {
+                        read_spoke = true
+                    }
+                    _ => {}
                 }
                 let handoff_step = match &event {
                     LiveAgentEvent::ToolStarted { name, .. } => Some(HandoffEvent::ToolStarted(name.as_str())),
