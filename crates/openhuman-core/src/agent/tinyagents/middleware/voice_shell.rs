@@ -212,7 +212,7 @@ pub(crate) fn library_book(query: &str, catalogue: &str) -> Option<String> {
     }).map(str::to_string)
 }
 
-fn library_catalogue() -> String {
+pub(crate) fn library_catalogue() -> String {
     std::fs::read_to_string(workspace_root().parent().unwrap_or(&workspace_root()).join("projects/library/app/catalogue.json"))
         .unwrap_or_default()
 }

@@ -580,13 +580,23 @@ pub(crate) struct CallChecks {
     checking_at: Option<Instant>,
     last_tool: Option<Instant>,
     last_shell: Option<Instant>,
+    /// December named a book in their library this turn (2026-11-15: "the summary of Kafka" was answered from the
+    /// voice model's memory in one sentence).
+    book_asked: bool,
 }
+
+/// Sent when December named a book in their library and the turn answered without opening it.
+pub(crate) const BOOK_NUDGE: &str = "(Server check, not December speaking: December asked about a book in their own \
+library and you answered without opening it. Answer from the library now: the summary with mochi-books read \"<book>\" \
+--summary, a review with --report, reading with mochi-books read \"<book>\", a question with mochi-books search. Never \
+from your own memory of the book.)";
 
 /// A short name for a nudge, for the log (which check fired is what decides whether it earns its place).
 pub(crate) fn nudge_kind(nudge: &str) -> &'static str {
     [
         (NUDGE, "handoff claimed"), (LOOKUP_NUDGE, "lookup"), (STATUS_NUDGE, "status"), (MEMORY_NUDGE, "memory"),
         (ANSWER_NUDGE, "answer not sent on"), (BUSY_NUDGE, "busy"), (CANCEL_NUDGE, "cancel"), (HANGING_NUDGE, "hanging"),
+        (BOOK_NUDGE, "library book"),
     ]
     .iter()
     .find(|(text, _)| *text == nudge)
@@ -667,7 +677,9 @@ impl CallChecks {
     /// What the model said against what is really going on in this call.
     fn call_facts(&mut self, event: HandoffEvent<'_>, now: Instant) -> Option<&'static str> {
         match event {
-            HandoffEvent::UserSaid(_) => {
+            HandoffEvent::UserSaid(text) => {
+                self.book_asked = crate::agent::tinyagents::middleware::library_book(
+                    text, &crate::agent::tinyagents::middleware::library_catalogue()).is_some();
                 if self.claude_asked {
                     self.claude_asked = false;
                     self.answer_due = true;
@@ -695,6 +707,7 @@ impl CallChecks {
                 if name == "shell" {
                     self.last_shell = Some(now);
                     self.answer_due = false;
+                    self.book_asked = false;
                 }
                 self.checking_at = None;
             }
@@ -707,6 +720,7 @@ impl CallChecks {
                     && self.checking_at.is_some_and(|said| {
                         self.last_tool.is_some_and(|tool| tool + CHECK_GRACE < said && said.duration_since(tool) < HANDOFF_COVERS)
                     });
+                let book = std::mem::take(&mut self.book_asked);
                 let nudge = if self.said_not_started {
                     Some(BUSY_NUDGE)
                 } else if self.said_cancelled && !shelled {
@@ -715,6 +729,8 @@ impl CallChecks {
                     Some(ANSWER_NUDGE)
                 } else if hanging {
                     Some(HANGING_NUDGE)
+                } else if book {
+                    Some(BOOK_NUDGE)
                 } else {
                     None
                 };
