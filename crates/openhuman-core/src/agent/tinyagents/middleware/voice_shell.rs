@@ -200,6 +200,23 @@ pub(crate) fn search_gate(query: &str, now: std::time::Instant) -> Result<bool, 
     Ok(recent.len() >= SEARCH_BURST)
 }
 
+/// A book in December's library that `query` names, from the library's catalogue (mochi-books publish): its title.
+/// A well-known book in the library was looked up on the web instead (2026-11-15, "the summary of Animal Farm").
+pub(crate) fn library_book(query: &str, catalogue: &str) -> Option<String> {
+    let q = query.to_lowercase();
+    let value: serde_json::Value = serde_json::from_str(catalogue).ok()?;
+    value.get("books")?.as_array()?.iter().filter_map(|b| b.get("title")?.as_str()).find(|title| {
+        let t = title.to_lowercase();
+        let short = t.split([':', '(', '{', '[']).next().unwrap_or(&t).trim().to_string();
+        short.chars().filter(|c| c.is_alphanumeric()).count() >= 4 && q.contains(short.as_str())
+    }).map(str::to_string)
+}
+
+fn library_catalogue() -> String {
+    std::fs::read_to_string(workspace_root().parent().unwrap_or(&workspace_root()).join("projects/library/app/catalogue.json"))
+        .unwrap_or_default()
+}
+
 /// Added to a search result when the call has searched a lot lately.
 pub(crate) const SEARCH_HANDOFF_NOTE: &str = "\n\n(Several searches already: if this still doesn't answer \
 December fully, hand the question to Claude with mochi-ask now, with everything you found, instead of \
@@ -254,6 +271,13 @@ impl ToolMiddleware<(), crate::agent::tinyagents::host::OpenHumanRunContext> for
         let mut many_searches = false;
         if call.name.contains("web_search") {
             let query = call.arguments.get("query").and_then(|q| q.as_str()).unwrap_or_default();
+            if let Some(title) = library_book(query, &library_catalogue()) {
+                tracing::info!("[voice-live] search for a book in the library: sent to the library");
+                return Ok(MiddlewareToolOutcome::Result(TaToolResult::error(format!(
+                    "\"{title}\" is in December's own library: answer from it, not the web. The summary: mochi-books read \
+                     \"{title}\" --summary; a review: --report; reading: mochi-books read \"{title}\"; a question about \
+                     it: mochi-books search \"{title}\" \"<words>\"."))));
+            }
             match search_gate(query, std::time::Instant::now()) {
                 Err(note) => {
                     tracing::info!("[voice-live] repeated search answered from the first one");

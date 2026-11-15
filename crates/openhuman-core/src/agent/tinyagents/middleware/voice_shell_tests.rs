@@ -118,3 +118,13 @@ fn reading_goes_on_part_after_part_until_the_end() {
     assert_eq!(reading_next("t1"), None);
 }
 
+#[test]
+fn a_search_for_a_book_in_the_library_goes_to_the_library() {
+    let cat = r#"{"books":[{"title":"Animal Farm"},{"title":"Man's Search For Meaning"},{"title":"It"}]}"#;
+    assert_eq!(library_book("summary of Animal Farm by George Orwell", cat).as_deref(), Some("Animal Farm"));
+    assert_eq!(library_book("man's search for meaning chapter titles", cat).as_deref(), Some("Man's Search For Meaning"));
+    assert_eq!(library_book("weather in Pokhara", cat), None);
+    assert_eq!(library_book("is it raining", cat), None, "a two-letter title never matches a sentence");
+    assert_eq!(library_book("anything", "not json"), None);
+}
+
