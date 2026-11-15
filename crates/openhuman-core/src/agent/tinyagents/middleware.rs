@@ -54,7 +54,7 @@ pub(crate) use embedder_hooks::EmbedderToolHooksMiddleware;
 pub(crate) use loop_guards::is_repeat_call_exempt;
 pub(crate) use memory_pack::MemoryPackMiddleware;
 pub(crate) use packed_tool_route::PackedToolRouteMiddleware;
-pub(crate) use voice_shell::VoiceShellMiddleware;
+pub(crate) use voice_shell::{reading_next, reading_stop, VoiceShellMiddleware};
 pub(crate) use repeated_failure::RepeatedToolFailureMiddleware;
 pub(crate) use research_budget::ResearchBudgetMiddleware;
 pub(crate) use shell_turn_budget::install_time_notes;

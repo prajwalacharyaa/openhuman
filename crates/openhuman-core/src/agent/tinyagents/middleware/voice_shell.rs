@@ -129,6 +129,52 @@ pub(crate) fn step_detail(name: &str, args: &serde_json::Value) -> String {
     out
 }
 
+/// Reading aloud on a call, per chat: the command that reads the next part. Set when a part was read and more
+/// follows, cleared when the reading ended or December spoke. The call loop runs it on after each part
+/// (voice/live/ws.rs): left to the model, reading stopped after the first part (2026-11-15), because a part's end
+/// looked like the end of its answer.
+static READING: std::sync::Mutex<Vec<(String, String)>> = std::sync::Mutex::new(Vec::new());
+
+/// The command that reads the next part after `command` (a `mochi-books read` or `mochi-ask --read`) returned
+/// `result`; `None` when the reading is over or this isn't reading.
+pub(crate) fn next_part(command: &str, result: &str) -> Option<String> {
+    let words: Vec<&str> = command.split_whitespace().collect();
+    let at = words.iter().position(|w| w.rsplit('/').next() == Some("mochi-books") || *w == "mochi-ask")?;
+    let tool = words[at].rsplit('/').next().unwrap_or_default();
+    if tool == "mochi-books" {
+        if words.get(at + 1) != Some(&"read") || result.contains("End of the book") || result.contains("That's the end of") {
+            return None;
+        }
+        // the book as it was named (one quoted argument or one word); continuing needs no --chapter/--start/--again
+        let rest = command.splitn(2, " read ").nth(1)?.trim_start();
+        let book = if let Some(q) = rest.strip_prefix('"') { format!("\"{}\"", q.split('"').next()?) }
+            else { rest.split_whitespace().next()?.to_string() };
+        return Some(format!("mochi-books read {book}"));
+    }
+    if words.iter().any(|w| *w == "--read") && !result.contains("it's the end") && !result.contains("That was the end") {
+        return Some("mochi-ask --read".to_string());
+    }
+    None
+}
+
+/// Reading on this chat: the command for the next part, if a part was just read and more follows.
+pub(crate) fn reading_next(thread: &str) -> Option<String> {
+    READING.lock().unwrap_or_else(std::sync::PoisonError::into_inner).iter().find(|(t, _)| t == thread).map(|(_, c)| c.clone())
+}
+
+/// December spoke, or the reading ended: no more parts by themselves on this chat.
+pub(crate) fn reading_stop(thread: &str) {
+    READING.lock().unwrap_or_else(std::sync::PoisonError::into_inner).retain(|(t, _)| t != thread);
+}
+
+fn reading_set(thread: &str, next: Option<String>) {
+    let mut all = READING.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    all.retain(|(t, _)| t != thread);
+    if let Some(next) = next {
+        all.push((thread.to_string(), next));
+    }
+}
+
 /// Web searches a call made lately: (when, the query as typed, lowercased). The voice model sometimes sends the
 /// same search twice in a row, or keeps searching instead of handing a big question to Claude (2026-11-09: the
 /// same query twice within 7 s, then six searches about one person).
@@ -226,6 +272,14 @@ impl ToolMiddleware<(), crate::agent::tinyagents::host::OpenHumanRunContext> for
         if let MiddlewareToolOutcome::Result(result) = &outcome {
             let text = super::tool_result_text(result);
             tracing::info!("[voice-live] result {}: {}", name, result_line(&detail, &text, result.is_error));
+            if name == "shell" && !result.is_error {
+                if let Some(thread) = ctx.data.thread_id.as_deref() {
+                    let command = detail.as_str();
+                    if command.contains("mochi-books read") || command.contains("mochi-ask") && command.contains("--read") {
+                        reading_set(thread, next_part(command, &text));
+                    }
+                }
+            }
         }
         Ok(outcome)
     }

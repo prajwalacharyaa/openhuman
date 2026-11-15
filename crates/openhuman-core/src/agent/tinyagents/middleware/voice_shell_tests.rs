@@ -100,3 +100,21 @@ fn a_call_may_read_books_but_not_change_the_library() {
     assert!(!voice_may_run("mochi-books summary-set alice book"));
     assert!(!voice_may_run("mochi-books"), "nothing to do is not a read either");
 }
+
+#[test]
+fn reading_goes_on_part_after_part_until_the_end() {
+    let more = "Animal Farm: Chapter I, continuing.\n\nRead this part aloud...";
+    assert_eq!(next_part("mochi-books read \"Animal Farm\" --chapter 1 --start", more).as_deref(),
+        Some("mochi-books read \"Animal Farm\""));
+    assert_eq!(next_part("mochi-books read 20261114-c0e9a4", more).as_deref(), Some("mochi-books read 20261114-c0e9a4"));
+    assert_eq!(next_part("mochi-books read 20261114-c0e9a4", "...(End of the book.)"), None);
+    assert_eq!(next_part("mochi-books list", more), None);
+    assert_eq!(next_part("mochi-ask --thread t-1 --read", "Read this part aloud... run mochi-ask --read again").as_deref(),
+        Some("mochi-ask --read"));
+    assert_eq!(next_part("mochi-ask --read", "... stop: it's the end."), None);
+    reading_set("t1", Some("mochi-books read x".into()));
+    assert_eq!(reading_next("t1").as_deref(), Some("mochi-books read x"));
+    reading_stop("t1");
+    assert_eq!(reading_next("t1"), None);
+}
+

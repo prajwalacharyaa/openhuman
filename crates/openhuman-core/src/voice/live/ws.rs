@@ -387,6 +387,8 @@ pub async fn handle_live_voice_ws(socket: WebSocket, config: Arc<Config>) {
                         notes.heard(std::time::Instant::now());
                         if *is_final {
                             retell.user_spoke();
+                            // December said something: reading pauses ("carry on" starts it again)
+                            crate::agent::tinyagents::middleware::reading_stop(&thread_id);
                         }
                     }
                     LiveAgentEvent::Live(LiveEvent::Interrupted) => notes.interrupted(std::time::Instant::now()),
@@ -396,6 +398,12 @@ pub async fn handle_live_voice_ws(socket: WebSocket, config: Arc<Config>) {
                         if let Some(waited) = notes.turn_over(std::time::Instant::now()) {
                             retell.note_sent(&waited);
                             let _ = sender.send_text(waited).await;
+                        } else if let Some(next) = crate::agent::tinyagents::middleware::reading_next(&thread_id) {
+                            // reading aloud: the next part, by itself, until December speaks or it ends
+                            tracing::info!(session_id, "{LOG_PREFIX} reading on: the next part");
+                            let _ = sender.send_text(format!(
+                                "(Server note, not December speaking: keep reading. Run {next} now and read the next part \
+                                 aloud, with no words of your own before it.)")).await;
                         }
                     }
                     _ => {}
