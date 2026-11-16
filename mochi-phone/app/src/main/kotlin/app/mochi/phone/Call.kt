@@ -65,7 +65,14 @@ object Call {
     @Volatile var active = false
         private set
     @Volatile var muted = false
-        set(v) { if (field != v) { field = v; notice() } }
+        set(v) {
+            if (field != v) {
+                field = v
+                notice()
+                // the call screen follows, also when Mochi muted it by voice (mochi-phone mute)
+                if (active && !frozen) status(if (v) "Muted: Mochi hears nothing. Tap Mute to talk again." else "Listening")
+            }
+        }
     var speaker = true
         private set
     /** Sleep timer: when the call ends by itself (ms; 0 = no timer). Set by "stop after 30 minutes" (mochi-phone sleep). */
@@ -393,14 +400,16 @@ object Call {
 
     /** Back from "Mochi, freeze": the mic is sent again and Mochi says it's there. */
     @Synchronized
-    fun unfreeze() {
+    fun unfreeze(byVoice: Boolean = false) {
         if (!frozen) return
         Unfreeze.stop()
         frozen = false
         quiet = false
         status("Listening")
+        // how December came back is in the note, so a call review can tell a tap from the phone mishearing
         ws?.send(JSONObject().put("type", "text").put("text",
-            "(December is back after asking you to stay silent. Say in a few words that you're here.)").toString())
+            "(December is back after asking you to stay silent, ${if (byVoice) "by voice" else "with the button"}. " +
+                "Say in a few words that you're here.)").toString())
     }
 
     /**
@@ -435,7 +444,7 @@ object Call {
         socket.send("""{"type":"interrupt"}""")
         playback.clear()
         flushPlayback = true
-        val why = Unfreeze.start(app) { unfreeze() }
+        val why = Unfreeze.start(app) { unfreeze(byVoice = true) }
         status(if (why == null) "Frozen: Mochi hears nothing. Say \"Mochi, unfreeze\" or tap Unfreeze."
                else "Frozen: Mochi hears nothing. Tap Unfreeze to continue ($why).")
     }

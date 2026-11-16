@@ -433,3 +433,79 @@ fn a_cancelled_request_is_reported_as_not_done() {
     };
     assert!(claude_reply_note(&cancelled, "t1").unwrap().contains("it is NOT done"));
 }
+
+
+#[test]
+fn a_remark_with_a_fresh_word_is_not_a_request() {
+    // 2026-11-16: the complaint drew a search nudge and the apology was said twice
+    assert!(!asks_fresh("It's not just about the share market or anything. I don't want you to just give me the random guesses over anything."));
+    assert!(asks_fresh("What share market open today?"));
+    assert!(asks_fresh("Nepal news today"));
+    assert!(asks_fresh("Mochi, check the weather in Pokhara for me and for the whole week ahead"));
+}
+
+#[test]
+fn checking_with_the_answer_in_the_same_line_is_not_hanging() {
+    assert!(!only_announces("checking\u{2026} the share market is open today."));
+    assert!(only_announces("checking\u{2026}"));
+    assert!(only_announces("let me check that for you."));
+    assert!(!only_announces("the market is open."));
+
+    let t0 = Instant::now();
+    let mut checks = CallChecks::default();
+    checks.on_event(HandoffEvent::UserSaid("What share market open today?"), t0);
+    checks.on_event(HandoffEvent::ToolStarted("web_search_tool"), t0);
+    let said = t0 + Duration::from_secs(5);
+    checks.on_event(HandoffEvent::AgentSaid("Checking\u{2026} The share market is open today."), said);
+    assert_eq!(checks.on_event(HandoffEvent::TurnComplete, said), None);
+}
+
+#[test]
+fn a_search_for_the_question_before_is_not_hanging() {
+    // 2026-11-16: searched at :08, "Confirm it with Samir" at :38 -> "Checking with Samir…" was nudged as hanging
+    let t0 = Instant::now();
+    let mut checks = CallChecks::default();
+    checks.on_event(HandoffEvent::UserSaid("I don't think it is."), t0);
+    checks.on_event(HandoffEvent::ToolStarted("web_search_tool"), t0);
+    let asked = t0 + Duration::from_secs(30);
+    checks.on_event(HandoffEvent::UserSaid("Confirm it with Samir."), asked);
+    checks.on_event(HandoffEvent::AgentSaid("Checking with Samir about the current market status for you."), asked);
+    assert_ne!(checks.on_event(HandoffEvent::TurnComplete, asked), Some(HANGING_NUDGE));
+}
+
+#[test]
+fn a_nudge_waits_and_is_dropped_when_a_tool_starts() {
+    let t0 = Instant::now();
+    let mut delay = NudgeDelay::default();
+    delay.hold(LOOKUP_NUDGE, t0);
+    assert_eq!(delay.due(t0 + Duration::from_secs(1)), None);
+    assert_eq!(delay.due(t0 + NUDGE_WAIT), Some(LOOKUP_NUDGE));
+    assert_eq!(delay.due(t0 + NUDGE_WAIT * 2), None, "sent once");
+
+    delay.hold(BOOK_NUDGE, t0);
+    assert_eq!(delay.drop_waiting(), Some(BOOK_NUDGE));
+    assert_eq!(delay.due(t0 + NUDGE_WAIT), None);
+}
+
+#[test]
+fn an_answer_the_call_never_said_goes_to_the_next_session() {
+    let t0 = Instant::now();
+    let note = format!("(Server note: {ANSWER_MARK})\n\nIn short: done.");
+    unspoken_set("thread-unspoken-a", &note, t0);
+    unspoken_set("thread-unspoken-a", "(Server check: not an answer)", t0);
+    assert_eq!(unspoken_take("thread-unspoken-a", t0 + Duration::from_secs(5)), Some(note.clone()));
+    assert_eq!(unspoken_take("thread-unspoken-a", t0 + Duration::from_secs(6)), None, "once");
+
+    unspoken_set("thread-unspoken-b", &note, t0);
+    unspoken_clear("thread-unspoken-b");
+    assert_eq!(unspoken_take("thread-unspoken-b", t0), None, "said already");
+
+    unspoken_set("thread-unspoken-c", &note, t0);
+    assert_eq!(unspoken_take("thread-unspoken-c", t0 + UNSPOKEN_KEEPS), None, "too old to bring up");
+}
+
+#[test]
+fn a_quoted_question_further_up_is_not_claude_asking() {
+    let post = format!("Detail: It reads: \"what was the first thing that felt off to you?\" {} It hasn't gone out yet.", "It has a carousel image attached and a video ready to go with it, and nothing else is pending on it at all.");
+    assert!(!asks_december(&post));
+}

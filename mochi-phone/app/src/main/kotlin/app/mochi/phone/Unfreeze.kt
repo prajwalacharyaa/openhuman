@@ -17,7 +17,12 @@ import android.speech.SpeechRecognizer
 object Unfreeze {
     private const val LISTEN_MS = 8_000L
     // the phrase's first word can be lost as the recognizer restarts: any of these with "Mochi" will do
-    private val BACK = setOf("unfreeze", "there", "this", "back", "here", "wake", "resume")
+    private val BACK = setOf("unfreeze", "there", "back", "here", "wake", "resume")
+    // The sentence that asked for silence is often still being said when listening starts ("Mochi, stop there",
+    // "Mochi, mute, not here"): for this long only a plain "unfreeze" brings Mochi back (2026-11-16: four freezes
+    // ended by themselves within 1 to 17 seconds).
+    private const val SETTLE_MS = 6_000L
+    @Volatile private var startedAt = 0L
     private val main = Handler(Looper.getMainLooper())
 
     private var app: Context? = null
@@ -39,6 +44,7 @@ object Unfreeze {
         app = c.applicationContext
         onBack = back
         listening = true
+        startedAt = android.os.SystemClock.elapsedRealtime()
         needsMic = true
         main.postDelayed({ listen() }, 300)
         return null
@@ -81,7 +87,8 @@ object Unfreeze {
         results.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION).orEmpty().any { heard ->
             val text = heard.lowercase().replace("'", "")
             val words = text.split(Regex("\\W+"))
-            UNFREEZE.containsMatchIn(text) || (words.any { NAME.matches(it) } && words.any { it in BACK })
+            UNFREEZE.containsMatchIn(text) || (android.os.SystemClock.elapsedRealtime() - startedAt > SETTLE_MS &&
+                words.any { NAME.matches(it) } && words.any { it in BACK })
         }
 
     /** Not an unfreeze: listen again while still frozen. */

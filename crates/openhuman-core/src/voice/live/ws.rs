@@ -21,7 +21,7 @@ use tinyagents_live::LiveAgentEvent;
 use super::error::LiveVoiceError;
 use super::handoff::{
     asks_december, claude_reply_note, earlier_reply_note, earlier_threads, CallChecks, HandoffEvent, NoteGate,
-    Retelling, NUDGE, nudge_kind,
+    NudgeDelay, Retelling, NUDGE, nudge_kind, unspoken_clear, unspoken_set, unspoken_take,
 };
 use super::persist::{reads_phone, TranscriptPersister};
 use super::timing::{self, TimingEvent, VoiceTiming};
@@ -243,6 +243,18 @@ pub async fn handle_live_voice_ws(socket: WebSocket, config: Arc<Config>) {
     let mut checks = CallChecks::default();
     let mut notes = NoteGate::default();
     let mut retell = Retelling::default();
+    let mut nudges = NudgeDelay::default();
+    // an answer the last session on this chat never got to say (the call dropped in between)
+    if !dry_run {
+        if let Some(note) = unspoken_take(&thread_id, std::time::Instant::now()) {
+            tracing::info!(session_id, "{LOG_PREFIX} an answer the dropped call never said: passing it to this one");
+            unspoken_set(&thread_id, &note, std::time::Instant::now());
+            if let Some(now) = notes.offer(note, std::time::Instant::now()) {
+                retell.note_sent(&now);
+                let _ = sender.send_text(now).await;
+            }
+        }
+    }
     // reading aloud: the next part is asked for once per part, and only after the voice has said the last one
     // (2026-11-15: "keep reading" went out after the tool turn too, the same part was read two and three times over)
     let mut read_spoke = false;
@@ -332,6 +344,7 @@ pub async fn handle_live_voice_ws(socket: WebSocket, config: Arc<Config>) {
                         });
                         if let Some(note) = note {
                             tracing::info!(session_id, "{LOG_PREFIX} Claude's answer arrived: passing it to the call");
+                            unspoken_set(&thread_id, &note, std::time::Instant::now());
                             if let Some(now) = notes.offer(note, std::time::Instant::now()) {
                                 retell.note_sent(&now);
                                 let _ = sender.send_text(now).await;
@@ -344,6 +357,14 @@ pub async fn handle_live_voice_ws(socket: WebSocket, config: Arc<Config>) {
                 }
             }
             _ = note_tick.tick() => {
+                if let Some(nudge) = nudges.due(std::time::Instant::now()) {
+                    if nudge == NUDGE {
+                        tracing::info!(session_id, "{LOG_PREFIX} said it's on it without a handoff call: nudging");
+                    } else {
+                        tracing::info!(session_id, kind = nudge_kind(nudge), "{LOG_PREFIX} a turn that needed a check or command ran none: nudging");
+                    }
+                    let _ = sender.send_text(nudge.to_string()).await;
+                }
                 if let Some(waited) = notes.tick(std::time::Instant::now()) {
                     retell.note_sent(&waited);
                     let _ = sender.send_text(waited).await;
@@ -394,9 +415,17 @@ pub async fn handle_live_voice_ws(socket: WebSocket, config: Arc<Config>) {
                             crate::agent::tinyagents::middleware::reading_stop(&thread_id);
                         }
                     }
-                    LiveAgentEvent::Live(LiveEvent::Interrupted) => notes.interrupted(std::time::Instant::now()),
+                    LiveAgentEvent::Live(LiveEvent::Interrupted) => {
+                        if retell.skips_agent_line() {
+                            unspoken_clear(&thread_id); // December cut the answer off: heard enough
+                        }
+                        notes.interrupted(std::time::Instant::now())
+                    }
                     // after the model's turn; while December is still talking the notes keep waiting
                     LiveAgentEvent::Live(LiveEvent::TurnComplete { .. }) => {
+                        if retell.skips_agent_line() {
+                            unspoken_clear(&thread_id); // the answer was said
+                        }
                         retell.turn_over();
                         if let Some(waited) = notes.turn_over(std::time::Instant::now()) {
                             retell.note_sent(&waited);
@@ -438,14 +467,14 @@ pub async fn handle_live_voice_ws(socket: WebSocket, config: Arc<Config>) {
                     _ => None,
                 };
                 if let Some(step) = handoff_step {
-                    let nudge = checks.on_event(step, std::time::Instant::now());
-                    if let Some(nudge) = nudge {
-                        if nudge == NUDGE {
-                            tracing::info!(session_id, "{LOG_PREFIX} said it's on it without a handoff call: nudging");
-                        } else {
-                            tracing::info!(session_id, kind = nudge_kind(nudge), "{LOG_PREFIX} a turn that needed a check or command ran none: nudging");
+                    // a tool started or December spoke: the nudge that waited was for a turn that wasn't over
+                    if matches!(step, HandoffEvent::ToolStarted(_) | HandoffEvent::UserSaid(_)) {
+                        if let Some(dropped) = nudges.drop_waiting() {
+                            tracing::info!(session_id, kind = nudge_kind(dropped), "{LOG_PREFIX} a nudge was not needed (a tool started or December spoke): dropped");
                         }
-                        let _ = sender.send_text(nudge.to_string()).await;
+                    }
+                    if let Some(nudge) = checks.on_event(step, std::time::Instant::now()) {
+                        nudges.hold(nudge, std::time::Instant::now());
                     }
                 }
                 for outbound in map_event(event, &session_id, &provider, &thread_id) {

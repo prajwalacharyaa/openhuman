@@ -112,7 +112,10 @@ pub(crate) fn asks_december(answer: &str) -> bool {
     let tail: String = answer.chars().rev().take(300).collect::<Vec<_>>().into_iter().rev().collect::<String>().to_lowercase();
     // 2026-11-12 the four-option answer ended "just say the word if you want me to build and PR it": no "?"
     const OFFERS: &[&str] = &["say the word", "want me to", "should i ", "shall i ", "let me know if", "which one", "do you want"];
-    tail.contains('?') || OFFERS.iter().any(|offer| tail.contains(offer))
+    // the question ends the answer: a "?" further up is quoted text (2026-11-16: a LinkedIn draft read out
+    // ended its own post with a question, and "okay, read that to me" was nudged as an answer not sent on)
+    let end: String = tail.chars().rev().take(120).collect();
+    end.contains('?') || OFFERS.iter().any(|offer| tail.contains(offer))
 }
 
 /// The most chats from earlier in the same call (before the phone was passed) a session also listens to.
@@ -452,7 +455,27 @@ const MEMORY_SAID: &[&str] = &["checked the memory", "checked your memory", "che
 /// Whether December's words ask for something current.
 pub(crate) fn asks_fresh(text: &str) -> bool {
     let text = text.to_lowercase();
-    FRESH_WORDS.iter().any(|w| text.contains(w)) && !PAST_WORDS.iter().any(|w| text.contains(w))
+    FRESH_WORDS.iter().any(|w| text.contains(w)) && !PAST_WORDS.iter().any(|w| text.contains(w)) && is_request(&text)
+}
+
+/// How a request starts ("check the weather", "is the market open").
+const REQUEST_STARTS: &[&str] = &[
+    "what", "what's", "whats", "when", "where", "who", "why", "how", "which", "is", "are", "was", "were", "do",
+    "does", "did", "can", "could", "will", "would", "should", "any", "also", "and", "please", "now", "then", "mochi",
+    "check", "tell", "find", "search", "look", "show", "give", "get", "verify", "research", "read",
+];
+const REQUEST_WORDS: &[&str] = &["can you", "could you", "tell me", "check ", "find out", "look up", "look it up", "search for", "research"];
+
+/// Whether December's words (lowercased) ask for something, rather than remark on it: a question, a short
+/// phrase ("Nepal news today"), a request, or Nepali (no word list for it). 2026-11-16: "It's not just about the
+/// share market or anything, I don't want random guesses" drew a search nudge, and the apology was said twice.
+fn is_request(text: &str) -> bool {
+    let words: Vec<&str> = text.split_whitespace().collect();
+    text.contains('?')
+        || !text.is_ascii()
+        || words.len() <= 6
+        || words.first().is_some_and(|w| REQUEST_STARTS.contains(&w.trim_matches(|c: char| !c.is_alphanumeric() && c != '\'')))
+        || REQUEST_WORDS.iter().any(|w| text.contains(w))
 }
 
 /// Whether December asks how Claude's work is going ("Is Claude still editing?").
@@ -578,6 +601,8 @@ pub(crate) struct CallChecks {
     said_cancelled: bool,
     /// When the model said it's checking, in this turn.
     checking_at: Option<Instant>,
+    /// When December's words that started this turn were heard.
+    asked_at: Option<Instant>,
     last_tool: Option<Instant>,
     last_shell: Option<Instant>,
     /// December named a book in their library this turn (2026-11-15: "the summary of Kafka" was answered from the
@@ -640,6 +665,74 @@ const CANCEL_SAID: &[&str] = &[
 const CHECKING_NOW: &[&str] =
     &["checking", "let me check", "searching", "looking it up", "let me look", "हेर्दै", "खोज्दै"];
 
+/// Whether the line (lowercased) says it's checking and stops there. "Checking… The share market is open today."
+/// went on to answer in the same line (2026-11-16: it was nudged as hanging and the answer came twice).
+pub(crate) fn only_announces(text: &str) -> bool {
+    let sentences: Vec<&str> = text.split(['.', '!', '?', '\u{2026}', '\u{0964}']).collect();
+    let Some(last) = sentences.iter().rposition(|s| CHECKING_NOW.iter().any(|w| s.contains(w))) else {
+        return false;
+    };
+    !sentences[last + 1..].iter().any(|s| s.split_whitespace().count() >= 3)
+}
+
+/// How long a nudge waits before it's sent. Gemini often ends the spoken turn and starts the tool a second or
+/// two later, so a check made the moment the turn ends sees "no tool" for a turn that is about to run one
+/// (2026-11-15/16: three of eight nudges were followed by the tool within 2 s; each drew a repeated sentence).
+pub(crate) const NUDGE_WAIT: Duration = Duration::from_millis(2500);
+
+/// A nudge held back for [`NUDGE_WAIT`]: dropped when a tool starts or December speaks meanwhile.
+#[derive(Debug, Default)]
+pub(crate) struct NudgeDelay {
+    waiting: Option<(&'static str, Instant)>,
+}
+
+impl NudgeDelay {
+    pub(crate) fn hold(&mut self, nudge: &'static str, now: Instant) {
+        self.waiting = Some((nudge, now + NUDGE_WAIT));
+    }
+
+    /// A tool started or December spoke: the turn wasn't over, or a new one began. Returns what was dropped.
+    pub(crate) fn drop_waiting(&mut self) -> Option<&'static str> {
+        self.waiting.take().map(|(nudge, _)| nudge)
+    }
+
+    /// The nudge to send now, once its wait is over.
+    pub(crate) fn due(&mut self, now: Instant) -> Option<&'static str> {
+        let (_, at) = self.waiting?;
+        (now >= at).then(|| self.waiting.take().map(|(nudge, _)| nudge)).flatten()
+    }
+}
+
+/// Claude's answers passed into a call that the voice hasn't finished saying, by chat: when the call drops in
+/// between, the next session on that chat says it (2026-11-16: Gemini closed the session a second after the
+/// answer arrived; the reconnected call never told December).
+static UNSPOKEN: std::sync::Mutex<Vec<(String, String, Instant)>> = std::sync::Mutex::new(Vec::new());
+/// An answer older than this isn't brought up again by itself (it's in the chat).
+const UNSPOKEN_KEEPS: Duration = Duration::from_secs(600);
+
+/// An answer note went (or is waiting to go) to the voice in this chat.
+pub(crate) fn unspoken_set(thread_id: &str, note: &str, now: Instant) {
+    if !is_answer_note(note) {
+        return;
+    }
+    let mut held = UNSPOKEN.lock().unwrap_or_else(|e| e.into_inner());
+    held.retain(|(thread, _, at)| thread != thread_id && now.duration_since(*at) < UNSPOKEN_KEEPS);
+    held.push((thread_id.to_string(), note.to_string(), now));
+}
+
+/// The voice said it (or December cut it off, having heard enough).
+pub(crate) fn unspoken_clear(thread_id: &str) {
+    UNSPOKEN.lock().unwrap_or_else(|e| e.into_inner()).retain(|(thread, _, _)| thread != thread_id);
+}
+
+/// A new session on this chat: the answer the last one never said, if it's recent.
+pub(crate) fn unspoken_take(thread_id: &str, now: Instant) -> Option<String> {
+    let mut held = UNSPOKEN.lock().unwrap_or_else(|e| e.into_inner());
+    let at = held.iter().position(|(thread, _, _)| thread == thread_id)?;
+    let (_, note, since) = held.remove(at);
+    (now.duration_since(since) < UNSPOKEN_KEEPS).then_some(note)
+}
+
 /// A tool started this soon before "checking" was said is the check it announced.
 const CHECK_GRACE: Duration = Duration::from_secs(3);
 /// A shell command this recent can be the cancel the model talks about.
@@ -687,6 +780,7 @@ impl CallChecks {
                 self.said_not_started = false;
                 self.said_cancelled = false;
                 self.checking_at = None;
+                self.asked_at = Some(now);
             }
             HandoffEvent::AgentSaid(text) => {
                 let text = text.to_lowercase().replace('\u{2019}', "'");
@@ -696,7 +790,7 @@ impl CallChecks {
                 if CANCEL_SAID.iter().any(|w| text.contains(w)) {
                     self.said_cancelled = true;
                 }
-                if CHECKING_NOW.iter().any(|w| text.contains(w)) {
+                if only_announces(&text) {
                     self.checking_at.get_or_insert(now);
                 } else if text.chars().count() > 40 {
                     self.checking_at = None; // it went on to answer
@@ -716,9 +810,15 @@ impl CallChecks {
                 // searched before saying "checking", nothing after it: the answer never came. Not after a helper
                 // (shell): "I'm on it, checking…" is the right line once mochi-ask has the request, and "Checking
                 // the status file shows…" is an answer (2026-11-13: both were nudged, one into a failed command).
+                // The search has to be this request's: one for the question before isn't "searched, then stopped"
+                // (2026-11-16: "Confirm it with Samir" -> "Checking with Samir", said twice).
                 let hanging = self.last_shell != self.last_tool
                     && self.checking_at.is_some_and(|said| {
-                        self.last_tool.is_some_and(|tool| tool + CHECK_GRACE < said && said.duration_since(tool) < HANDOFF_COVERS)
+                        self.last_tool.is_some_and(|tool| {
+                            tool + CHECK_GRACE < said
+                                && said.duration_since(tool) < HANDOFF_COVERS
+                                && self.asked_at.is_none_or(|asked| tool + LOOKUP_GRACE >= asked)
+                        })
                     });
                 let book = std::mem::take(&mut self.book_asked);
                 let nudge = if self.said_not_started {

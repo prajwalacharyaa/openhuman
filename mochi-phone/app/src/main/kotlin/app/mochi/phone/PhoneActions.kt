@@ -37,6 +37,9 @@ object PhoneActions {
             // Mochi understood "freeze" (however it was heard): the phone stops sending December's voice
             "call.freeze" -> if (Call.freezeNow()) ok("frozen: Mochi hears nothing until \"Mochi, unfreeze\" or the button")
                 else fail("no call is on")
+            // "turn the mute button on": the Mute button, by voice. Only a tap unmutes (Mochi can't hear "unmute").
+            "call.mute" -> if (!Call.active) fail("no call is on")
+                else { Call.muted = true; ok("muted: Mochi hears nothing until December taps the Mute button again") }
             // "pass the phone to Mark" / "back to Mochi": the same call continues with the other speaker
             "call.switch" -> {
                 val to = args.optString("agent").trim().lowercase().ifBlank { null }
