@@ -509,3 +509,16 @@ fn a_quoted_question_further_up_is_not_claude_asking() {
     let post = format!("Detail: It reads: \"what was the first thing that felt off to you?\" {} It hasn't gone out yet.", "It has a carousel image attached and a video ready to go with it, and nothing else is pending on it at all.");
     assert!(!asks_december(&post));
 }
+
+#[test]
+fn a_reconnected_call_keeps_its_voice() {
+    let voice = |name: &str| Some(name.to_string());
+    assert_eq!(call_voice("thread-voice-a", false, voice("Sulafat")), voice("Sulafat"));
+    // the setting changed mid-call: the reconnect still speaks as the call started
+    assert_eq!(call_voice("thread-voice-a", true, voice("Puck")), voice("Sulafat"));
+    // a new call takes the new voice, and its reconnects keep that one
+    assert_eq!(call_voice("thread-voice-a", false, voice("Puck")), voice("Puck"));
+    assert_eq!(call_voice("thread-voice-a", true, voice("Achernar")), voice("Puck"));
+    // a reconnect nobody remembers (the engine restarted) uses the setting
+    assert_eq!(call_voice("thread-voice-b", true, voice("Achernar")), voice("Achernar"));
+}

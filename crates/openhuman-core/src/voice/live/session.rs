@@ -123,6 +123,8 @@ pub(crate) struct LiveStartRequest {
     pub(crate) agent: Option<String>,
     /// A test call: tools are checked by the voice gate, never run.
     pub(crate) dry_run: bool,
+    /// The same call coming back after a dropped connection.
+    pub(crate) reconnect: bool,
 }
 
 /// A running session plus what the transport needs to know about it.
@@ -418,6 +420,18 @@ pub(crate) async fn start(
     if let Some(voice) = agent.as_ref().and_then(|a| a.voice.clone()) {
         live.voice = Some(voice);
     }
+    // one call, one voice: a reconnect keeps the voice the call started with
+    // (a test call is no call of December's: it doesn't push a real call's voice out of the list)
+    if !request.dry_run {
+        live.voice = super::handoff::call_voice(&thread_id, request.reconnect, live.voice.take());
+    }
+    tracing::info!(
+        session_id,
+        voice = live.voice.as_deref().unwrap_or("the provider's default"),
+        model = live.model.as_deref().unwrap_or("the default"),
+        reconnect = request.reconnect,
+        "[voice-live] the voice of this session"
+    );
     // Hosted Gemini fixes its tools when the ticket is minted, so they must be
     // in the configuration before `prepare`.
     live.tools = tinyagents_live::tool_declarations(&harness, false);

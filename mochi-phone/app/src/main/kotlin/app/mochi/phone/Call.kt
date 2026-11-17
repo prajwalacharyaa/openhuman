@@ -470,6 +470,8 @@ object Call {
         override fun onOpen(webSocket: WebSocket, response: Response) {
             val start = JSONObject().put("type", "start").put("thread_id", threadId ?: JSONObject.NULL)
                 .put("client_id", "mochi-phone").put("input_sample_rate", RATE).put("agent", agent ?: JSONObject.NULL)
+                // the same call coming back: it keeps the voice it started with
+                .put("reconnect", reconnecting)
             val earlier = synchronized(callThreads) { callThreads.filter { it != threadId }.takeLast(8) }
             if (earlier.isNotEmpty()) start.put("earlier_threads", org.json.JSONArray(earlier))
             webSocket.send(start.toString())

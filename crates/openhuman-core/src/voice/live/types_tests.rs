@@ -12,7 +12,8 @@ fn client_frames_use_snake_case_tags_and_defaults() {
             client_id: None,
             input_sample_rate: 16_000,
             agent: None,
-            dry_run: false
+            dry_run: false,
+            reconnect: false,
         }
     );
     let text: ClientFrame = serde_json::from_value(json!({"type": "text", "text": "hi"})).unwrap();

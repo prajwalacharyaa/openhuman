@@ -124,6 +124,9 @@ pub enum ClientFrame {
         /// nothing goes to memory. How a rule file's test sentence is replayed without doing anything.
         #[serde(default)]
         dry_run: bool,
+        /// The same call coming back after a dropped connection: it keeps the voice it started with.
+        #[serde(default)]
+        reconnect: bool,
     },
     /// A typed user message.
     Text { text: String },

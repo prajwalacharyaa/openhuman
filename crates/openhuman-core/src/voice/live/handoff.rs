@@ -733,6 +733,28 @@ pub(crate) fn unspoken_take(thread_id: &str, now: Instant) -> Option<String> {
     (now.duration_since(since) < UNSPOKEN_KEEPS).then_some(note)
 }
 
+/// The voice each chat's call started with. The voice setting is read when a session starts, so a call that
+/// reconnected after the setting changed (or after Gemini dropped it) came back as someone else (2026-11-16).
+static CALL_VOICE: std::sync::Mutex<Vec<(String, Option<String>)>> = std::sync::Mutex::new(Vec::new());
+/// Chats whose call voice is remembered (the newest ones).
+const CALL_VOICES_KEPT: usize = 16;
+
+/// The voice for a session on this chat: on a reconnect the one the call started with, else `wanted` (which a
+/// new call starts with, and its reconnects keep).
+pub(crate) fn call_voice(thread_id: &str, reconnect: bool, wanted: Option<String>) -> Option<String> {
+    let mut held = CALL_VOICE.lock().unwrap_or_else(|e| e.into_inner());
+    if reconnect {
+        if let Some((_, voice)) = held.iter().find(|(thread, _)| thread == thread_id) {
+            return voice.clone();
+        }
+    }
+    held.retain(|(thread, _)| thread != thread_id);
+    held.push((thread_id.to_string(), wanted.clone()));
+    let extra = held.len().saturating_sub(CALL_VOICES_KEPT);
+    held.drain(..extra);
+    wanted
+}
+
 /// A tool started this soon before "checking" was said is the check it announced.
 const CHECK_GRACE: Duration = Duration::from_secs(3);
 /// A shell command this recent can be the cancel the model talks about.
