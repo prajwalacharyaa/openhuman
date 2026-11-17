@@ -608,6 +608,32 @@ pub(crate) struct CallChecks {
     /// December named a book in their library this turn (2026-11-15: "the summary of Kafka" was answered from the
     /// voice model's memory in one sentence).
     book_asked: bool,
+    /// A call with one of Mochi's agents (the voice is only its mouth: the agent's knowledge, notes and tools are
+    /// in its own chat).
+    agent_call: bool,
+    /// December asked the agent for work this turn.
+    work_asked: bool,
+}
+
+/// Sent on a call with an agent when December asked for work and the voice did it from its own head (2026-11-17:
+/// Nadia's voice made up topics and a "draft" for eight minutes, said she can't post, and handed on nothing).
+pub(crate) const WORK_NUDGE: &str = "(Server check, not December speaking: December asked you for work (ideas, a \
+list, a draft, a plan, a check, posting) and you answered from your own head. On a call you are only the voice: \
+what you know, your notes and your tools are in your own chat. Hand December's request to it now with mochi-ask, \
+in their words with what they said they want, and say in one short line that you're on it. When the answer \
+comes, say that one; what you said from your own head doesn't count.)";
+
+/// Words of a request for work, in a call with an agent.
+const WORK_WORDS: &[&str] = &[
+    "draft", "write", "rewrite", "post", "publish", "idea", "topic", "list", "plan", "strategy", "schedule",
+    "generate", "create", "make ", "prepare", "suggest", "recommend", "review", "analy", "research", "find ",
+    "check ", "give me", "send ", "fix ", "build", "design", "should i", "should we", "can you", "could you",
+];
+
+/// Whether December asks an agent for work ("give me some topics", "make one draft", "can you post it").
+pub(crate) fn asks_work(text: &str) -> bool {
+    let text = text.to_lowercase();
+    WORK_WORDS.iter().any(|w| text.contains(w))
 }
 
 /// Sent when December named a book in their library and the turn answered without opening it.
@@ -621,7 +647,7 @@ pub(crate) fn nudge_kind(nudge: &str) -> &'static str {
     [
         (NUDGE, "handoff claimed"), (LOOKUP_NUDGE, "lookup"), (STATUS_NUDGE, "status"), (MEMORY_NUDGE, "memory"),
         (ANSWER_NUDGE, "answer not sent on"), (BUSY_NUDGE, "busy"), (CANCEL_NUDGE, "cancel"), (HANGING_NUDGE, "hanging"),
-        (BOOK_NUDGE, "library book"),
+        (BOOK_NUDGE, "library book"), (WORK_NUDGE, "agent work"),
     ]
     .iter()
     .find(|(text, _)| *text == nudge)
@@ -761,6 +787,11 @@ const CHECK_GRACE: Duration = Duration::from_secs(3);
 const CANCEL_COVERS: Duration = Duration::from_secs(30);
 
 impl CallChecks {
+    /// The checks for a call with one of Mochi's agents: work December asks for has to reach the agent's chat.
+    pub(crate) fn for_agent() -> Self {
+        Self { agent_call: true, ..Self::default() }
+    }
+
     /// Claude started a turn in this call's chat.
     pub(crate) fn brain_started(&mut self) {
         self.brain_busy = true;
@@ -795,6 +826,9 @@ impl CallChecks {
             HandoffEvent::UserSaid(text) => {
                 self.book_asked = crate::agent::tinyagents::middleware::library_book(
                     text, &crate::agent::tinyagents::middleware::library_catalogue()).is_some();
+                if self.agent_call && asks_work(text) {
+                    self.work_asked = true;
+                }
                 if self.claude_asked {
                     self.claude_asked = false;
                     self.answer_due = true;
@@ -824,6 +858,7 @@ impl CallChecks {
                     self.last_shell = Some(now);
                     self.answer_due = false;
                     self.book_asked = false;
+                    self.work_asked = false;
                 }
                 self.checking_at = None;
             }
@@ -843,6 +878,7 @@ impl CallChecks {
                         })
                     });
                 let book = std::mem::take(&mut self.book_asked);
+                let work = std::mem::take(&mut self.work_asked);
                 let nudge = if self.said_not_started {
                     Some(BUSY_NUDGE)
                 } else if self.said_cancelled && !shelled {
@@ -853,6 +889,8 @@ impl CallChecks {
                     Some(HANGING_NUDGE)
                 } else if book {
                     Some(BOOK_NUDGE)
+                } else if work {
+                    Some(WORK_NUDGE)
                 } else {
                     None
                 };

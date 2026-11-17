@@ -247,7 +247,8 @@ impl TranscriptPersister {
         text: &str,
     ) -> Option<ConversationMessage> {
         let content = text.trim();
-        if content.is_empty() {
+        // "<no speech>" is the provider's transcript of silence (a muted call), not a line anyone said
+        if content.is_empty() || content == "<no speech>" {
             return None;
         }
         self.sequence += 1;

@@ -522,3 +522,27 @@ fn a_reconnected_call_keeps_its_voice() {
     // a reconnect nobody remembers (the engine restarted) uses the setting
     assert_eq!(call_voice("thread-voice-b", true, voice("Achernar")), voice("Achernar"));
 }
+
+#[test]
+fn an_agent_on_a_call_hands_work_to_its_chat() {
+    let t0 = Instant::now();
+    let turn = |checks: &mut CallChecks, said: &str, tool: Option<&str>| {
+        checks.on_event(HandoffEvent::UserSaid(said), t0);
+        if let Some(tool) = tool {
+            checks.on_event(HandoffEvent::ToolStarted(tool), t0);
+        }
+        checks.on_event(HandoffEvent::AgentSaid("You could share how AI helps reclaim time for creative work."), t0);
+        checks.on_event(HandoffEvent::TurnComplete, t0)
+    };
+    let mut nadia = CallChecks::for_agent();
+    // the 2026-11-17 call: topics, a list and a draft, all from the voice's own head
+    assert_eq!(turn(&mut nadia, "Give me some topics and I will choose from that.", None), Some(WORK_NUDGE));
+    assert_eq!(turn(&mut nadia, "Make one proper LinkedIn draft that I can post.", None), Some(WORK_NUDGE));
+    // handed on: nothing to say
+    assert_eq!(turn(&mut nadia, "Make one proper LinkedIn draft that I can post.", Some("shell")), None);
+    // talk is talk
+    assert_eq!(turn(&mut nadia, "Hello Nadia, are you there?", None), None);
+    assert_eq!(turn(&mut nadia, "Why are some people magnetic online, you think", None), None);
+    // Mochi's own call keeps its own checks
+    assert_eq!(turn(&mut CallChecks::default(), "Give me some topics and I will choose from that.", None), None);
+}

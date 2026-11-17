@@ -202,6 +202,7 @@ pub async fn handle_live_voice_ws(socket: WebSocket, config: Arc<Config>) {
 
     let dry_run = request.dry_run;
     let agent = request.agent.as_deref().and_then(|name| session::agent_voice(&config.workspace_dir, name));
+    let agent_call = agent.is_some();
     let started = match session::start(config.clone(), request, &session_id).await {
         Ok(started) => started,
         Err(error) => {
@@ -242,7 +243,7 @@ pub async fn handle_live_voice_ws(socket: WebSocket, config: Arc<Config>) {
     }
     let timing_on = timing::enabled_from(std::env::var(timing::TIMING_ENV).ok().as_deref());
     let mut timing = VoiceTiming::default();
-    let mut checks = CallChecks::default();
+    let mut checks = if agent_call { CallChecks::for_agent() } else { CallChecks::default() };
     let mut notes = NoteGate::default();
     let mut retell = Retelling::default();
     let mut nudges = NudgeDelay::default();
