@@ -90,9 +90,24 @@ pub(crate) fn claude_reply_note(event: &WebChannelEvent, thread_id: &str) -> Opt
 }
 
 /// The answer from its "In short:" line on: Claude's narration before its tool steps ("Graph exists. Let me query
-/// it.") isn't part of it, and was read out as if it were (2026-11-14). Unchanged without that line.
+/// it.") isn't part of it, and was read out as if it were (2026-11-14). Without that line, the narration sentences
+/// it starts with are left out (2026-11-19: "Let me check the actual site flow in the repo before giving Prabesh
+/// exact steps, so I don't invent UI details" was read out to a guest, joined to the answer with no space).
 pub(crate) fn from_in_short(answer: &str) -> &str {
-    answer.find("In short:").map_or(answer, |at| &answer[at..])
+    if let Some(at) = answer.find("In short:") {
+        return &answer[at..];
+    }
+    const NARRATION: &[&str] = &[
+        "Let me ", "Now let me ", "First, let me ", "First let me ", "I'll check ", "I'll look ", "I'll verify ",
+    ];
+    let mut rest = answer.trim_start();
+    while NARRATION.iter().any(|lead| rest.starts_with(lead)) {
+        let Some((end, stop)) = rest.char_indices().find(|(_, c)| matches!(c, '.' | '!' | '\n' | '\u{2026}')) else {
+            break;
+        };
+        rest = rest[end + stop.len_utf8()..].trim_start();
+    }
+    if rest.is_empty() { answer } else { rest }
 }
 
 /// Whether a note carries Claude's finished answer (the model's next words retell it: they aren't saved
@@ -630,6 +645,61 @@ pub(crate) struct CallChecks {
     project_asked: bool,
     /// December's project names, as they say them ("nepal hazard explorer", "jigubites").
     projects: Vec<String>,
+    /// The voice gave an answer or a verdict while the one it handed on was still being worked on.
+    early_verdict: bool,
+    /// December said "no, not that" while the request handed on was being worked on.
+    correction: bool,
+}
+
+/// Sent when the voice answers before the answer it handed on is back (2026-11-19: "my view is to hold" MNBBL, said
+/// a minute before Samir's answer came in, and Samir's answer was "sell, not hold").
+pub(crate) const VERDICT_NUDGE: &str = "(Server check, not December speaking: you just gave December an answer or \
+a verdict, but the request you handed on hasn't come back yet, so you don't know the answer. Tell December in one \
+short sentence to ignore what you just said: the real answer is still coming, and you'll say it when it arrives. \
+Never guess an answer while one is on its way.)";
+
+/// How a line gives an answer or a verdict (lowercased, straight apostrophes).
+const VERDICT_SAID: &[&str] = &[
+    "my view is", "my view:", "my advice", "i'd say", "i would say", "i recommend", "i'd recommend", "i suggest",
+    "you should", "is to hold", "is to sell", "is to buy", "better to hold", "better to sell", "better to buy",
+    "good to sell", "good to buy", "good time to", "bearish", "bullish", "the trend is", "trend is down",
+    "trend is up", "the answer is", "it turns out", "looks fine", "everything is fine", "होल्ड गर्नु", "बेच्नु",
+    "किन्नु",
+];
+
+/// ...unless the line only names what is being checked ("Looking up whether it's good to sell MNBBL").
+const VERDICT_NOT: &[&str] = &[
+    "checking", "check ", "looking", "asking", "finding out", "whether", "let me", "हेर्दै", "बुझ्दै", "सोध्दै",
+];
+
+/// Whether the voice's line (lowercased) gives an answer or a verdict.
+pub(crate) fn gives_verdict(text: &str) -> bool {
+    VERDICT_SAID.iter().any(|w| text.contains(w)) && !VERDICT_NOT.iter().any(|w| text.contains(w))
+}
+
+/// Sent when December says "no, not that" while the request handed on is being worked on (2026-11-19: a misheard
+/// "budget" went to Claude; "No, it's not that" stopped nothing, and the answer about map fees came a minute later).
+pub(crate) const CORRECTION_NUDGE: &str = "(Server check, not December speaking: December said that's not what they \
+meant, and the request you handed on is still being worked on, so it's the wrong request. Run mochi-ask --cancel \
+now, then hand on what December does want (ask them in a few words if it isn't clear). If December's words were \
+about something else, ignore this note.)";
+
+/// How December says the request was misheard (lowercased).
+const CORRECTION_SAID: &[&str] = &[
+    "not that", "not this", "that's not what", "not what i", "didn't mean", "did not mean", "don't mean",
+    "misheard", "wrong one", "wrong thing", "त्यो होइन", "यो होइन", "होइन होइन", "त्यो हैन", "यो हैन",
+];
+
+/// Whether December's words say the request was the wrong one ("No, it's not that.").
+pub(crate) fn corrects(text: &str) -> bool {
+    let text = text.trim().to_lowercase().replace('\u{2019}', "'");
+    text == "no" || text.starts_with("no,") || text.starts_with("no.") || CORRECTION_SAID.iter().any(|w| text.contains(w))
+}
+
+/// Whether a session ended because the call was hung up (not dropped by the provider or the network, which
+/// reconnect).
+pub(crate) fn hung_up(reason: &str) -> bool {
+    reason.starts_with("December hung up") || reason.contains("hang up")
 }
 
 /// Sent on a call with an agent when December asked for work and the voice did it from its own head (2026-11-17:
@@ -741,7 +811,8 @@ pub(crate) fn nudge_kind(nudge: &str) -> &'static str {
         (NUDGE, "handoff claimed"), (LOOKUP_NUDGE, "lookup"), (STATUS_NUDGE, "status"), (MEMORY_NUDGE, "memory"),
         (ANSWER_NUDGE, "answer not sent on"), (BUSY_NUDGE, "busy"), (CANCEL_NUDGE, "cancel"), (HANGING_NUDGE, "hanging"),
         (BOOK_NUDGE, "library book"), (WORK_NUDGE, "agent work"), (CANT_NUDGE, "said it can't"),
-        (PROJECT_NUDGE, "own project"),
+        (PROJECT_NUDGE, "own project"), (VERDICT_NUDGE, "answered before the answer"),
+        (CORRECTION_NUDGE, "wrong request"),
     ]
     .iter()
     .find(|(text, _)| *text == nudge)
@@ -948,6 +1019,9 @@ impl CallChecks {
                     self.claude_asked = false;
                     self.answer_due = true;
                 }
+                if self.brain_busy && corrects(text) {
+                    self.correction = true;
+                }
                 self.said_not_started = false;
                 self.said_cancelled = false;
                 self.checking_at = None;
@@ -960,6 +1034,9 @@ impl CallChecks {
                 }
                 if self.brain_busy && NOT_STARTED_SAID.iter().any(|w| text.contains(w)) {
                     self.said_not_started = true;
+                }
+                if self.brain_busy && !self.reading_answer && gives_verdict(&text) {
+                    self.early_verdict = true;
                 }
                 if CANCEL_SAID.iter().any(|w| text.contains(w)) {
                     self.said_cancelled = true;
@@ -1002,11 +1079,17 @@ impl CallChecks {
                 let work = std::mem::take(&mut self.work_asked) && !ran;
                 let project = std::mem::take(&mut self.project_asked) && !ran && !answering;
                 let cant = std::mem::take(&mut self.cant_said) && !ran && !answering;
-                let nudge = if self.said_not_started {
+                let verdict = std::mem::take(&mut self.early_verdict);
+                let corrected = std::mem::take(&mut self.correction) && !ran;
+                let nudge = if verdict {
+                    Some(VERDICT_NUDGE)
+                } else if self.said_not_started {
                     Some(BUSY_NUDGE)
                 } else if self.said_cancelled && !shelled {
                     Some(CANCEL_NUDGE)
-                } else if self.answer_due {
+                } else if corrected {
+                    Some(CORRECTION_NUDGE)
+                } else if self.answer_due && !ran {
                     Some(ANSWER_NUDGE)
                 } else if hanging {
                     Some(HANGING_NUDGE)

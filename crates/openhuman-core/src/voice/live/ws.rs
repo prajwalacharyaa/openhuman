@@ -20,7 +20,7 @@ use tinyagents_live::LiveAgentEvent;
 
 use super::error::LiveVoiceError;
 use super::handoff::{
-    asks_december, claude_reply_note, earlier_reply_note, earlier_threads, CallChecks, HandoffEvent, NoteGate,
+    asks_december, claude_reply_note, earlier_reply_note, earlier_threads, hung_up, CallChecks, HandoffEvent, NoteGate,
     NudgeDelay, Retelling, NUDGE, nudge_kind, unspoken_clear, unspoken_set, unspoken_take,
 };
 use super::persist::{reads_phone, TranscriptPersister};
@@ -507,6 +507,10 @@ pub async fn handle_live_voice_ws(socket: WebSocket, config: Arc<Config>) {
         }
     }
     tracing::info!(session_id, provider = %provider, reason = %ended_because, "{LOG_PREFIX} session ended");
+    // a guest had the phone only for this call; a dropped session reconnects, so only hanging up ends it
+    if !dry_run && hung_up(&ended_because) {
+        crate::agent::tinyagents::middleware::guest_end();
+    }
     let _ = sink.close().await;
     persister.finish().await;
 }

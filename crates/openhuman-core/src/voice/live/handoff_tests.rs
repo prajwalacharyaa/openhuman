@@ -616,3 +616,67 @@ fn project_names_are_said_the_way_december_says_them() {
     }
     assert!(!names.contains(&"portfolio".to_string()));
 }
+
+#[test]
+fn the_2026_11_19_calls_are_caught() {
+    let t0 = Instant::now();
+    let at = |s: u64| t0 + Duration::from_secs(s);
+    // Samir's voice said "hold" while Samir's real answer ("sell, not hold") was still being written
+    let mut samir = CallChecks::for_agent();
+    samir.on_event(HandoffEvent::UserSaid("Open the NMBBL script in my screen and visually show me if it's good to sell now or not."), t0);
+    samir.on_event(HandoffEvent::ToolStarted("shell"), at(1));
+    samir.brain_started();
+    samir.on_event(HandoffEvent::ToolStarted("shell"), at(2));
+    samir.on_event(HandoffEvent::AgentSaid("I've opened the MNBBL chart for you. The price is currently near support, but the overall trend is down with several bearish signals, so my view is to hold."), at(13));
+    assert_eq!(samir.on_event(HandoffEvent::TurnComplete, at(14)), Some(VERDICT_NUDGE));
+    // naming what is being checked is not a verdict; the answer itself, once back, is said freely
+    assert!(!gives_verdict("looking up whether it's good to sell mnbbl now."));
+    let mut mochi = CallChecks::default();
+    mochi.brain_started();
+    mochi.on_event(HandoffEvent::UserSaid("Is it good to sell MNBBL?"), t0);
+    mochi.on_event(HandoffEvent::ToolStarted("shell"), at(1));
+    mochi.on_event(HandoffEvent::AgentSaid("Looking up whether it's good to sell MNBBL now."), at(2));
+    assert_eq!(mochi.on_event(HandoffEvent::TurnComplete, at(3)), None);
+    mochi.brain_finished(false);
+    mochi.on_event(HandoffEvent::AgentSaid("MNBBL's chart says sell: the trend is down."), at(60));
+    assert_eq!(mochi.on_event(HandoffEvent::TurnComplete, at(61)), None);
+
+    // a misheard request: "No, it's not that." while it's being worked on, and nothing cancelled
+    let mut mochi = CallChecks::default();
+    mochi.on_event(HandoffEvent::UserSaid("I want you to not just look at the budget but check it properly."), t0);
+    mochi.on_event(HandoffEvent::ToolStarted("shell"), at(1));
+    mochi.brain_started();
+    mochi.on_event(HandoffEvent::AgentSaid("Looking into your JiguBites budget for saving opportunities."), at(4));
+    assert_eq!(mochi.on_event(HandoffEvent::TurnComplete, at(5)), None);
+    mochi.on_event(HandoffEvent::UserSaid("No, it's not that."), at(10));
+    mochi.on_event(HandoffEvent::AgentSaid("Got it, let's look at it again. What should we check?"), at(11));
+    assert_eq!(mochi.on_event(HandoffEvent::TurnComplete, at(12)), Some(CORRECTION_NUDGE));
+    // cancelled: nothing to say
+    mochi.on_event(HandoffEvent::UserSaid("No, not that one."), at(20));
+    mochi.on_event(HandoffEvent::ToolStarted("shell"), at(21));
+    mochi.on_event(HandoffEvent::AgentSaid("Stopped it."), at(22));
+    assert_eq!(mochi.on_event(HandoffEvent::TurnComplete, at(23)), None);
+    assert!(corrects("त्यो होइन, अर्को"));
+    assert!(!corrects("Nothing else for now."));
+
+    // December's words arriving after the command they led to: the answer was sent on, no nudge (five repeats)
+    let mut mochi = CallChecks::default();
+    mochi.brain_finished(true);
+    mochi.on_event(HandoffEvent::ToolStarted("shell"), t0);
+    mochi.on_event(HandoffEvent::UserSaid("त्यहाँनिर पुल गरेर राखिराख न सर्भरमा।"), at(1));
+    mochi.on_event(HandoffEvent::AgentSaid("Okay."), at(3));
+    assert_eq!(mochi.on_event(HandoffEvent::TurnComplete, at(4)), None);
+
+    // Claude's own step line isn't read out
+    assert_eq!(
+        from_in_short("Let me check the actual site flow in the repo before giving Prabesh exact steps, so I don't invent UI details that don't match reality.ठिक छ, Prabesh जी, पहिलो स्टेप।"),
+        "ठिक छ, Prabesh जी, पहिलो स्टेप।"
+    );
+    assert_eq!(from_in_short("Let me check."), "Let me check.");
+
+    // only hanging up ends a guest's turn on the phone
+    assert!(hung_up("December hung up (stop frame)"));
+    assert!(hung_up("the phone closed it (1000 hang up)"));
+    assert!(!hung_up("the voice provider closed it: Error(Provider(\"policy violation\"))"));
+    assert!(!hung_up("the phone's connection failed: WebSocket protocol error"));
+}

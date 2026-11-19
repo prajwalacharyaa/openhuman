@@ -16,8 +16,44 @@ use tinytools::ToolResult as TaToolResult;
 /// `cat` reads only Mochi's workspace (see [`cat_reads_only_workspace`]).
 pub(crate) const VOICE_COMMANDS: &[&str] = &[
     "cat", "date", "mochi-ask", "mochi-phone", "mochi-remind", "mochi-watch", "mochi-mail", "mochi-notify",
-    "mochi-call", "mochi-books",
+    "mochi-call", "mochi-books", "mochi-guest",
 ];
+
+/// December handed the phone to someone (`mochi-guest`): the file that says so, in the workspace.
+const GUEST_FILE: &str = "guest.json";
+/// A guest file older than this is a call that ended without the engine seeing it: ignored and removed.
+const GUEST_LASTS: std::time::Duration = std::time::Duration::from_secs(2 * 3600);
+
+/// The guest on the phone right now, by name (2026-11-19: December passed the phone to a restaurant owner, who
+/// could have asked Mochi for anything of December's: messages, shares, the server).
+pub(crate) fn guest_on() -> Option<String> {
+    let path = workspace_root().join(GUEST_FILE);
+    let age = std::fs::metadata(&path).ok()?.modified().ok()?.elapsed().unwrap_or_default();
+    if age > GUEST_LASTS {
+        let _ = std::fs::remove_file(&path);
+        return None;
+    }
+    let guest: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&path).ok()?).ok()?;
+    Some(guest.get("name").and_then(|n| n.as_str()).unwrap_or("a guest").to_string())
+}
+
+/// The call ended: December has the phone back.
+pub(crate) fn guest_end() {
+    let _ = std::fs::remove_file(workspace_root().join(GUEST_FILE));
+}
+
+/// What a call may still run with a guest on the phone: a question for Claude (marked as a guest's by mochi-ask)
+/// and a web search. Nothing of December's: no memory, phone, mail, reminders, server files or books.
+pub(crate) fn guest_may(tool: &str, args: &serde_json::Value) -> bool {
+    if tool.contains("web_search") {
+        return true;
+    }
+    let command = args.get("command").and_then(|c| c.as_str()).unwrap_or_default();
+    tool == "shell"
+        && voice_may_run(command)
+        && command.split(['|', ';', '&', '\n']).filter_map(|part| part.split_whitespace().next())
+            .all(|program| ["mochi-ask", "mochi-guest"].contains(&program.rsplit('/').next().unwrap_or(program)))
+}
 
 /// What a call may do with December's books: read, look things up, see summaries. Adding or deleting a book
 /// is December's tap in the app, never something a misheard sentence can do.
@@ -259,6 +295,16 @@ impl ToolMiddleware<(), crate::agent::tinyagents::host::OpenHumanRunContext> for
         let name = call.name.clone();
         let detail = step_detail(&call.name, &call.arguments);
         tracing::info!("[voice-live] tool {}: {}", name, detail);
+        if let Some(guest) = guest_on() {
+            if !guest_may(&call.name, &call.arguments) {
+                tracing::warn!("[voice-live] a guest is on the phone: tool refused");
+                return Ok(MiddlewareToolOutcome::Result(TaToolResult::error(format!(
+                    "Not with a guest on the phone: {guest} is talking, and nothing of December's (memory, phone, \
+                     mail, reminders, files, shares) is theirs to hear. Until this call ends you have only web \
+                     search and mochi-ask (a question about what December asked you to talk about). Tell {guest} \
+                     that's something December can do with them."))));
+            }
+        }
         if call.name == "shell" {
             let command = call.arguments.get("command").and_then(|c| c.as_str()).unwrap_or_default().to_string();
             if !voice_may_run(&command) {

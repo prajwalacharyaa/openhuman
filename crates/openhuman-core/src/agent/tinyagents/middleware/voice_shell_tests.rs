@@ -128,3 +128,17 @@ fn a_search_for_a_book_in_the_library_goes_to_the_library() {
     assert_eq!(library_book("anything", "not json"), None);
 }
 
+
+#[test]
+fn a_guest_on_the_phone_gets_no_tool_of_decembers() {
+    let shell = |command: &str| serde_json::json!({ "command": command });
+    assert!(guest_may("shell", &shell("mochi-ask \"How does a restaurant claim its page on JiguBites?\"")));
+    assert!(guest_may("web_search_tool", &serde_json::json!({ "query": "jigubites" })));
+    assert!(guest_may("shell", &shell("mochi-guest \"Prabesh\" \"JiguBites for his restaurant\"")));
+    for command in ["mochi-phone contacts", "cat /home/openhuman/OpenHuman/workspace/trading-brief.md",
+                    "mochi-mail list", "mochi-remind --in 2m \"x\"", "mochi-ask --result; mochi-phone screen inbox"] {
+        assert!(!guest_may("shell", &shell(command)), "{command}");
+    }
+    assert!(!guest_may("memory", &serde_json::json!({ "query": "December's shares" })));
+    assert!(voice_may_run("mochi-guest \"Prabesh\" \"JiguBites\""));
+}
