@@ -217,6 +217,17 @@ pub(crate) fn library_catalogue() -> String {
         .unwrap_or_default()
 }
 
+/// December's project folders (`projects/github`, the ones that are git clones), by folder name.
+pub(crate) fn project_folders() -> Vec<String> {
+    let root = workspace_root();
+    std::fs::read_dir(root.parent().unwrap_or(&root).join("projects/github"))
+        .map(|entries| {
+            entries.flatten().filter(|e| e.path().join(".git").exists())
+                .filter_map(|e| e.file_name().into_string().ok()).collect()
+        })
+        .unwrap_or_default()
+}
+
 /// Added to a search result when the call has searched a lot lately.
 pub(crate) const SEARCH_HANDOFF_NOTE: &str = "\n\n(Several searches already: if this still doesn't answer \
 December fully, hand the question to Claude with mochi-ask now, with everything you found, instead of \

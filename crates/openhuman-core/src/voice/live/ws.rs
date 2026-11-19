@@ -243,7 +243,7 @@ pub async fn handle_live_voice_ws(socket: WebSocket, config: Arc<Config>) {
     }
     let timing_on = timing::enabled_from(std::env::var(timing::TIMING_ENV).ok().as_deref());
     let mut timing = VoiceTiming::default();
-    let mut checks = if agent_call { CallChecks::for_agent() } else { CallChecks::default() };
+    let mut checks = CallChecks::for_call(agent_call);
     let mut notes = NoteGate::default();
     let mut retell = Retelling::default();
     let mut nudges = NudgeDelay::default();
@@ -341,6 +341,7 @@ pub async fn handle_live_voice_ws(socket: WebSocket, config: Arc<Config>) {
                         let note = claude_reply_note(&chat, &thread_id).or_else(|| {
                             let note = earlier_reply_note(&chat, &earlier);
                             if note.is_some() {
+                                checks.answer_passed();
                                 tracing::info!(session_id, "{LOG_PREFIX} an answer from earlier in this call arrived (another speaker's chat)");
                             }
                             note

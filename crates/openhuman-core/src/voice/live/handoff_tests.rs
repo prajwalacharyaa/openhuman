@@ -546,3 +546,73 @@ fn an_agent_on_a_call_hands_work_to_its_chat() {
     // Mochi's own call keeps its own checks
     assert_eq!(turn(&mut CallChecks::default(), "Give me some topics and I will choose from that.", None), None);
 }
+
+#[test]
+fn the_2026_11_18_call_is_caught() {
+    let t0 = Instant::now();
+    let projects = project_names(&["nepal-hazard-explorer".to_string(), "portfolio-site".to_string(), "jigubites_app".to_string()]);
+    let turn = |checks: &mut CallChecks, said: &str, tool: Option<&str>, reply: &str| {
+        checks.on_event(HandoffEvent::UserSaid(said), t0);
+        if let Some(tool) = tool {
+            checks.on_event(HandoffEvent::ToolStarted(tool), t0);
+        }
+        checks.on_event(HandoffEvent::AgentSaid(reply), t0);
+        checks.on_event(HandoffEvent::TurnComplete, t0)
+    };
+    let mut mochi = CallChecks::default().with_projects(projects.clone());
+    // refusing without trying
+    assert_eq!(turn(&mut mochi, "Design a guy with fractured leg.", None,
+        "I can't generate images or visual designs directly."), Some(CANT_NUDGE));
+    assert_eq!(turn(&mut mochi, "Mochi, can you ask our visual designer to generate one image of key?", None,
+        "I can't generate images or create visual designs, so I can't ask a visual designer to do that for you."),
+        Some(CANT_NUDGE));
+    // a can't after trying is the result, not a refusal
+    assert_eq!(turn(&mut mochi, "Can you call Iris?", Some("shell"), "I couldn't find Iris; I can't call her."), None);
+    // Claude's verdict, passed on, is not the voice refusing
+    mochi.brain_finished(false);
+    mochi.on_event(HandoffEvent::AgentSaid("I can't send a live browser URL at all."), t0);
+    assert_eq!(mochi.on_event(HandoffEvent::TurnComplete, t0), None);
+    // their own project, web-searched
+    assert_eq!(turn(&mut mochi, "If there is any update in Nepal Hazard project?", Some("web_search_tool"),
+        "I found active hazard mapping initiatives in Nepal, including the METEOR Explorer."), Some(PROJECT_NUDGE));
+    assert_eq!(turn(&mut mochi, "Any update in Nepal Hazard project?", Some("shell"), "Looking into it."), None);
+    // the shares portfolio is not the portfolio site
+    assert!(!names_project("What are today's portfolio holdings?", &projects));
+    assert!(names_project("check my portfolio site please", &projects));
+    assert!(names_project("how is JiguBites doing", &projects));
+    assert!(!names_project("my portfolio is up today", &projects));
+
+    // December's words arriving after the command they led to: handed on, so no nudge
+    let mut iris = CallChecks::for_agent();
+    iris.on_event(HandoffEvent::ToolStarted("shell"), t0);
+    iris.on_event(HandoffEvent::UserSaid("Hi Iris, can you design a guy with a fractured leg?"), t0);
+    iris.on_event(HandoffEvent::AgentSaid("मैले यो काम अगाडि बढाइसकेको छु।"), t0);
+    assert_eq!(iris.on_event(HandoffEvent::TurnComplete, t0), None);
+}
+
+#[test]
+fn passing_it_to_someone_is_a_handoff_claim() {
+    assert!(claims_handoff("I'm passing your request to Iris to proceed with the one-off sketch design."));
+    assert!(claims_handoff("I've asked Nadia to write a new LinkedIn post draft for you."));
+    assert!(!claims_handoff("Passing you to Mark."));
+    assert!(!claims_handoff("I've set a reminder for one minute from now."));
+}
+
+#[test]
+fn hearing_trouble_is_not_a_refusal() {
+    assert!(says_cant("I can't generate images or visual designs directly."));
+    assert!(says_cant("I don't have the ability to publish to LinkedIn directly."));
+    assert!(!says_cant("Sorry, I can't hear you well, could you say that again?"));
+    assert!(!says_cant("I can't say for sure without checking."));
+    assert!(!says_cant("I couldn't find Iris in your phone contacts."));
+}
+
+#[test]
+fn project_names_are_said_the_way_december_says_them() {
+    let names = project_names(&["nepal-hazard-explorer".to_string(), "portfolio-site".to_string(), "jigubites_app".to_string(),
+        "auto_share".to_string(), "juju-bites-site".to_string()]);
+    for name in ["nepal hazard explorer", "nepal hazard", "portfolio site", "jigubites", "auto share", "juju bites"] {
+        assert!(names.contains(&name.to_string()), "{name} in {names:?}");
+    }
+    assert!(!names.contains(&"portfolio".to_string()));
+}

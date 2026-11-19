@@ -329,6 +329,11 @@ const SELF_HANDOFF: &[&str] = &[
     "i'll get that", "i'll get it", "i'll get started", "i'll go with", "i'll start", "i'll fix", "i'll make that",
     "i'll handle", "i'll take care", "i'll set that up", "i'll set it up", "getting that ready", "i'll kick",
     "हेर्छु", "पत्ता लगाउँछु", "गरिदिन्छु", "मिलाइदिन्छु", "सुरु गर्छु",
+    // passing it to someone on the team (2026-11-18: "I'm passing your request to Iris", nothing was sent)
+    "passing your request", "passing it to", "passing this to", "passing that to", "passing it on",
+    "passed your request", "passed it to", "passed it on", "i've asked", "i have asked", "i've sent",
+    "i have sent", "i've handed", "handing it to", "handing this to", "handing that to", "sending it to",
+    "sent it to", "i've told", "i'll ask",
 ];
 
 /// Whether the model's words claim the work was taken on ("Claude is on it", "I'm on it, I'll get back to you").
@@ -613,6 +618,18 @@ pub(crate) struct CallChecks {
     agent_call: bool,
     /// December asked the agent for work this turn.
     work_asked: bool,
+    /// A shell command ran in this turn. Kept until the turn ends, not reset when December's words arrive:
+    /// Gemini often sends the transcript of what December said after the command it led to (2026-11-18: two
+    /// "agent work" nudges right after mochi-ask, and Samir said "I am looking into this" over his own answer).
+    turn_shell: bool,
+    /// The voice said it can't do something, this turn.
+    cant_said: bool,
+    /// The turn is the voice passing on Claude's answer (whose "I can't" is Claude's verdict, not a refusal).
+    reading_answer: bool,
+    /// December named one of their own projects this turn.
+    project_asked: bool,
+    /// December's project names, as they say them ("nepal hazard explorer", "jigubites").
+    projects: Vec<String>,
 }
 
 /// Sent on a call with an agent when December asked for work and the voice did it from its own head (2026-11-17:
@@ -636,6 +653,82 @@ pub(crate) fn asks_work(text: &str) -> bool {
     WORK_WORDS.iter().any(|w| text.contains(w))
 }
 
+/// Sent when the voice said it can't do something without trying (2026-11-18: "I can't generate images", then "so
+/// I can't ask a visual designer", with Iris on the team; 2026-11-17: Nadia's voice said she can't post).
+pub(crate) const CANT_NUDGE: &str = "(Server check, not December speaking: you told December you can't do that, \
+without trying. Mochi's team does much more than you can on a call: drawings and designs (Iris), writing (Mark), \
+LinkedIn (Nadia), shares (Samir), code, research, the server. Hand the request on with mochi-ask now, in December's \
+words, and say in a few words that you're on it. Only the answer that comes back can say it can't be done.)";
+
+/// How the voice says it can't (lowercased, straight apostrophes).
+const CANT_SAID: &[&str] = &[
+    "i can't", "i cannot", "i can not", "i'm not able", "i am not able", "i'm unable", "i am unable",
+    "i don't have the ability", "i do not have the ability", "i don't have access", "i have no way",
+    "not able to do", "सक्दिन", "सक्दैन",
+];
+
+/// ...unless it's about hearing or certainty ("I can't hear you", "I can't say for sure"), not a refusal.
+const CANT_NOT_REFUSAL: &[&str] = &[
+    "hear", "understand", "catch", "make out", "wait", "guarantee", "promise", "be sure", "for sure", "सुनि",
+];
+
+/// Whether the voice's line says it can't do something.
+pub(crate) fn says_cant(text: &str) -> bool {
+    let text = text.to_lowercase().replace('\u{2019}', "'");
+    CANT_SAID.iter().any(|w| text.contains(w)) && !CANT_NOT_REFUSAL.iter().any(|w| text.contains(w))
+}
+
+/// Sent when December asked about one of their own projects and the turn handed nothing on (2026-11-18: "any update
+/// in Nepal Hazard project?" was web-searched and answered with someone else's project).
+pub(crate) const PROJECT_NUDGE: &str = "(Server check, not December speaking: December asked about one of their \
+own projects, and you answered without handing it on. A web search can't see their repos or their work, and what \
+you remember may be old. Hand it to Claude now with mochi-ask, in December's words, and say in a few words that \
+you're on it; what you said before doesn't count.)";
+
+/// Words that are too common to stand for a project on their own ("portfolio" is also the shares portfolio).
+const PROJECT_TOO_COMMON: &[&str] = &[
+    "portfolio", "agent", "auto", "mochi", "design", "site", "app", "backend", "nepal", "acharya",
+];
+
+/// How December says each project folder's name: "nepal-hazard-explorer" -> "nepal hazard explorer" and
+/// "nepal hazard"; "jigubites_app" -> "jigubites app" and "jigubites"; "portfolio-site" stays "portfolio site".
+pub(crate) fn project_names(folders: &[String]) -> Vec<String> {
+    let mut names = Vec::new();
+    for folder in folders {
+        let spoken = folder.to_lowercase().replace(['-', '_'], " ");
+        let words: Vec<&str> = spoken.split_whitespace().collect();
+        if words.is_empty() {
+            continue;
+        }
+        let mut add = |name: String| {
+            if !PROJECT_TOO_COMMON.contains(&name.as_str()) && !names.contains(&name) {
+                names.push(name);
+            }
+        };
+        add(words.join(" "));
+        if words.len() >= 2 && ["site", "app", "backend", "api", "web"].contains(&words[words.len() - 1]) {
+            add(words[..words.len() - 1].join(" "));
+        }
+        if words.len() >= 3 {
+            add(words[..2].join(" "));
+        }
+    }
+    names
+}
+
+/// December's project folders (`projects/github`), as spoken names.
+pub(crate) fn own_projects() -> Vec<String> {
+    project_names(&crate::agent::tinyagents::middleware::project_folders())
+}
+
+/// Whether December's words name one of their projects (whole words).
+pub(crate) fn names_project(text: &str, projects: &[String]) -> bool {
+    let spoken = format!(" {} ", text.to_lowercase().replace(['-', '_'], " ")
+        .chars().map(|c| if c.is_alphanumeric() { c } else { ' ' }).collect::<String>()
+        .split_whitespace().collect::<Vec<_>>().join(" "));
+    projects.iter().any(|name| spoken.contains(&format!(" {name} ")))
+}
+
 /// Sent when December named a book in their library and the turn answered without opening it.
 pub(crate) const BOOK_NUDGE: &str = "(Server check, not December speaking: December asked about a book in their own \
 library and you answered without opening it. Answer from the library now: the summary with mochi-books read \"<book>\" \
@@ -647,7 +740,8 @@ pub(crate) fn nudge_kind(nudge: &str) -> &'static str {
     [
         (NUDGE, "handoff claimed"), (LOOKUP_NUDGE, "lookup"), (STATUS_NUDGE, "status"), (MEMORY_NUDGE, "memory"),
         (ANSWER_NUDGE, "answer not sent on"), (BUSY_NUDGE, "busy"), (CANCEL_NUDGE, "cancel"), (HANGING_NUDGE, "hanging"),
-        (BOOK_NUDGE, "library book"), (WORK_NUDGE, "agent work"),
+        (BOOK_NUDGE, "library book"), (WORK_NUDGE, "agent work"), (CANT_NUDGE, "said it can't"),
+        (PROJECT_NUDGE, "own project"),
     ]
     .iter()
     .find(|(text, _)| *text == nudge)
@@ -792,6 +886,23 @@ impl CallChecks {
         Self { agent_call: true, ..Self::default() }
     }
 
+    /// The checks for a call: with an agent or with Mochi, knowing December's own projects.
+    pub(crate) fn for_call(agent_call: bool) -> Self {
+        Self { agent_call, projects: own_projects(), ..Self::default() }
+    }
+
+    /// The same checks, with these project names (tests).
+    #[cfg(test)]
+    pub(crate) fn with_projects(mut self, projects: Vec<String>) -> Self {
+        self.projects = projects;
+        self
+    }
+
+    /// An answer from another speaker's chat is being passed to the call.
+    pub(crate) fn answer_passed(&mut self) {
+        self.reading_answer = true;
+    }
+
     /// Claude started a turn in this call's chat.
     pub(crate) fn brain_started(&mut self) {
         self.brain_busy = true;
@@ -801,6 +912,7 @@ impl CallChecks {
     pub(crate) fn brain_finished(&mut self, asked: bool) {
         self.brain_busy = false;
         self.claude_asked = asked;
+        self.reading_answer = true;
     }
 
     /// The one nudge this event calls for, if any.
@@ -829,6 +941,9 @@ impl CallChecks {
                 if self.agent_call && asks_work(text) {
                     self.work_asked = true;
                 }
+                if names_project(text, &self.projects) {
+                    self.project_asked = true;
+                }
                 if self.claude_asked {
                     self.claude_asked = false;
                     self.answer_due = true;
@@ -840,6 +955,9 @@ impl CallChecks {
             }
             HandoffEvent::AgentSaid(text) => {
                 let text = text.to_lowercase().replace('\u{2019}', "'");
+                if says_cant(&text) {
+                    self.cant_said = true;
+                }
                 if self.brain_busy && NOT_STARTED_SAID.iter().any(|w| text.contains(w)) {
                     self.said_not_started = true;
                 }
@@ -859,6 +977,7 @@ impl CallChecks {
                     self.answer_due = false;
                     self.book_asked = false;
                     self.work_asked = false;
+                    self.turn_shell = true;
                 }
                 self.checking_at = None;
             }
@@ -877,8 +996,12 @@ impl CallChecks {
                                 && self.asked_at.is_none_or(|asked| tool + LOOKUP_GRACE >= asked)
                         })
                     });
-                let book = std::mem::take(&mut self.book_asked);
-                let work = std::mem::take(&mut self.work_asked);
+                let ran = std::mem::take(&mut self.turn_shell);
+                let answering = std::mem::take(&mut self.reading_answer);
+                let book = std::mem::take(&mut self.book_asked) && !ran;
+                let work = std::mem::take(&mut self.work_asked) && !ran;
+                let project = std::mem::take(&mut self.project_asked) && !ran && !answering;
+                let cant = std::mem::take(&mut self.cant_said) && !ran && !answering;
                 let nudge = if self.said_not_started {
                     Some(BUSY_NUDGE)
                 } else if self.said_cancelled && !shelled {
@@ -889,8 +1012,12 @@ impl CallChecks {
                     Some(HANGING_NUDGE)
                 } else if book {
                     Some(BOOK_NUDGE)
+                } else if project {
+                    Some(PROJECT_NUDGE)
                 } else if work {
                     Some(WORK_NUDGE)
+                } else if cant {
+                    Some(CANT_NUDGE)
                 } else {
                     None
                 };
