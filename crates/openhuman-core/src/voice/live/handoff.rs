@@ -724,17 +724,22 @@ pub(crate) fn asks_work(text: &str) -> bool {
 }
 
 /// Sent when the voice said it can't do something without trying (2026-11-18: "I can't generate images", then "so
-/// I can't ask a visual designer", with Iris on the team; 2026-11-17: Nadia's voice said she can't post).
+/// I can't ask a visual designer", with Iris on the team; 2026-11-17: Nadia's voice said she can't post; 2026-11-16:
+/// "I don't have the ability to clear the inbox", where opening the Inbox screen was the helpful answer).
 pub(crate) const CANT_NUDGE: &str = "(Server check, not December speaking: you told December you can't do that, \
 without trying. Mochi's team does much more than you can on a call: drawings and designs (Iris), writing (Mark), \
 LinkedIn (Nadia), shares (Samir), code, research, the server. Hand the request on with mochi-ask now, in December's \
-words, and say in a few words that you're on it. Only the answer that comes back can say it can't be done.)";
+words, and say in a few words that you're on it. Only the answer that comes back can say it can't be done. If it is \
+something December does by touch in the app (deleting a book, clearing the inbox, locking), open that screen for them \
+with mochi-phone screen and say what to tap.)";
 
 /// How the voice says it can't (lowercased, straight apostrophes).
 const CANT_SAID: &[&str] = &[
     "i can't", "i cannot", "i can not", "i'm not able", "i am not able", "i'm unable", "i am unable",
     "i don't have the ability", "i do not have the ability", "i don't have access", "i have no way",
     "not able to do", "सक्दिन", "सक्दैन",
+    // handing the job back to December is a refusal too (2026-11-16/17: "you will need to post it manually")
+    "manually", "do it yourself", "you'll have to do it", "you will have to do it",
 ];
 
 /// ...unless it's about hearing or certainty ("I can't hear you", "I can't say for sure"), not a refusal.

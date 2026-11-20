@@ -680,3 +680,13 @@ fn the_2026_11_19_calls_are_caught() {
     assert!(!hung_up("the voice provider closed it: Error(Provider(\"policy violation\"))"));
     assert!(!hung_up("the phone's connection failed: WebSocket protocol error"));
 }
+
+#[test]
+fn handing_the_job_back_is_a_refusal_too() {
+    // 2026-11-16/17 calls: the voice handed December the job instead of trying or opening the screen
+    assert!(says_cant("You will need to post it manually, as I don't have the ability to publish to LinkedIn."));
+    assert!(says_cant("This is something you will need to do manually."));
+    assert!(says_cant("You'll have to do it yourself in the app."));
+    assert!(!says_cant("I can't hear you clearly, say it again?"));
+    assert!(!says_cant("Done, the inbox is open."));
+}

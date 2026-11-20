@@ -27,7 +27,11 @@ object PhoneActions {
 
     fun handle(c: Context, action: String, args: JSONObject): JSONObject = try {
         when (action) {
-            "contacts.search" -> ok(namesOnly(contacts(c, args.optString("query"), 5)))
+            "contacts.search" -> args.optString("query").let { q ->
+                val found = namesOnly(contacts(c, q, 5))
+                if (found.length() > 0) ok(found) else ok(JSONObject().put("matches", found).put("closest", JSONArray(closestNames(c, q)))
+                    .put("say", notFound(c, q)))
+            }
             "calls.recent" -> ok(calls(c, args.optInt("limit", 5)))
             "sms.recent" -> ok(sms(c, args.optInt("limit", 3), args.optString("from")))
             "notifications.recent" -> ok(MochiNotifications.recent(args.optInt("limit", 5), args.optString("app")))
@@ -259,7 +263,7 @@ object PhoneActions {
         val key = said.lowercase()
         val last = prefs(c).getString(key, null)?.let { runCatching { JSONObject(it) }.getOrNull() }
         val found = contacts(c, said, 50) // wide: the exact name mustn't be cut off by "Abhiram", "Bikram"…
-        if (found.length() == 0) return fail("no contact matches \"$said\"")
+        if (found.length() == 0) return fail(notFound(c, said))
 
         val all = (0 until found.length()).map { found.getJSONObject(it) }
         val exact = all.filter { it.getString("name").equals(said, ignoreCase = true) }
@@ -357,7 +361,7 @@ object PhoneActions {
         if (to.isBlank()) return fail("who to ${if (kind == "call") "call" else "text"}?")
         if (kind == "sms" && text.isBlank()) return fail("the message is empty")
         val (name, number) = if (knownNumber.isNotEmpty()) to to knownNumber
-            else resolve(c, to) ?: return fail("no contact or number matches \"$to\"")
+            else resolve(c, to) ?: return fail(notFound(c, to))
         val id = java.util.UUID.randomUUID().toString()
         val p = Pending()
         pending[id] = p
@@ -409,6 +413,41 @@ object PhoneActions {
 
     fun answered(text: String) = ok(text)
     fun failed(text: String) = fail(text)
+
+    /**
+     * The contact names closest to a misheard one ("President Provis" for "Prabesh"), best first: speech-to-text
+     * gets names wrong, and "I couldn't find" was a dead end on calls (2026-11-19). Names only, never numbers.
+     */
+    fun closestNames(c: Context, said: String, n: Int = 3): List<String> {
+        val words = said.lowercase().split(Regex("[^\\p{L}]+")).filter { it.length >= 2 }
+        if (words.isEmpty()) return emptyList()
+        val names = LinkedHashSet<String>()
+        runCatching {
+            c.contentResolver.query(ContactsContract.Contacts.CONTENT_URI, arrayOf(ContactsContract.Contacts.DISPLAY_NAME),
+                null, null, null)?.use { cur ->
+                while (cur.moveToNext()) cur.getString(0)?.let(::hideNumbers)?.takeIf { "[number hidden]" !in it }?.let(names::add)
+            }
+        }
+        fun close(a: String, b: String): Double {   // 1 = same, 0 = nothing alike (edit distance over the longer)
+            val d = Array(a.length + 1) { IntArray(b.length + 1) }
+            for (i in 0..a.length) d[i][0] = i
+            for (j in 0..b.length) d[0][j] = j
+            for (i in 1..a.length) for (j in 1..b.length)
+                d[i][j] = minOf(d[i - 1][j] + 1, d[i][j - 1] + 1, d[i - 1][j - 1] + if (a[i - 1] == b[j - 1]) 0 else 1)
+            return 1.0 - d[a.length][b.length].toDouble() / maxOf(a.length, b.length, 1)
+        }
+        return names.map { name ->
+            val parts = name.lowercase().split(Regex("[^\\p{L}]+")).filter { it.isNotEmpty() }
+            name to (words.maxOfOrNull { w -> parts.maxOfOrNull { p -> close(w, p) } ?: 0.0 } ?: 0.0)
+        }.filter { it.second >= 0.5 }.sortedByDescending { it.second }.take(n).map { it.first }
+    }
+
+    /** What Mochi says when no contact matches: the closest names to ask about, or that there's none like it. */
+    private fun notFound(c: Context, said: String): String {
+        val near = runCatching { closestNames(c, said) }.getOrDefault(emptyList())
+        return if (near.isEmpty()) "no contact matches \"$said\" and none sounds like it: ask December to spell the name"
+            else "no contact named \"$said\"; closest: ${near.joinToString(", ")}. Ask December if they meant one of these."
+    }
 
     /** A contact name ("Mom") or a number, as (name, number). */
     private fun resolve(c: Context, to: String): Pair<String, String>? {
