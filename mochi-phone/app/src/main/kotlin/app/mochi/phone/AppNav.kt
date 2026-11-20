@@ -20,6 +20,7 @@ object AppNav {
         "memory" to "Memory", "inbox" to "Inbox", "maps" to "project maps", "settings" to "Settings",
         "doing" to "what Mochi is doing", "agents" to "the agents (arg: an agent's name)",
         "trading" to "Portfolio & market (arg: a tab, or a stock symbol)", "abilities" to "Phone abilities", "books" to "Books (December's library)",
+        "room" to "the room (business decisions argued out)",
         "call" to "the call screen")
     private val TABS = listOf("trades", "holdings", "ipo", "watchlist", "market", "journal", "calendar")
 
@@ -41,6 +42,7 @@ object AppNav {
             }
             "abilities" -> Intent(c, AbilitiesActivity::class.java)
             "books" -> Intent(c, BooksActivity::class.java)
+            "room" -> Intent(c, RoomActivity::class.java)
             "call" -> if (Call.active) Intent(c, CallActivity::class.java) else return fail("no call is on")
             else -> return fail("no screen called $screen; screens: ${SCREENS.keys.joinToString()}")
         }

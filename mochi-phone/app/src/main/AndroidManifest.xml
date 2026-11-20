@@ -117,6 +117,12 @@
             android:name=".BooksActivity"
             android:exported="false" />
 
+        <!-- the room: the Roast Room's page on the server, plus "Ask the room" (mochi-room) -->
+        <activity
+            android:name=".RoomActivity"
+            android:exported="false"
+            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden" />
+
         <!-- the book being read, words highlighted as the voice reads them (mochi-phone book show) -->
         <activity
             android:name=".BookActivity"

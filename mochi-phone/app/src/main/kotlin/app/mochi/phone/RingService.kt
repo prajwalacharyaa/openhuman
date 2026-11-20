@@ -199,7 +199,7 @@ class RingService : Service() {
 
         /**
          * Where tapping a notice goes: the server may say ("open": home / portfolio / chat / agent:<name>); otherwise
-         * by its title: an app update -> Home (the Update card), Samir / IPO -> Samir's screen, LinkedIn / Nadia /
+         * by its title: an app update -> Home (the Update card), the room's verdict -> the room, Samir / IPO -> Samir's screen, LinkedIn / Nadia /
          * Mark -> Nadia's page, an agent named first ("Melissa: ...") -> that agent; anything else -> the chat.
          */
         private fun landing(c: Context, notice: JSONObject, code: Int): PendingIntent {
@@ -209,6 +209,7 @@ class RingService : Service() {
             val where = notice.optString("open").ifBlank {
                 when {
                     "update" in lower && "mochi" in lower -> "home"
+                    lower.startsWith("room") || lower.startsWith("the room") -> "room"
                     lower.startsWith("samir") || lower.startsWith("ipo") -> "agent:samir"
                     "linkedin" in lower || lower.startsWith("nadia") -> "agent:linkedin"
                     lower.startsWith("mark") -> "agent:mark"
@@ -221,6 +222,7 @@ class RingService : Service() {
                     .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP),
                     PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
                 where == "portfolio" -> withHome(c, code, Intent(c, ResearchActivity::class.java))
+                where == "room" -> withHome(c, code, Intent(c, RoomActivity::class.java))
                 where.startsWith("agent:") -> withHome(c, code, Intent(c, AgentsActivity::class.java)
                     .putExtra(AgentsActivity.EXTRA_AGENT, where.removePrefix("agent:")))
                 else -> withHome(c, code, Intent(c, ChatActivity::class.java))

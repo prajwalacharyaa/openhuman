@@ -20,6 +20,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -198,6 +199,7 @@ private fun ago(iso: String): String = runCatching {
     DateUtils.getRelativeTimeSpanString(Instant.parse(iso).toEpochMilli()).toString()
 }.getOrDefault("")
 
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
 private fun HomeScreen(go: (String) -> Unit) {
     val ctx = LocalContext.current
@@ -428,7 +430,8 @@ private fun HomeScreen(go: (String) -> Unit) {
                     }
                 }
             }
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            // five links: they wrap to a second line on a narrow phone instead of being cut off
+            FlowRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 Text("All chats →", style = Type.small, color = c.muted,
                     modifier = Modifier.clip(RoundedCornerShape(8.dp)).clickable(role = Role.Button) { go("chats") }
                         .padding(vertical = Space.m, horizontal = Space.xs))
@@ -438,6 +441,10 @@ private fun HomeScreen(go: (String) -> Unit) {
                 Text("Books", style = Type.small, color = c.muted,
                     modifier = Modifier.clip(RoundedCornerShape(8.dp))
                         .clickable(role = Role.Button) { ctx.startActivity(Intent(ctx, BooksActivity::class.java)) }
+                        .padding(vertical = Space.m, horizontal = Space.xs))
+                Text("Room", style = Type.small, color = c.muted,
+                    modifier = Modifier.clip(RoundedCornerShape(8.dp))
+                        .clickable(role = Role.Button) { ctx.startActivity(Intent(ctx, RoomActivity::class.java)) }
                         .padding(vertical = Space.m, horizontal = Space.xs))
                 Text("Phone abilities", style = Type.small, color = c.muted,
                     modifier = Modifier.clip(RoundedCornerShape(8.dp))
