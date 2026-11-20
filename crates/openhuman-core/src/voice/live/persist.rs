@@ -96,6 +96,10 @@ impl VoiceTurns {
         if std::mem::take(&mut self.private) {
             return Vec::new();
         }
+        // "Hello." / "Hello, December.": nothing to recall, and it crowds the useful turns out of memory search
+        if hooks::small_talk(&user) && (reply.is_empty() || hooks::small_talk(&reply)) {
+            return Vec::new();
+        }
         let mut entries = vec![MemoryEntry::User { index, text: user }];
         if !reply.is_empty() {
             entries.push(MemoryEntry::Reply { index: index + 1, text: reply });

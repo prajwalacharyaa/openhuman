@@ -142,3 +142,22 @@ fn an_agent_calls_words_go_to_its_notes_not_the_shared_memory() {
     let block = crate::agent::agent_notes::call_block(&workspace, "mark").unwrap();
     assert!(block.contains("December: I miss her."), "{block}");
 }
+
+#[test]
+fn small_talk_stays_out_of_memory() {
+    let mut turns = VoiceTurns::default();
+    assert!(turns.push(TranscriptRole::User, "Hello.").is_empty());
+    turns.push(TranscriptRole::Agent, "Hello, December.");
+    // the next utterance releases the greeting exchange: nothing to log
+    let released = turns.push(TranscriptRole::User, "Check the server status.");
+    assert!(released.is_empty(), "a greeting exchange is not memory: {released:?}");
+    turns.push(TranscriptRole::Agent, "RAM is at forty percent, disk has twelve gigabytes free.");
+    assert_eq!(turns.flush().len(), 2, "a real exchange is still logged");
+    // a short request with a real answer is kept
+    turns.push(TranscriptRole::User, "Mute.");
+    turns.push(TranscriptRole::Agent, "Okay.");
+    assert!(turns.flush().is_empty());
+    turns.push(TranscriptRole::User, "Status?");
+    turns.push(TranscriptRole::Agent, "The JiguBites fix is in review, pull request 14.");
+    assert_eq!(turns.flush().len(), 2);
+}

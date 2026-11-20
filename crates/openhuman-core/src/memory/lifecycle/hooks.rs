@@ -493,6 +493,27 @@ pub fn logged_reply(text: &str, calls: &[ToolCallSummary]) -> String {
     }
 }
 
+/// Words that carry nothing worth recalling ("Hello.", "Hello, December.", "I'm listening.", "Okay", "Mute"):
+/// with fact extraction off (2026-11-10), recall searches the stored turns themselves, and these crowded the
+/// useful ones out (2026-11-20: "What job does December do?" recalled "December." and "Hello, December.").
+#[must_use]
+pub fn small_talk(text: &str) -> bool {
+    const SAYS_NOTHING: &[&str] = &[
+        "hello", "hi", "hey", "okay", "ok", "yes", "no", "yeah", "thanks", "thank you", "bye", "goodbye", "mochi",
+        "good morning", "good night", "i'm listening", "im listening", "i am listening", "hello december",
+        "hi december", "hey december", "good morning december", "mute", "unmute", "stop", "wait", "go on",
+        "hello mochi", "hi mochi", "hey mochi", "december", "sure", "alright", "all right", "got it",
+    ];
+    let words: String = text
+        .to_lowercase()
+        .replace('\u{2019}', "'")
+        .chars()
+        .map(|c| if c.is_alphanumeric() || c == '\'' || c.is_whitespace() { c } else { ' ' })
+        .collect();
+    let words = words.split_whitespace().collect::<Vec<_>>().join(" ");
+    words.is_empty() || SAYS_NOTHING.contains(&words.as_str())
+}
+
 /// Logs a committed reply and queues the belief builds TinyMemory hands
 /// back. Logs instead of failing.
 pub async fn post_turn(config: &Config, identity: &ResolvedIdentity, input: PostTurnInput) {
@@ -500,7 +521,7 @@ pub async fn post_turn(config: &Config, identity: &ResolvedIdentity, input: Post
         return;
     }
     let text = logged_reply(&input.assistant_text, &input.tool_calls);
-    if text.is_empty() {
+    if text.is_empty() || (input.tool_calls.is_empty() && small_talk(&input.assistant_text)) {
         return;
     }
     if phone_read_recently(&config.workspace_dir) {
