@@ -428,11 +428,26 @@ pub(crate) async fn start(
     if !request.dry_run {
         live.voice = super::handoff::call_voice(&thread_id, request.reconnect, live.voice.take());
     }
+    // Gemini: ask for resumption handles, and resume a dropped call with the newest one (the conversation goes on
+    // instead of starting cold); a test call never resumes or keeps one
+    let mut resumed = false;
+    use crate::config::schema::voice_live::{LIVE_PROVIDER_GEMINI, LIVE_PROVIDER_GEMINI_HOSTED};
+    if (provider == LIVE_PROVIDER_GEMINI || provider == LIVE_PROVIDER_GEMINI_HOSTED) && !request.dry_run {
+        if let Some(handle) = super::handoff::resume_handle_take(&thread_id, request.reconnect) {
+            live.provider_options["resumption_handle"] = serde_json::json!(handle);
+            resumed = true;
+        } else if let Some(setup) = live.provider_options.as_object_mut().map(|o| o.entry("setup").or_insert_with(|| serde_json::json!({}))) {
+            if let Some(setup) = setup.as_object_mut() {
+                setup.entry("sessionResumption").or_insert_with(|| serde_json::json!({}));
+            }
+        }
+    }
     tracing::info!(
         session_id,
         voice = live.voice.as_deref().unwrap_or("the provider's default"),
         model = live.model.as_deref().unwrap_or("the default"),
         reconnect = request.reconnect,
+        resumed,
         "[voice-live] the voice of this session"
     );
     // Hosted Gemini fixes its tools when the ticket is minted, so they must be

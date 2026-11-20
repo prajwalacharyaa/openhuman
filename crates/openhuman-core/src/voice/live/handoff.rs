@@ -937,6 +937,33 @@ const CALL_VOICES_KEPT: usize = 16;
 
 /// The voice for a session on this chat: on a reconnect the one the call started with, else `wanted` (which a
 /// new call starts with, and its reconnects keep).
+/// Gemini's resumption handles, newest per call chat (2026-11-20). A Gemini Live connection lasts about ten
+/// minutes, and a muted call was closed by Google about every eight; the app reconnects at once, but each new
+/// session started cold, with only the last two messages. Resuming with the handle keeps the whole conversation.
+static RESUME_HANDLES: std::sync::Mutex<Vec<(String, String, Instant)>> = std::sync::Mutex::new(Vec::new());
+/// Google keeps a handle valid for two hours; a little less, to be safe.
+const RESUME_LASTS: Duration = Duration::from_secs(110 * 60);
+
+/// A new handle for this call's chat (from a `sessionResumptionUpdate`).
+pub(crate) fn resume_handle_set(thread_id: &str, handle: &str) {
+    let mut held = RESUME_HANDLES.lock().unwrap_or_else(|e| e.into_inner());
+    held.retain(|(thread, _, at)| thread != thread_id && at.elapsed() < RESUME_LASTS);
+    held.push((thread_id.to_string(), handle.to_string(), Instant::now()));
+}
+
+/// The handle to resume with, for a reconnect only, used once: if resuming fails, the app's next try starts fresh.
+pub(crate) fn resume_handle_take(thread_id: &str, reconnect: bool) -> Option<String> {
+    let mut held = RESUME_HANDLES.lock().unwrap_or_else(|e| e.into_inner());
+    let at = held.iter().position(|(thread, _, _)| thread == thread_id)?;
+    let (_, handle, when) = held.remove(at);
+    (reconnect && when.elapsed() < RESUME_LASTS).then_some(handle)
+}
+
+/// The call is over (December hung up): nothing to resume.
+pub(crate) fn resume_handle_clear(thread_id: &str) {
+    RESUME_HANDLES.lock().unwrap_or_else(|e| e.into_inner()).retain(|(thread, _, _)| thread != thread_id);
+}
+
 pub(crate) fn call_voice(thread_id: &str, reconnect: bool, wanted: Option<String>) -> Option<String> {
     let mut held = CALL_VOICE.lock().unwrap_or_else(|e| e.into_inner());
     if reconnect {

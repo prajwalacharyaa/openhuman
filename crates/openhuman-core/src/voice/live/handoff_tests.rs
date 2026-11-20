@@ -690,3 +690,17 @@ fn handing_the_job_back_is_a_refusal_too() {
     assert!(!says_cant("I can't hear you clearly, say it again?"));
     assert!(!says_cant("Done, the inbox is open."));
 }
+
+#[test]
+fn a_dropped_call_resumes_once_with_its_newest_handle() {
+    let thread = "test-resume-thread";
+    resume_handle_set(thread, "h1");
+    resume_handle_set(thread, "h2");
+    assert_eq!(resume_handle_take(thread, false), None, "a new call never resumes");
+    resume_handle_set(thread, "h3");
+    assert_eq!(resume_handle_take(thread, true), Some("h3".to_string()), "a reconnect takes the newest");
+    assert_eq!(resume_handle_take(thread, true), None, "used once: if resuming fails, the next try starts fresh");
+    resume_handle_set(thread, "h4");
+    resume_handle_clear(thread);
+    assert_eq!(resume_handle_take(thread, true), None, "hung up: nothing to resume");
+}

@@ -20,8 +20,9 @@ use tinyagents_live::LiveAgentEvent;
 
 use super::error::LiveVoiceError;
 use super::handoff::{
-    asks_december, claude_reply_note, earlier_reply_note, earlier_threads, hung_up, CallChecks, HandoffEvent, NoteGate,
-    NudgeDelay, Retelling, NUDGE, nudge_kind, unspoken_clear, unspoken_set, unspoken_take,
+    asks_december, claude_reply_note, earlier_reply_note, earlier_threads, hung_up, resume_handle_clear,
+    resume_handle_set, CallChecks, HandoffEvent, NoteGate, NudgeDelay, Retelling, NUDGE, nudge_kind, unspoken_clear,
+    unspoken_set, unspoken_take,
 };
 use super::persist::{reads_phone, TranscriptPersister};
 use super::timing::{self, TimingEvent, VoiceTiming};
@@ -446,6 +447,15 @@ pub async fn handle_live_voice_ws(socket: WebSocket, config: Arc<Config>) {
                     }
                     _ => {}
                 }
+                // the newest handle to resume this call with if the connection drops (Gemini's ~10-minute cap)
+                if let LiveAgentEvent::Live(LiveEvent::ResumptionHandle { handle, .. }) = &event {
+                    if !dry_run {
+                        resume_handle_set(&thread_id, handle);
+                    }
+                }
+                if let LiveAgentEvent::Live(LiveEvent::GoAway { time_left_ms, .. }) = &event {
+                    tracing::info!(session_id, ?time_left_ms, "{LOG_PREFIX} the provider will close this connection soon");
+                }
                 if let LiveAgentEvent::Live(LiveEvent::ToolCall(call)) = &event {
                     if reads_phone(&call.name, &call.args) {
                         persister.mark_private(); // December's phone data stays out of memory
@@ -510,6 +520,7 @@ pub async fn handle_live_voice_ws(socket: WebSocket, config: Arc<Config>) {
     // a guest had the phone only for this call; a dropped session reconnects, so only hanging up ends it
     if !dry_run && hung_up(&ended_because) {
         crate::agent::tinyagents::middleware::guest_end();
+        resume_handle_clear(&thread_id);   // the call is over: the next one starts fresh
     }
     let _ = sink.close().await;
     persister.finish().await;
