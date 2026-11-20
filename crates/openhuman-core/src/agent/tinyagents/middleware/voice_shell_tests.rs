@@ -97,6 +97,13 @@ fn a_call_may_read_books_but_not_change_the_library() {
     assert!(voice_may_run("mochi-books summary alice 2"));
     assert!(!voice_may_run("mochi-books delete alice"), "deleting is December's tap");
     assert!(!voice_may_run("mochi-books import /tmp/x.pdf"));
+    // the room (2026-11-20): read meetings and send the draft December said yes to; never write a brief or a PDF
+    assert!(voice_may_run("mochi-room"));
+    assert!(voice_may_run("mochi-room who cafe"));
+    assert!(voice_may_run("mochi-room show 2"));
+    assert!(voice_may_run("mochi-room send"));
+    assert!(!voice_may_run("mochi-room draft \"should I hire\""), "the brief is Claude's (room skill)");
+    assert!(!voice_may_run("mochi-room pdf"));
     assert!(!voice_may_run("mochi-books summary-set alice book"));
     assert!(!voice_may_run("mochi-books"), "nothing to do is not a read either");
 }

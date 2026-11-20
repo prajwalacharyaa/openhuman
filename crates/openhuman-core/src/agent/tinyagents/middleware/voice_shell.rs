@@ -16,7 +16,7 @@ use tinytools::ToolResult as TaToolResult;
 /// `cat` reads only Mochi's workspace (see [`cat_reads_only_workspace`]).
 pub(crate) const VOICE_COMMANDS: &[&str] = &[
     "cat", "date", "mochi-ask", "mochi-phone", "mochi-remind", "mochi-watch", "mochi-mail", "mochi-notify",
-    "mochi-call", "mochi-books", "mochi-guest",
+    "mochi-call", "mochi-books", "mochi-guest", "mochi-room",
 ];
 
 /// December handed the phone to someone (`mochi-guest`): the file that says so, in the workspace.
@@ -87,6 +87,21 @@ pub(crate) fn voice_may_run(command: &str) -> bool {
         && programs.iter().all(|program| VOICE_COMMANDS.contains(&program.rsplit('/').next().unwrap_or(program)))
         && parts.iter().all(|part| cat_reads_only_workspace(part))
         && parts.iter().all(|part| books_only_read(part))
+        && parts.iter().all(|part| room_only_reads_or_sends(part))
+}
+
+/// What a call may do with `mochi-room`: read the room's meetings, and send the draft Mochi's Claude wrote and read
+/// back once December said yes. Writing a brief (`draft`) is Claude's job (the room skill), never the voice's.
+const VOICE_ROOM_COMMANDS: &[&str] = &["list", "show", "who", "report", "pattern", "send"];
+
+fn room_only_reads_or_sends(part: &str) -> bool {
+    let mut words = part.split_whitespace();
+    match words.next() {
+        Some(program) if program.rsplit('/').next() == Some("mochi-room") => {
+            words.next().is_none_or(|sub| VOICE_ROOM_COMMANDS.contains(&sub))
+        }
+        _ => true,
+    }
 }
 
 /// A `mochi-books` command on a call only reads ([`VOICE_BOOK_COMMANDS`]).
