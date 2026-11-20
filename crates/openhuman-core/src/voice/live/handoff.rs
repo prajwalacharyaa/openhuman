@@ -739,7 +739,8 @@ const CANT_SAID: &[&str] = &[
     "i don't have the ability", "i do not have the ability", "i don't have access", "i have no way",
     "not able to do", "सक्दिन", "सक्दैन",
     // handing the job back to December is a refusal too (2026-11-16/17: "you will need to post it manually")
-    "manually", "do it yourself", "you'll have to do it", "you will have to do it",
+    "need to do it manually", "need to post it manually", "need to do manually", "you will need to do",
+    "you'll need to do", "do it yourself", "you'll have to do it", "you will have to do it",
 ];
 
 /// ...unless it's about hearing or certainty ("I can't hear you", "I can't say for sure"), not a refusal.
