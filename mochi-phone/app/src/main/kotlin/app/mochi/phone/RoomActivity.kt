@@ -281,7 +281,9 @@ private fun ListPane(onOpen: (String) -> Unit, onAsk: () -> Unit) {
     WhileVisible {
         while (true) {
             io(scope, { Room.get(ctx, "/sessions") }, { error = Room.friendly(it) }) { data = it; error = "" }
-            delay(15_000)
+            // follow a meeting closely while one is on; otherwise a slow check is enough
+            val busy = data?.optJSONObject("status")?.let { it.optJSONObject("running") != null || it.optInt("waiting") > 0 } ?: true
+            delay(if (busy) 15_000 else 60_000)
         }
     }
     val sessions = data?.optJSONArray("sessions").objects()
