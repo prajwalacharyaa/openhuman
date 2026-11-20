@@ -504,8 +504,10 @@ private fun ResearchScreen(requested: Triple<String?, String?, Long>?, onBack: (
     var tick by remember { mutableIntStateOf(0) }
     var stock by remember { mutableStateOf<String?>(null) }
     var view by remember { mutableStateOf<String?>(null) }   // which book this page shows (default: the settings' mode)
+    var loadError by remember { mutableStateOf("") }
     WhileVisible(tick) {
-        while (true) { io(scope, { Trading.load(ctx) }) { data = it }; delay(15_000) }
+        // a failure says so (it used to show "Loading…" forever when the server couldn't be reached)
+        while (true) { io(scope, { Trading.load(ctx) }, { loadError = Room.friendly(it) }) { data = it; loadError = "" }; delay(15_000) }
     }
     val tabs = listOf("Trades", "Holdings", "IPO", "Watchlist", "Market", "Journal", "Calendar")
     val pager = rememberPagerState(initialPage = 1) { tabs.size }
@@ -540,7 +542,10 @@ private fun ResearchScreen(requested: Triple<String?, String?, Long>?, onBack: (
                 }
             }
             HorizontalPager(pager, Modifier.fillMaxSize(), verticalAlignment = Alignment.Top) { page ->
-                if (data == null) Text("Loading…", style = Type.body, color = c.muted, modifier = Modifier.padding(Space.xl))
+                if (data == null) Column(Modifier.padding(Space.xl), verticalArrangement = Arrangement.spacedBy(Space.m)) {
+                    Text(loadError.ifBlank { "Loading…" }, style = Type.body, color = if (loadError.isBlank()) c.muted else c.danger)
+                    if (loadError.isNotBlank()) Pill("Try again", true) { loadError = ""; tick++ }
+                }
                 else when (page) {
                     0 -> TradesTab(data!!, mode) { stock = it }
                     1 -> HoldingsTab(data!!, mode, { stock = it }) { scope.launch { delay(2_000); tick++ } }

@@ -31,8 +31,10 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
@@ -113,28 +115,38 @@ object Room {
         }
     }
 
+    /** A failure in words December can act on, not "HTTP 502" or a Java exception. */
+    fun friendly(t: Throwable): String = when (t) {
+        is java.net.UnknownHostException, is java.net.ConnectException, is java.net.SocketTimeoutException,
+        is java.io.InterruptedIOException -> "Can't reach Mochi's server. Is Tailscale on?"
+        else -> t.message?.takeIf { !it.startsWith("HTTP ") && it.length < 160 } ?: "Mochi's server had a problem. Try again in a minute."
+    }
+
     private val portraits = ConcurrentHashMap<String, ImageBitmap>()
     private val noPortrait = ConcurrentHashMap.newKeySet<String>()
 
     fun portrait(c: Context, seat: String): ImageBitmap? {
         portraits[seat]?.let { return it }
         if (seat in noPortrait) return null
+        var missing = false
         val bmp = runCatching {
             Mochi.http.newCall(req(c, "/portraits/$seat").build()).execute().use { r ->
+                if (r.code == 404) missing = true
                 if (!r.isSuccessful) return@use null
                 val bytes = r.body?.bytes() ?: return@use null
                 val opts = android.graphics.BitmapFactory.Options().apply { inSampleSize = 2 }
                 android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size, opts)?.asImageBitmap()
             }
         }.getOrNull()
-        if (bmp == null) noPortrait.add(seat) else portraits[seat] = bmp
+        if (bmp != null) portraits[seat] = bmp else if (missing) noPortrait.add(seat)
         return bmp
     }
 
     /** The verdict PDF (made on the server), saved to Downloads and opened. Returns what to tell December. */
     fun pdf(c: Context, id: String, title: String): String {
         val bytes = Mochi.http.newCall(req(c, "/sessions/$id/pdf").build()).execute().use { r ->
-            if (!r.isSuccessful) return "No PDF yet: the meeting has no verdict."
+            if (r.code == 404) return "No PDF yet: the meeting has no verdict."
+            if (!r.isSuccessful) return "Mochi's server had a problem making the PDF (${r.code}). Try again in a minute."
             r.body?.bytes() ?: return "Couldn't get the PDF."
         }
         val name = "Room - " + title.replace(Regex("[^A-Za-z0-9 ,.-]"), "").take(60).trim() + ".pdf"
@@ -268,7 +280,7 @@ private fun ListPane(onOpen: (String) -> Unit, onAsk: () -> Unit) {
 
     WhileVisible {
         while (true) {
-            io(scope, { Room.get(ctx, "/sessions") }, { error = "Couldn't reach the room: ${it.message}" }) { data = it; error = "" }
+            io(scope, { Room.get(ctx, "/sessions") }, { error = Room.friendly(it) }) { data = it; error = "" }
             delay(15_000)
         }
     }
@@ -302,7 +314,7 @@ private fun ListPane(onOpen: (String) -> Unit, onAsk: () -> Unit) {
             Text("No meetings yet. Put a decision to the room, or say \"put this in the room\" to Mochi.",
                 style = Type.body, color = c.muted)
         }
-        items(sessions, key = { it.optString("id") }) { s ->
+        itemsIndexed(sessions, key = { i, it -> "$i-${it.optString("id")}" }) { _, s ->
             Card(onClick = { onOpen(s.optString("id")) }) {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Space.s)) {
                     VerdictChip(s.optString("label"))
@@ -329,7 +341,7 @@ private fun MeetingPane(id: String, say: (String) -> Unit) {
     val c = LocalMochi.current
     val scope = rememberCoroutineScope()
     var s by remember(id) { mutableStateOf<JSONObject?>(null) }
-    var error by remember { mutableStateOf("") }
+    var error by remember(id) { mutableStateOf("") }
     var round by remember(id) { mutableStateOf(-1) }
     var expanded by remember(id) { mutableStateOf(setOf<String>()) }
     var showReport by remember(id) { mutableStateOf(false) }
@@ -338,7 +350,7 @@ private fun MeetingPane(id: String, say: (String) -> Unit) {
 
     WhileVisible(id) {
         while (true) {
-            io(scope, { Room.get(ctx, "/sessions/$id") }, { error = "Couldn't load the meeting: ${it.message}" }) { s = it; error = "" }
+            io(scope, { Room.get(ctx, "/sessions/$id") }, { error = Room.friendly(it) }) { s = it; error = "" }
             delay(if (s?.optBoolean("done") == true) 120_000 else 15_000)   // a meeting that's on: follow it
         }
     }
@@ -356,6 +368,7 @@ private fun MeetingPane(id: String, say: (String) -> Unit) {
 
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(start = Space.l, end = Space.l, bottom = Space.xl),
         verticalArrangement = Arrangement.spacedBy(Space.m)) {
+        if (error.isNotEmpty()) item { Text("$error (showing the last copy)", style = Type.small, color = c.danger) }
         item {
             Column(verticalArrangement = Arrangement.spacedBy(Space.s)) {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Space.s)) {
@@ -492,7 +505,7 @@ private fun MeetingPane(id: String, say: (String) -> Unit) {
                 }
             }
             val r = rounds[shown]
-            items(r.optJSONArray("cards").objects(), key = { "${r.optInt("n")}-${it.optString("seat")}-${it.optString("name")}" }) { card ->
+            itemsIndexed(r.optJSONArray("cards").objects(), key = { i, it -> "${r.optInt("n")}-$i-${it.optString("seat")}" }) { _, card ->
                 val key = card.optString("seat")
                 val seat = info.optJSONObject(key)
                 val open = "${r.optInt("n")}-$key" in expanded
@@ -506,8 +519,9 @@ private fun MeetingPane(id: String, say: (String) -> Unit) {
                         if (card.optString("stance").isNotBlank()) VerdictChipPlain(card.optString("stance"))
                     }
                     val sc = card.optJSONObject("scores")
-                    if (sc != null && sc.length() > 0) Text(sc.keys().asSequence().sorted()
-                        .joinToString("   ") { "$it ${"%.0f".format(sc.optDouble(it))}" }, style = Type.small, color = c.muted)
+                    val shownScores = sc?.keys()?.asSequence()?.sorted()?.filter { !sc.optDouble(it).isNaN() }?.toList().orEmpty()
+                    if (shownScores.isNotEmpty()) Text(shownScores.joinToString("   ") { "$it ${"%.0f".format(sc!!.optDouble(it))}" },
+                        style = Type.small, color = c.muted)
                     if (card.optString("call").isNotBlank()) Text(card.optString("call"), style = Type.body, color = c.ink)
                     if (open) MarkdownText(card.optString("text"), c.ink)
                     else Text("Tap for the whole card", style = Type.small, color = c.muted)
@@ -543,7 +557,7 @@ private fun MeetingPane(id: String, say: (String) -> Unit) {
 private fun VerdictChipPlain(text: String) {
     val c = LocalMochi.current
     Text(text, style = Type.small, color = c.ink, maxLines = 1,
-        modifier = Modifier.width(110.dp).clip(RoundedCornerShape(8.dp)).background(c.field).padding(horizontal = Space.s, vertical = 3.dp),
+        modifier = Modifier.widthIn(max = 110.dp).clip(RoundedCornerShape(8.dp)).background(c.field).padding(horizontal = Space.s, vertical = 3.dp),
         overflow = TextOverflow.Ellipsis)
 }
 
@@ -613,7 +627,7 @@ private fun AskPane(onSent: (String) -> Unit) {
                         if (sending) return@Pill
                         if (text.trim().length < 15) { error = "Say a bit more: the options and your numbers."; return@Pill }
                         sending = true
-                        io(scope, { Room.ask(ctx, text.trim(), full) }, { sending = false; error = "Couldn't reach the room." }) { err ->
+                        io(scope, { Room.ask(ctx, text.trim(), full) }, { sending = false; error = Room.friendly(it) + " Your text is kept: tap Send again." }) { err ->
                             sending = false
                             if (err == null) onSent(if (full) "The full room is meeting: about 30 to 60 minutes. A notification brings the verdict."
                                 else "The room is meeting: about 10 to 20 minutes. A notification brings the verdict.")
