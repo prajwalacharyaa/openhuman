@@ -711,3 +711,9 @@ fn a_nepali_i_searched_needs_a_search_behind_it() {
     let said = "मैले फेरि वेब सर्च गरेर हेरेँ तर मलाई लाइभ स्टेटस जानकारी मिलेन।";
     assert!(LOOKUP_SAID.iter().any(|w| said.contains(w)));
 }
+
+#[test]
+fn a_nepali_i_couldnt_is_a_refusal() {
+    // 2026-11-21 12:41: "I couldn't check the live status, contact Buddha Air" (the flight question)
+    assert!(says_cant("मैले आजको बुद्ध एयरको पोखरा जाने फ्लाइटको लाइभ स्टेटस हेर्न सकिनँ।"));
+}
