@@ -42,14 +42,14 @@ describe('LiveVoiceControls', () => {
     const start = screen.getByTestId('live-voice-start');
     expect(start).toHaveAccessibleName('Start voice chat');
     fireEvent.click(start);
-    expect(session.current.start).toHaveBeenCalledWith({ threadId: 'thread-7' });
+    expect(session.current.start).toHaveBeenCalledWith({ threadId: 'thread-7', agent: null, longAnswers: false });
   });
 
   it('auto-starts once when the host has a pending request', () => {
     const consume = vi.fn(() => true);
     renderWithProviders(<LiveVoiceControls threadId="t" consumeAutoStart={consume} />);
     expect(consume).toHaveBeenCalled();
-    expect(session.current.start).toHaveBeenCalledWith({ threadId: 't' });
+    expect(session.current.start).toHaveBeenCalledWith({ threadId: 't', agent: null, longAnswers: false });
   });
 
   it('does not auto-start without a pending request', () => {
@@ -123,7 +123,7 @@ describe('LiveVoiceControls', () => {
     renderWithProviders(<LiveVoiceControls threadId="t1" />);
     expect(screen.getByRole('alert')).toHaveTextContent(text);
     fireEvent.click(screen.getByTestId('live-voice-retry'));
-    expect(session.current.start).toHaveBeenCalledWith({ threadId: 't1' });
+    expect(session.current.start).toHaveBeenCalledWith({ threadId: 't1', agent: null, longAnswers: false });
   });
 
   it('publishes lip-sync and phase to the host, and resets them on unmount', () => {

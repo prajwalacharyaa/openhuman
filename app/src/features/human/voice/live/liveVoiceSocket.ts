@@ -26,6 +26,12 @@ export interface LiveVoiceStartFrame {
   input_sample_rate: number;
   /** Socket.IO client id of this window, so approvals route back here. */
   client_id?: string;
+  /** One of Mochi's agents to talk with ("mark"): its voice and persona instead of Mochi's. */
+  agent?: string | null;
+  /** December's "read long answers in full" choice (off: the short part first, then an offer). */
+  long_answers?: boolean;
+  /** The same call coming back after the voice service dropped it: keeps its voice and chat. */
+  reconnect?: boolean;
 }
 
 export type LiveVoiceEvent =

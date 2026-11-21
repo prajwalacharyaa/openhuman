@@ -102,6 +102,17 @@ fun SettingsScreen(onBack: () -> Unit) {
                 }
             }
 
+            Section("Calls") {
+                var full by remember { mutableStateOf(Mochi.longAnswers(ctx)) }
+                SwitchRow("Read long answers in full",
+                    if (full) "Mochi reads the whole answer, a part at a time; say \"stop\" to cut it short."
+                    else "Mochi gives the short version first and offers the rest. Saying \"the full thing\" or " +
+                        "\"everything\" still gets you all of it.", full) { want ->
+                    Mochi.setLongAnswers(ctx, want); full = want
+                }
+                Text("Takes effect on the next call.", style = Type.small, color = c.muted)
+            }
+
             if (Mochi.configured(ctx)) Section("Claude accounts") { ClaudeAccounts() }
 
             if (Mochi.configured(ctx)) Section("Trading (Samir)") { TradingSettings() }

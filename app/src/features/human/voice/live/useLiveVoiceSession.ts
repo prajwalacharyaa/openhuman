@@ -33,6 +33,13 @@ const log = createDebug('app:human:live-voice');
 
 /** Final caption lines kept for display. */
 const MAX_CAPTIONS = 20;
+/** Tries to bring a call back after the voice service dropped it (not after December hung up). */
+const MAX_RECONNECTS = 3;
+/** 100 ms of 16 kHz PCM16 silence. */
+const SILENT_FRAME_BYTES = 3_200;
+/** Gemini closes a session after ~2 min with no audio ("client inactivity", 2026-11-21 21:23): muted, or the
+ *  window throttled, nothing is sent; one silent frame when nothing went out for this long keeps it open. */
+const KEEPALIVE_AFTER_MS = 15_000;
 
 export type LiveVoiceState = 'idle' | 'connecting' | 'listening' | 'speaking' | 'error';
 
@@ -58,6 +65,10 @@ export interface LiveVoiceStartOptions {
   provider?: string | null;
   /** Thread the session talks into; null lets the core pick. */
   threadId?: string | null;
+  /** One of Mochi's agents to talk with ("mark"); null = Mochi. */
+  agent?: string | null;
+  /** Read long answers in full instead of the short part first. */
+  longAnswers?: boolean;
 }
 
 export interface LiveVoiceSession {
@@ -93,6 +104,8 @@ interface LiveResources {
   provider: string | null;
   threadId: string | null;
   tracked: boolean;
+  keepalive: ReturnType<typeof setInterval> | null;
+  lastSentAt: number;
 }
 
 const emptyResources = (): LiveResources => ({
@@ -103,6 +116,8 @@ const emptyResources = (): LiveResources => ({
   provider: null,
   threadId: null,
   tracked: false,
+  keepalive: null,
+  lastSentAt: 0,
 });
 
 export function useLiveVoiceSession(): LiveVoiceSession {
@@ -126,6 +141,10 @@ export function useLiveVoiceSession(): LiveVoiceSession {
   const mutedRef = useRef(false);
   const mountedRef = useRef(true);
   const spokenRef = useRef<Set<string>>(new Set());
+  const optsRef = useRef<LiveVoiceStartOptions | undefined>(undefined);
+  const reconnectsRef = useRef(0);
+  const reconnectingRef = useRef(false);
+  const reconnectRef = useRef<(why: string) => void>(() => undefined);
   const [active, setActive] = useState(false);
 
   const refreshThread = useCallback(
@@ -147,6 +166,7 @@ export function useLiveVoiceSession(): LiveVoiceSession {
         if (notifyCore) res.socket.stop();
         else res.socket.close();
       }
+      if (res.keepalive) clearInterval(res.keepalive);
       res.capture?.stop();
       res.player?.close();
       if (res.tracked) {
@@ -185,6 +205,16 @@ export function useLiveVoiceSession(): LiveVoiceSession {
             event.output_sample_rate
           );
           res.ready = true;
+          if (reconnectingRef.current) log('[session] back after a drop');
+          reconnectingRef.current = false;
+          reconnectsRef.current = 0;
+          res.lastSentAt = Date.now();
+          res.keepalive = setInterval(() => {
+            const now = resRef.current;
+            if (gen !== genRef.current || Date.now() - now.lastSentAt < KEEPALIVE_AFTER_MS) return;
+            now.socket?.sendAudio(new ArrayBuffer(SILENT_FRAME_BYTES));
+            now.lastSentAt = Date.now();
+          }, 5_000);
           res.provider = event.provider;
           res.threadId = event.thread_id ?? res.threadId;
           setProvider(event.provider);
@@ -204,6 +234,7 @@ export function useLiveVoiceSession(): LiveVoiceSession {
             onFrame: frame => {
               if (gen !== genRef.current || mutedRef.current) return;
               resRef.current.socket?.sendAudio(frame);
+              resRef.current.lastSentAt = Date.now();
             },
           })
             .then(capture => {
@@ -273,7 +304,11 @@ export function useLiveVoiceSession(): LiveVoiceSession {
           setToolCalls(prev => prev.filter(call => call.status === 'running'));
           return;
         case 'error':
-          if (event.fatal) {
+          // the voice service dropping a live session is followed by `closed`, which reconnects
+          if (event.fatal && res.ready) {
+            log('[session] fatal error on a live session code=%s, waiting for closed', event.code);
+            setError({ code: event.code, message: event.message, fatal: false });
+          } else if (event.fatal) {
             fail({ code: event.code, message: event.message, fatal: true });
           } else {
             log('[session] non-fatal error code=%s', event.code);
@@ -282,6 +317,12 @@ export function useLiveVoiceSession(): LiveVoiceSession {
           return;
         case 'closed':
           log('[session] closed by core reason=%s', event.reason);
+          // Gemini dropping its session (inactivity, its time limit, a hiccup) isn't December hanging up:
+          // the same call comes back, like the phone app does
+          if (event.reason !== 'client' && res.ready) {
+            reconnectRef.current(`closed:${event.reason}`);
+            return;
+          }
           teardown('core_closed', false);
           setState('idle');
           setPartial({ user: null, agent: null });
@@ -291,22 +332,27 @@ export function useLiveVoiceSession(): LiveVoiceSession {
     [fail, refreshThread, teardown]
   );
 
-  const start = useCallback(
-    async (opts?: LiveVoiceStartOptions) => {
+  const open = useCallback(
+    async (opts: LiveVoiceStartOptions | undefined, reconnect: boolean) => {
       if (resRef.current.socket) {
         log('[session] start ignored — already active');
         return;
       }
       teardown('restart', false);
       const gen = genRef.current;
+      optsRef.current = opts;
+      reconnectingRef.current = reconnect;
       setActive(true);
       setState('connecting');
       setError(null);
-      setCaptions([]);
+      if (!reconnect) {
+        reconnectsRef.current = 0;
+        setCaptions([]);
+        spokenRef.current.clear();
+      }
       setPartial({ user: null, agent: null });
       setToolCalls([]);
       setProvider(null);
-      spokenRef.current.clear();
       resRef.current.threadId = opts?.threadId ?? null;
       setThreadId(opts?.threadId ?? null);
       log(
@@ -338,6 +384,9 @@ export function useLiveVoiceSession(): LiveVoiceSession {
           thread_id: opts?.threadId ?? null,
           input_sample_rate: LIVE_VOICE_INPUT_SAMPLE_RATE,
           ...(clientId ? { client_id: clientId } : {}),
+          agent: opts?.agent ?? null,
+          long_answers: opts?.longAnswers ?? false,
+          reconnect,
         },
         {
           onEvent: event => handleEvent(gen, event),
@@ -350,9 +399,10 @@ export function useLiveVoiceSession(): LiveVoiceSession {
             const wasReady = resRef.current.ready;
             log('[session] socket closed code=%d ready=%s', code, wasReady);
             if (wasReady) {
-              teardown('socket_closed', false);
-              setState('idle');
-              setPartial({ user: null, agent: null });
+              // a network switch or the server going away mid-call: the same call comes back
+              reconnectRef.current(`socket_closed:${code}`);
+            } else if (reconnectingRef.current) {
+              reconnectRef.current(`reconnect_failed:${code}`);
             } else {
               fail({
                 code: 'connection_failed',
@@ -367,6 +417,33 @@ export function useLiveVoiceSession(): LiveVoiceSession {
     },
     [fail, handleEvent, teardown]
   );
+
+  const start = useCallback((opts?: LiveVoiceStartOptions) => open(opts, false), [open]);
+
+  // Bring a dropped call back: same speaker, same chat, `reconnect: true`; up to MAX_RECONNECTS tries with
+  // growing pauses, then it ends as before.
+  reconnectRef.current = (why: string) => {
+    const threadId = resRef.current.threadId ?? optsRef.current?.threadId ?? null;
+    if (reconnectsRef.current >= MAX_RECONNECTS) {
+      log('[session] giving up after %d reconnects (%s)', reconnectsRef.current, why);
+      reconnectingRef.current = false;
+      teardown(`dropped:${why}`, false);
+      setState('idle');
+      setPartial({ user: null, agent: null });
+      return;
+    }
+    reconnectsRef.current += 1;
+    const attempt = reconnectsRef.current;
+    log('[session] reconnecting attempt=%d (%s)', attempt, why);
+    teardown(`reconnect:${why}`, false);
+    setActive(true);
+    setState('connecting');
+    const gen = genRef.current;
+    setTimeout(() => {
+      if (gen !== genRef.current || !mountedRef.current) return;
+      void open({ ...optsRef.current, threadId }, true);
+    }, 1_500 * attempt);
+  };
 
   const stop = useCallback(() => {
     log('[session] stop requested');

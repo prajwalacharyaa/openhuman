@@ -362,6 +362,10 @@ object Mochi {
     fun detailed(c: Context) = prefs(c).getBoolean("detailed", true)
     fun setDetailed(c: Context, on: Boolean) = prefs(c).edit().putBoolean("detailed", on).apply()
 
+    /** On calls, long answers are read in full (on) or the short part first with an offer of the rest (off). */
+    fun longAnswers(c: Context) = prefs(c).getBoolean("long_answers", false)
+    fun setLongAnswers(c: Context, on: Boolean) = prefs(c).edit().putBoolean("long_answers", on).apply()
+
     fun clearInbox(c: Context) = prefs(c).edit().putString("inbox", "[]").apply()
 
     /** Notices that came in since December last opened the Inbox (the red count). */

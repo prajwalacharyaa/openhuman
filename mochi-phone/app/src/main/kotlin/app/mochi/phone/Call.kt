@@ -472,6 +472,7 @@ object Call {
                 .put("client_id", "mochi-phone").put("input_sample_rate", RATE).put("agent", agent ?: JSONObject.NULL)
                 // the same call coming back: it keeps the voice it started with
                 .put("reconnect", reconnecting)
+                .put("long_answers", Mochi.longAnswers(app))
             val earlier = synchronized(callThreads) { callThreads.filter { it != threadId }.takeLast(8) }
             if (earlier.isNotEmpty()) start.put("earlier_threads", org.json.JSONArray(earlier))
             webSocket.send(start.toString())
@@ -692,6 +693,11 @@ object Call {
                         socket.send(buf.toByteString())
                         sentBytes += buf.size
                     }
+                } else if (active) {
+                    // the mic gave nothing (another app holds it, a Bluetooth switch): keep the session alive
+                    // with the same silent keepalive as a mute, or Gemini closes it for inactivity after ~2 min
+                    quiet()
+                    Thread.sleep(100)
                 }
             }
         } finally {
