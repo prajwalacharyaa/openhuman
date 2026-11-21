@@ -116,10 +116,20 @@ object LinkedIn {
     /** The approval page's address (the login link sits on the same tailnet listener); its image is under it. */
     fun approveUrl(status: JSONObject, id: String) = status.optString("login_url").removeSuffix("/linkedin/login") + "/approve/$id"
 
+    /** A preview no wider than about 1080 px: a 12 MP photo decoded whole used ~48 MB (app audit 2026-11-20). */
+    fun decodeSmall(bytes: ByteArray): ImageBitmap? {
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+        var sample = 1
+        while (bounds.outWidth / (sample * 2) >= 1080) sample *= 2
+        return BitmapFactory.decodeByteArray(bytes, 0, bytes.size, BitmapFactory.Options().apply { inSampleSize = sample })
+            ?.asImageBitmap()
+    }
+
     fun image(url: String, n: Int = 0): ImageBitmap? = runCatching {
         Mochi.http.newCall(Request.Builder().url(if (n > 0) "$url/image/$n" else "$url/image").build()).execute().use { r ->
             val bytes = r.body?.bytes() ?: return null
-            if (!r.isSuccessful) null else BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.asImageBitmap()
+            if (!r.isSuccessful) null else decodeSmall(bytes)
         }
     }.getOrNull()
 
@@ -382,7 +392,7 @@ private fun DraftEditor(d: JSONObject, status: JSONObject, onClose: () -> Unit, 
             }
         }
         if (photos.isNotEmpty()) io(scope, { photos.map { u -> LinkedIn.photo(ctx, u) to runCatching {
-            ctx.contentResolver.openInputStream(u)?.use { BitmapFactory.decodeStream(it)?.asImageBitmap() } }.getOrNull() } },
+            ctx.contentResolver.openInputStream(u)?.use { LinkedIn.decodeSmall(it.readBytes()) } }.getOrNull() } },
             { message = "Couldn't read those photos" }) { got ->
             val ok = got.filter { it.first != null }
             if (ok.isEmpty()) message = "Those aren't photos the app can use" else {

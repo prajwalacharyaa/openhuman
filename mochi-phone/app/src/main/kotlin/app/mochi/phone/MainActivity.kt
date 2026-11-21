@@ -434,22 +434,22 @@ private fun HomeScreen(go: (String) -> Unit) {
             FlowRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 Text("All chats →", style = Type.small, color = c.muted,
                     modifier = Modifier.clip(RoundedCornerShape(8.dp)).clickable(role = Role.Button) { go("chats") }
-                        .padding(vertical = Space.m, horizontal = Space.xs))
+                        .heightIn(min = 44.dp).padding(vertical = Space.m, horizontal = Space.xs))
                 Text("Settings", style = Type.small, color = c.muted,
                     modifier = Modifier.clip(RoundedCornerShape(8.dp)).clickable(role = Role.Button) { go("settings") }
-                        .padding(vertical = Space.m, horizontal = Space.xs))
+                        .heightIn(min = 44.dp).padding(vertical = Space.m, horizontal = Space.xs))
                 Text("Books", style = Type.small, color = c.muted,
                     modifier = Modifier.clip(RoundedCornerShape(8.dp))
                         .clickable(role = Role.Button) { ctx.startActivity(Intent(ctx, BooksActivity::class.java)) }
-                        .padding(vertical = Space.m, horizontal = Space.xs))
+                        .heightIn(min = 44.dp).padding(vertical = Space.m, horizontal = Space.xs))
                 Text("Room", style = Type.small, color = c.muted,
                     modifier = Modifier.clip(RoundedCornerShape(8.dp))
                         .clickable(role = Role.Button) { ctx.startActivity(Intent(ctx, RoomActivity::class.java)) }
-                        .padding(vertical = Space.m, horizontal = Space.xs))
+                        .heightIn(min = 44.dp).padding(vertical = Space.m, horizontal = Space.xs))
                 Text("Phone abilities", style = Type.small, color = c.muted,
                     modifier = Modifier.clip(RoundedCornerShape(8.dp))
                         .clickable(role = Role.Button) { ctx.startActivity(Intent(ctx, AbilitiesActivity::class.java)) }
-                        .padding(vertical = Space.m, horizontal = Space.xs))
+                        .heightIn(min = 44.dp).padding(vertical = Space.m, horizontal = Space.xs))
             }
         }
         // the two things done most, in thumb reach
