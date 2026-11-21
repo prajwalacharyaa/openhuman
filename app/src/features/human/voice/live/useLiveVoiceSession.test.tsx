@@ -132,6 +132,9 @@ describe('useLiveVoiceSession', () => {
       thread_id: 'thread-1',
       input_sample_rate: 16_000,
       client_id: 'sock-1',
+      agent: null,
+      long_answers: false,
+      reconnect: false,
     });
     // The mic is not requested before the core says ready.
     expect(mocks.startCapture).not.toHaveBeenCalled();
@@ -164,7 +167,20 @@ describe('useLiveVoiceSession', () => {
       provider: null,
       thread_id: null,
       input_sample_rate: 16_000,
+      agent: null,
+      long_answers: false,
+      reconnect: false,
     });
+  });
+
+  it('sends the chosen agent and the long-answers choice', async () => {
+    const { result } = renderSession();
+    await act(async () => {
+      await result.current.start({ threadId: 't', agent: 'mark', longAnswers: true });
+    });
+    const ws = FakeWebSocket.latest();
+    act(() => ws.open());
+    expect(ws.jsonFrames()[0]).toMatchObject({ agent: 'mark', long_answers: true, reconnect: false });
   });
 
   it('uplinks mic frames unless muted', async () => {
@@ -319,22 +335,37 @@ describe('useLiveVoiceSession', () => {
     expect(mocks.socketHandlers.has('voice_speak')).toBe(false);
   });
 
-  it('a core `closed` event ends the session quietly and refreshes the thread', async () => {
+  it('a core `closed` for the client ends the session quietly and refreshes the thread', async () => {
     const { result } = renderSession();
     const ws = await startAndReady(result);
     mocks.loadThreadMessages.mockClear();
-    act(() => ws.emit({ type: 'closed', reason: 'idle_timeout' }));
+    act(() => ws.emit({ type: 'closed', reason: 'client' }));
     expect(result.current.state).toBe('idle');
     expect(result.current.error).toBeNull();
     expect(mocks.capture.stop).toHaveBeenCalled();
     expect(mocks.loadThreadMessages).toHaveBeenCalledWith('thread-1');
   });
 
-  it('a socket drop after ready returns to idle', async () => {
+  it('the voice service dropping a live call brings the same call back (reconnect: true)', async () => {
+    const { result } = renderSession();
+    const ws = await startAndReady(result);
+    act(() => ws.emit({ type: 'closed', reason: 'remote (1008) Session closed due to client inactivity.' }));
+    expect(result.current.state).toBe('connecting');
+    expect(result.current.active).toBe(true);
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 1_700));
+    });
+    const again = FakeWebSocket.latest();
+    expect(again).not.toBe(ws);
+    act(() => again.open());
+    expect(again.jsonFrames()[0]).toMatchObject({ type: 'start', reconnect: true, thread_id: 'thread-1' });
+  });
+
+  it('a socket drop after ready reconnects instead of ending', async () => {
     const { result } = renderSession();
     const ws = await startAndReady(result);
     act(() => ws.drop());
-    expect(result.current.state).toBe('idle');
+    expect(result.current.state).toBe('connecting');
   });
 
   it('a socket that closes before ready is a connection error', async () => {
@@ -347,7 +378,7 @@ describe('useLiveVoiceSession', () => {
     expect(result.current.error).toMatchObject({ code: 'connection_failed', fatal: true });
   });
 
-  it('non-fatal errors are surfaced without ending the call; fatal ones end it', async () => {
+  it('errors on a live call are surfaced without ending it (a drop that follows reconnects)', async () => {
     const { result } = renderSession();
     const ws = await startAndReady(result);
     act(() => ws.emit({ type: 'error', code: 'tool_slow', message: 'slow', fatal: false }));
@@ -355,10 +386,8 @@ describe('useLiveVoiceSession', () => {
     expect(result.current.error).toEqual({ code: 'tool_slow', message: 'slow', fatal: false });
 
     act(() => ws.emit({ type: 'error', code: 'provider_down', message: 'down', fatal: true }));
-    expect(result.current.state).toBe('error');
+    expect(result.current.active).toBe(true);
     expect(result.current.error?.code).toBe('provider_down');
-    expect(mocks.capture.stop).toHaveBeenCalled();
-    expect(result.current.active).toBe(false);
   });
 
   it('maps a denied microphone to mic_denied', async () => {

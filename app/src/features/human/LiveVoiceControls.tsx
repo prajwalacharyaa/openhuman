@@ -1,4 +1,4 @@
-import { type RefObject, useEffect, useRef } from 'react';
+import { type RefObject, useEffect, useRef, useState } from 'react';
 import { LuMic, LuMicOff, LuPhoneOff, LuRotateCw } from 'react-icons/lu';
 
 import Badge from '../../components/ui/Badge';
@@ -19,6 +19,39 @@ export const LIVE_VOICE_PROVIDER_LABELS: Record<string, string> = {
   gemini: 'Gemini',
   sarvam: 'Sarvam AI',
 };
+
+/** Who December can talk to on a call: Mochi, or one of its agents (the server's workspace/voice-agents). */
+export const LIVE_VOICE_AGENTS: { id: string; label: string }[] = [
+  { id: '', label: 'Mochi' },
+  { id: 'mark', label: 'Mark (writer)' },
+  { id: 'melissa', label: 'Melissa (security)' },
+  { id: 'sy', label: 'SY (hiring)' },
+  { id: 'samir', label: 'Samir (shares)' },
+  { id: 'iris', label: 'Iris (designer)' },
+  { id: 'linkedin', label: 'Nadia (LinkedIn)' },
+  { id: 'researcher', label: 'Priya (research)' },
+  { id: 'seo', label: 'Sage (SEO)' },
+  { id: 'qa', label: 'Theo (testing)' },
+];
+
+const AGENT_KEY = 'mochi.liveVoice.agent';
+const LONG_KEY = 'mochi.liveVoice.longAnswers';
+
+function readPref(key: string): string {
+  try {
+    return window.localStorage.getItem(key) ?? '';
+  } catch {
+    return '';
+  }
+}
+
+function writePref(key: string, value: string): void {
+  try {
+    window.localStorage.setItem(key, value);
+  } catch {
+    // private window or blocked storage: the choice lasts for this session only
+  }
+}
 
 /** What the hosting surface wants to know about the session, coarsely. */
 export type LiveVoicePhase = 'off' | 'connecting' | 'listening' | 'speaking';
@@ -93,12 +126,21 @@ export default function LiveVoiceControls({
   startRef.current = session.start;
   const threadRef = useRef(threadId);
   threadRef.current = threadId;
+  const [agent, setAgent] = useState(() => readPref(AGENT_KEY));
+  const [longAnswers, setLongAnswers] = useState(() => readPref(LONG_KEY) === '1');
+  const choiceRef = useRef({ agent, longAnswers });
+  choiceRef.current = { agent, longAnswers };
   // Survives StrictMode's simulated unmount/remount: the request is consumed
   // once, and the remount (whose cleanup tore the first attempt down) restarts.
   const wantAutoStartRef = useRef(false);
   useEffect(() => {
     if (consumeAutoStart?.()) wantAutoStartRef.current = true;
-    if (wantAutoStartRef.current) void startRef.current({ threadId: threadRef.current });
+    if (wantAutoStartRef.current)
+      void startRef.current({
+        threadId: threadRef.current,
+        agent: choiceRef.current.agent || null,
+        longAnswers: choiceRef.current.longAnswers,
+      });
     // eslint-disable-next-line react-hooks/exhaustive-deps -- mount-only by design
   }, []);
 
@@ -130,7 +172,8 @@ export default function LiveVoiceControls({
     [audioRef, onSpeakingChange, onPhaseChange]
   );
 
-  const startSession = () => void session.start({ threadId });
+  const startSession = () =>
+    void session.start({ threadId, agent: agent || null, longAnswers });
 
   const status =
     state === 'connecting'
@@ -219,6 +262,40 @@ export default function LiveVoiceControls({
           className="flex flex-col items-center gap-2 text-center text-xs text-coral-600 dark:text-coral-300"
           data-testid="live-voice-error">
           <span>{errorText(t, session.error)}</span>
+        </div>
+      )}
+
+      {!session.active && (
+        <div className="flex flex-wrap items-center justify-center gap-3 text-xs text-content-muted">
+          <label className="flex items-center gap-1.5">
+            Talk to
+            <select
+              data-testid="live-voice-agent"
+              className="rounded-md border border-line bg-surface px-2 py-1 text-content"
+              value={agent}
+              onChange={event => {
+                setAgent(event.target.value);
+                writePref(AGENT_KEY, event.target.value);
+              }}>
+              {LIVE_VOICE_AGENTS.map(option => (
+                <option key={option.id} value={option.id}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="flex items-center gap-1.5">
+            <input
+              type="checkbox"
+              data-testid="live-voice-long-answers"
+              checked={longAnswers}
+              onChange={event => {
+                setLongAnswers(event.target.checked);
+                writePref(LONG_KEY, event.target.checked ? '1' : '');
+              }}
+            />
+            Read long answers in full
+          </label>
         </div>
       )}
 
