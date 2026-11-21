@@ -8,6 +8,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.provider.CallLog
+import android.provider.CalendarContract
 import android.provider.ContactsContract
 import android.provider.Telephony
 import org.json.JSONArray
@@ -34,6 +35,7 @@ object PhoneActions {
             }
             "calls.recent" -> ok(calls(c, args.optInt("limit", 5)))
             "sms.recent" -> ok(sms(c, args.optInt("limit", 3), args.optString("from")))
+            "calendar.events" -> ok(calendar(c, args.optInt("days", 1).coerceIn(1, 31), args.optInt("from_days", 0).coerceIn(-7, 365)))
             "notifications.recent" -> ok(MochiNotifications.recent(args.optInt("limit", 5), args.optString("app")))
             "call.place" -> placeCall(c, args)
             "sms.send" -> confirmAndDo(c, "sms", args.optString("to"), args.optString("text"))
@@ -132,6 +134,41 @@ object PhoneActions {
                     list.put(JSONObject().put("number", number).put("label", shown))
                 }
                 out.put(JSONObject().put("name", name).put("numbers", list))
+            }
+        }
+        return out
+    }
+
+    /**
+     * Events from all the phone's calendars, from [fromDays] days from today (0 = today) for [days] days: title,
+     * start and end (local time), all-day, place. Phone numbers in titles or places are hidden, like everywhere else.
+     */
+    private fun calendar(c: Context, days: Int, fromDays: Int): JSONArray {
+        need(c, Manifest.permission.READ_CALENDAR, "Calendar")
+        val zone = java.time.ZoneId.systemDefault()
+        val start = java.time.LocalDate.now(zone).plusDays(fromDays.toLong()).atStartOfDay(zone).toInstant().toEpochMilli()
+        val end = start + days * 86_400_000L
+        val uri = CalendarContract.Instances.CONTENT_URI.buildUpon().also {
+            android.content.ContentUris.appendId(it, start); android.content.ContentUris.appendId(it, end)
+        }.build()
+        val cols = arrayOf(CalendarContract.Instances.TITLE, CalendarContract.Instances.BEGIN, CalendarContract.Instances.END,
+            CalendarContract.Instances.ALL_DAY, CalendarContract.Instances.EVENT_LOCATION)
+        val fmt = java.time.format.DateTimeFormatter.ofPattern("EEE d MMM HH:mm")
+        val day = java.time.format.DateTimeFormatter.ofPattern("EEE d MMM")
+        val out = JSONArray()
+        c.contentResolver.query(uri, cols, null, null, "${CalendarContract.Instances.BEGIN} ASC")?.use { cur ->
+            while (cur.moveToNext() && out.length() < 50) {
+                val allDay = cur.getInt(3) == 1
+                // all-day events are stored in UTC midnight: show their date in UTC so they don't slip a day
+                val z = if (allDay) java.time.ZoneOffset.UTC else zone
+                val b = java.time.Instant.ofEpochMilli(cur.getLong(1)).atZone(z)
+                val e = java.time.Instant.ofEpochMilli(cur.getLong(2)).atZone(z)
+                out.put(JSONObject()
+                    .put("title", hideNumbers(cur.getString(0) ?: "(no title)"))
+                    .put("start", if (allDay) b.format(day) else b.format(fmt))
+                    .put("end", if (allDay) "" else e.format(if (e.toLocalDate() == b.toLocalDate()) java.time.format.DateTimeFormatter.ofPattern("HH:mm") else fmt))
+                    .put("all_day", allDay)
+                    .put("place", hideNumbers(cur.getString(4) ?: "")))
             }
         }
         return out

@@ -47,6 +47,10 @@ class AbilitiesActivity : Activity() {
                 Triple("Choose the SIM", granted(Manifest.permission.READ_PHONE_STATE)) { ask(Manifest.permission.READ_PHONE_STATE) },
                 Triple("Send texts", granted(Manifest.permission.SEND_SMS)) { ask(Manifest.permission.SEND_SMS) },
             ))
+        section("Calendar",
+            "Mochi can say what's on your calendar (\"what's on today\", \"am I free Friday afternoon\"). It only " +
+                "reads: titles, times and places, never kept in memory. Adding events stays with you.",
+            listOf(Triple("Read calendar", granted(Manifest.permission.READ_CALENDAR)) { ask(Manifest.permission.READ_CALENDAR) }))
         section("Message notifications",
             "\"Check the message that just arrived\" (WhatsApp, Messenger, texts…): Mochi reads the newest message " +
                 "notifications, kept in the phone's memory only.",
