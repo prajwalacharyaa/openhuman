@@ -468,6 +468,8 @@ const LOOKUP_SAID: &[&str] = &[
     // a finished check it may not have made: answered only if a tool really ran this turn
     "my research", "research shows", "i checked", "i've checked", "i have checked", "i looked", "i've looked",
     "i searched", "i've searched", "according to my search",
+    // Nepali (2026-11-21 12:41: "मैले फेरि वेब सर्च गरेर हेरेँ" with no search behind it)
+    "सर्च गरेर", "सर्च गरें", "सर्च गरेँ", "खोजेर हेरें", "खोजेर हेरेँ",
 ];
 /// How the model says it looked in memory (a memory search must back it, not some other tool).
 const MEMORY_SAID: &[&str] = &["checked the memory", "checked your memory", "checked memory", "memory confirms",

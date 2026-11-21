@@ -704,3 +704,10 @@ fn a_dropped_call_resumes_once_with_its_newest_handle() {
     resume_handle_clear(thread);
     assert_eq!(resume_handle_take(thread, true), None, "hung up: nothing to resume");
 }
+
+#[test]
+fn a_nepali_i_searched_needs_a_search_behind_it() {
+    // 2026-11-21 12:41: "I searched the web again" said in Nepali with no search that turn
+    let said = "मैले फेरि वेब सर्च गरेर हेरेँ तर मलाई लाइभ स्टेटस जानकारी मिलेन।";
+    assert!(LOOKUP_SAID.iter().any(|w| said.contains(w)));
+}
