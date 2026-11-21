@@ -170,7 +170,7 @@ private fun BooksScreen(onBack: () -> Unit) {
     val pick = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
         uris.forEach { uri ->
             status = "Sending the book…"
-            io(scope, { Books.upload(ctx, uri) }, { status = "Not sent: ${it.message}" }) { err ->
+            io(scope, { Books.upload(ctx, uri) }, { status = "Not sent: ${Room.friendly(it)}" }) { err ->
                 status = err?.let { "Not added: $it" } ?: "Added. Mochi is reading it; Mark summarizes it next."
                 reload()
             }
@@ -297,14 +297,14 @@ private fun BooksScreen(onBack: () -> Unit) {
                         val whole = d.optString("summary").let { it.isNotBlank() && it != "null" }
                         Pill(if (whole) "Summarize again" else "Summarize the book", !whole) {
                             val id = open ?: return@Pill
-                            io(scope, { Books.action(ctx, id, "summarize", force = whole) }, { status = "Not sent: ${it.message}" }) {
+                            io(scope, { Books.action(ctx, id, "summarize", force = whole) }, { status = "Not sent: ${Room.friendly(it)}" }) {
                                 status = "Summarizing: every part, then a full report. You get a notification when it's done."
                             }
                         }
                         if (!confirmDelete) Pill("Delete", false) { confirmDelete = true }
                         else Pill("Delete for good", true) {
                             val id = open ?: return@Pill
-                            io(scope, { Books.action(ctx, id, "delete") }, { status = "Not deleted: ${it.message}" }) {
+                            io(scope, { Books.action(ctx, id, "delete") }, { status = "Not deleted: ${Room.friendly(it)}" }) {
                                 status = "Deleted."; open = null; detail = null; confirmDelete = false; reload()
                             }
                         }

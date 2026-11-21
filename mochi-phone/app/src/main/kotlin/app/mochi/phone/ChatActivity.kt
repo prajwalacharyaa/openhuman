@@ -220,7 +220,7 @@ fun ChatScreen(initialThread: String?, newChat: Boolean, initialText: String?, s
         io(scope, { Mochi.send(ctx, id, body, model = if (agent != null) null else Mochi.modelFor(mode), progress = onProgress) },
             { busy = false; uploading = null
                 if (fromQueue) { queue.add(0, Queued(text, sending)); paused = true } else files.addAll(sending)
-                status = "Not sent: can't reach Mochi. (${it.message})" }) {
+                status = "Not sent: ${Room.friendly(it)}" }) {
             uploading = null
             reload()
         }

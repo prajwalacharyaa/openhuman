@@ -224,7 +224,7 @@ private fun MapScreen(repo: String, onBack: () -> Unit) {
     val spot = trail.last()
 
     LaunchedEffect(repo) {
-        io(scope, { ProjectMap.parse(Mochi.graph(ctx, repo)) }, { error = "Couldn't load the map: ${it.message}" }) { map = it }
+        io(scope, { ProjectMap.parse(Mochi.graph(ctx, repo)) }, { error = "Couldn't load the map: ${Room.friendly(it)}" }) { map = it }
     }
     BackHandler(enabled = trail.size > 1 || searching) {
         if (searching) searching = false else trail.removeAt(trail.lastIndex)

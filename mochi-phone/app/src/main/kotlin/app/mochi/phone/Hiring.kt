@@ -232,7 +232,7 @@ private fun ProposalSheet(p: JSONObject, sent: Boolean, onClose: () -> Unit, onA
                         if (remarks.isBlank() || sending) return@Pill
                         sending = true
                         io(scope, { Agents.decide(ctx, p.optString("id"), "remarks", remarks.trim()) },
-                            { sending = false; error = "Not sent: ${it.message}" }) { sending = false; onRemarksSent() }
+                            { sending = false; error = "Not sent: ${Room.friendly(it)}" }) { sending = false; onRemarksSent() }
                     }
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(Space.s)) {
@@ -280,7 +280,7 @@ private fun DecisionDialog(p: JSONObject, action: String, onDone: (Boolean) -> U
             TextButton(enabled = !sending, onClick = {
                 sending = true
                 io(scope, { Agents.decide(ctx, p.optString("id"), action, reason.trim()) },
-                    { sending = false; error = "Not sent: ${it.message}" }) { sending = false; onDone(true) }
+                    { sending = false; error = "Not sent: ${Room.friendly(it)}" }) { sending = false; onDone(true) }
             }) { Text(if (sending) "Sending…" else if (action == "approve") "Approve" else "Reject") }
         },
         dismissButton = { TextButton(enabled = !sending, onClick = { onDone(false) }) { Text("Cancel") } })

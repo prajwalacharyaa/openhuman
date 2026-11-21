@@ -326,7 +326,7 @@ private fun HomeScreen(go: (String) -> Unit) {
                         if (!Updater.allowed(ctx)) { ctx.startActivity(Updater.allowIntent(ctx)); return@Pill }
                         updating = 0f; updateError = ""
                         io(scope, { Updater.install(ctx, u) { p -> scope.launch { updating = p } } },
-                            { updating = -1f; updateError = "Update failed: ${it.message}" }) { updating = -1f }
+                            { updating = -1f; updateError = "Update failed: ${Room.friendly(it)}" }) { updating = -1f }
                     }
                 }
             }
@@ -558,7 +558,7 @@ private fun UploadsPage(snack: SnackbarHostState) {
     var loading by remember { mutableStateOf(true) }
     var error by remember { mutableStateOf("") }
     LaunchedEffect(Unit) {
-        io(scope, { Mochi.uploads(ctx) }, { loading = false; error = "Can't reach Mochi. (${it.message})" }) {
+        io(scope, { Mochi.uploads(ctx) }, { loading = false; error = Room.friendly(it) }) {
             loading = false; items.clear(); items.addAll(it)
         }
     }
@@ -566,7 +566,7 @@ private fun UploadsPage(snack: SnackbarHostState) {
         hide = { x -> items.removeAll { m -> x.any { it.optString("id") == m.optString("id") } } },
         restore = { items.addAll(0, it) },
         delete = { x -> Mochi.deleteUploads(ctx, x.map { it.optString("id") }) },
-        failed = { error = "Couldn't delete: ${it.message}" })
+        failed = { error = "Couldn't delete: ${Room.friendly(it)}" })
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(Space.l), verticalArrangement = Arrangement.spacedBy(Space.s)) {
         if (error.isNotEmpty()) item { Text(error, style = Type.small, color = c.danger) }
         if (loading) item { Text("Loading…", style = Type.small, color = c.muted) }
@@ -645,7 +645,7 @@ private fun ChatsScreen(onBack: () -> Unit) {
         hide = { l -> all.removeAll { t -> l.any { it.optString("id") == t.optString("id") } } },
         restore = { all.addAll(it); all.sortByDescending { t -> t.optString("lastMessageAt") } },
         delete = { l -> l.forEach { Mochi.deleteThread(ctx, it.optString("id")) } },
-        failed = { error = "Couldn't delete: ${it.message}" })
+        failed = { error = "Couldn't delete: ${Room.friendly(it)}" })
     LaunchedEffect(Unit) { load() }
     BackHandler(enabled = selecting) { selected = emptySet() }
     val shown = all.filter { query.isBlank() || it.optString("title").contains(query, ignoreCase = true) }
@@ -728,7 +728,7 @@ private fun MemoryScreen(onBack: () -> Unit) {
         loading = true
         val gen = generation
         io(scope, { Mochi.memories(ctx, query, listOf(tab), cursor) },
-            { loading = false; error = "Can't reach Mochi's memory. (${it.message})" }) { page ->
+            { loading = false; error = "Memory: ${Room.friendly(it)}" }) { page ->
             if (gen != generation) return@io
             loading = false; error = ""
             val have = items.map { it.optString("id") }.toSet()
@@ -743,7 +743,7 @@ private fun MemoryScreen(onBack: () -> Unit) {
         hide = { x -> items.removeAll { m -> x.any { it.optString("id") == m.optString("id") } } },
         restore = { items.addAll(0, it) },
         delete = { x -> Mochi.forget(ctx, x.map { it.optString("id") }) },
-        failed = { error = "Couldn't forget: ${it.message}" })
+        failed = { error = "Couldn't forget: ${Room.friendly(it)}" })
 
     LaunchedEffect(query, tab) { delay(if (query.isEmpty()) 0 else 400); restart() }
     // endless scroll: near the bottom, fetch the next page
@@ -815,7 +815,7 @@ private fun MemoryScreen(onBack: () -> Unit) {
             text = { Field(text, { text = it }, "e.g. My sister's birthday is 3 March") },
             confirmButton = { TextButton({
                 teach = false
-                if (text.isNotBlank()) io(scope, { Mochi.learn(ctx, text.trim()) }, { error = "Couldn't save: ${it.message}" }) {
+                if (text.isNotBlank()) io(scope, { Mochi.learn(ctx, text.trim()) }, { error = "Couldn't save: ${Room.friendly(it)}" }) {
                     scope.launch { pager.animateScrollToPage(0) }; restart()
                 }
             }) { Text("Save") } },
