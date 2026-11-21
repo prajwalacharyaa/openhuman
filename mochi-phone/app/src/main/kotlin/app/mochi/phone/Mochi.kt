@@ -366,7 +366,22 @@ object Mochi {
     fun longAnswers(c: Context) = prefs(c).getBoolean("long_answers", false)
     fun setLongAnswers(c: Context, on: Boolean) = prefs(c).edit().putBoolean("long_answers", on).apply()
 
-    fun clearInbox(c: Context) = prefs(c).edit().putString("inbox", "[]").apply()
+    /** Empties the Inbox and returns what it held, for Undo ([restoreInbox]). */
+    fun clearInbox(c: Context): String {
+        val old = prefs(c).getString("inbox", "[]") ?: "[]"
+        prefs(c).edit().putString("inbox", "[]").apply()
+        return old
+    }
+
+    /** Puts cleared notices back, ahead of any that came in since (oldest first, last 100 kept). */
+    fun restoreInbox(c: Context, old: String) {
+        val back = runCatching { JSONArray(old) }.getOrDefault(JSONArray())
+        val now = runCatching { JSONArray(prefs(c).getString("inbox", "[]")) }.getOrDefault(JSONArray())
+        for (i in 0 until now.length()) back.put(now.get(i))
+        val kept = JSONArray()
+        for (i in maxOf(0, back.length() - 100) until back.length()) kept.put(back.get(i))
+        prefs(c).edit().putString("inbox", kept.toString()).apply()
+    }
 
     /** Notices that came in since December last opened the Inbox (the red count). */
     fun unreadInbox(c: Context): Int {

@@ -163,6 +163,7 @@ private fun App(tab: String, setTab: (String) -> Unit) {
         "chats" -> ChatsScreen { setTab("home") }
         "memory" -> MemoryScreen { setTab("home") }
         "inbox" -> InboxScreen { setTab("home") }
+        "reminders" -> RemindersScreen { setTab("home") }
         "maps" -> MapsScreen { setTab("home") }
         "settings" -> SettingsScreen { setTab("home") }
         else -> HomeScreen { setTab(it) }
@@ -430,13 +431,16 @@ private fun HomeScreen(go: (String) -> Unit) {
                     }
                 }
             }
-            // five links: they wrap to a second line on a narrow phone instead of being cut off
+            // six links: they wrap to a second line on a narrow phone instead of being cut off
             FlowRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 Text("All chats →", style = Type.small, color = c.muted,
                     modifier = Modifier.clip(RoundedCornerShape(8.dp)).clickable(role = Role.Button) { go("chats") }
                         .heightIn(min = 44.dp).padding(vertical = Space.m, horizontal = Space.xs))
                 Text("Settings", style = Type.small, color = c.muted,
                     modifier = Modifier.clip(RoundedCornerShape(8.dp)).clickable(role = Role.Button) { go("settings") }
+                        .heightIn(min = 44.dp).padding(vertical = Space.m, horizontal = Space.xs))
+                Text("Reminders", style = Type.small, color = c.muted,
+                    modifier = Modifier.clip(RoundedCornerShape(8.dp)).clickable(role = Role.Button) { go("reminders") }
                         .heightIn(min = 44.dp).padding(vertical = Space.m, horizontal = Space.xs))
                 Text("Books", style = Type.small, color = c.muted,
                     modifier = Modifier.clip(RoundedCornerShape(8.dp))
@@ -865,11 +869,19 @@ private fun InboxScreen(onBack: () -> Unit) {
     var notices by remember { mutableStateOf(Mochi.inbox(ctx)) }
     val team = remember { Agents.cached(ctx) }
     LaunchedEffect(Unit) { Mochi.markInboxSeen(ctx); MochiWidget.update(ctx, force = true) }
+    // Clear keeps what it removed for a few seconds: one tap shouldn't lose an agent's long report
+    var undo by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(undo) { if (undo != null) { delay(6_000); undo = null } }
     Screen("Inbox", onBack, action = {
-        if (notices.isNotEmpty()) Text("Clear", style = Type.small, color = c.muted,
+        val held = undo
+        if (held != null) Text("Undo", style = Type.small.copy(fontWeight = Type.strong), color = c.blueInk,
             modifier = Modifier.clip(RoundedCornerShape(8.dp)).clickable(role = Role.Button) {
-                Mochi.clearInbox(ctx); notices = emptyList()
-            }.padding(Space.m))
+                Mochi.restoreInbox(ctx, held); notices = Mochi.inbox(ctx); undo = null
+            }.heightIn(min = 44.dp).padding(Space.m))
+        else if (notices.isNotEmpty()) Text("Clear", style = Type.small, color = c.muted,
+            modifier = Modifier.clip(RoundedCornerShape(8.dp)).clickable(role = Role.Button) {
+                undo = Mochi.clearInbox(ctx); notices = emptyList()
+            }.heightIn(min = 44.dp).padding(Space.m))
     }) {
         LazyColumn(contentPadding = PaddingValues(Space.l), verticalArrangement = Arrangement.spacedBy(Space.s)) {
             if (notices.isEmpty()) item {

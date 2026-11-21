@@ -66,6 +66,31 @@ object PhoneActions {
                 else ok(Call.sleep(args.optInt("minutes"), args.optString("what", "set")))
             "call.speed" -> if (!Call.active) fail("no call is on") else ok(Call.setSpeed(args.optDouble("speed", 1.0).toFloat()))
             // the book being read, on screen, highlighted as the voice reads
+            // "wake me at 6" / "timer 10 minutes": the phone's own Clock app rings, even with the server off
+            "alarm.set" -> clock(c, Intent(android.provider.AlarmClock.ACTION_SET_ALARM)
+                .putExtra(android.provider.AlarmClock.EXTRA_HOUR, args.getInt("hour").coerceIn(0, 23))
+                .putExtra(android.provider.AlarmClock.EXTRA_MINUTES, args.optInt("minute").coerceIn(0, 59))
+                .apply {
+                    args.optString("label").takeIf { it.isNotBlank() }?.let { putExtra(android.provider.AlarmClock.EXTRA_MESSAGE, it.take(60)) }
+                    args.optJSONArray("days")?.let { d -> putExtra(android.provider.AlarmClock.EXTRA_DAYS,
+                        ArrayList((0 until d.length()).map { d.getInt(it) }.filter { it in 1..7 })) }
+                }, "alarm set for %02d:%02d".format(args.getInt("hour"), args.optInt("minute")))
+            "timer.set" -> clock(c, Intent(android.provider.AlarmClock.ACTION_SET_TIMER)
+                .putExtra(android.provider.AlarmClock.EXTRA_LENGTH, args.getInt("seconds").coerceIn(1, 86400))
+                .apply { args.optString("label").takeIf { it.isNotBlank() }?.let { putExtra(android.provider.AlarmClock.EXTRA_MESSAGE, it.take(60)) } },
+                "timer started: ${args.getInt("seconds")} s")
+            "alarms.show" -> clock(c, Intent(android.provider.AlarmClock.ACTION_SHOW_ALARMS), "the Clock app's alarms are on screen", skipUi = false)
+            // "put the dentist on Friday at 3": the calendar opens with it filled in; nothing is saved until December taps Save
+            "calendar.add" -> clock(c, Intent(Intent.ACTION_INSERT, CalendarContract.Events.CONTENT_URI)
+                .putExtra(CalendarContract.Events.TITLE, args.getString("title").take(200))
+                .putExtra(CalendarContract.EXTRA_EVENT_BEGIN_TIME, args.getLong("begin"))
+                .putExtra(CalendarContract.EXTRA_EVENT_END_TIME, args.getLong("end"))
+                .putExtra(CalendarContract.EXTRA_EVENT_ALL_DAY, args.optBoolean("all_day"))
+                .apply { args.optString("place").takeIf { it.isNotBlank() }?.let { putExtra(CalendarContract.Events.EVENT_LOCATION, it.take(200)) } },
+                "the calendar is open with it filled in: December taps Save to keep it", skipUi = false)
+            // "clear the inbox" (asked 2026-11-16 and Mochi couldn't): the app's Inbox of Mochi's notices
+            "inbox.clear" -> { val n = Mochi.inbox(c).size; Mochi.clearInbox(c); MochiWidget.update(c, force = true)
+                ok(if (n == 0) "the inbox was already empty" else "cleared $n notice${if (n == 1) "" else "s"} from the inbox") }
             "book.show" -> BookView.show(c)
             "book.close" -> BookView.close()
             else -> fail("unknown action $action")
@@ -77,6 +102,17 @@ object PhoneActions {
     }
 
     private fun ok(result: Any) = JSONObject().put("ok", true).put("result", result)
+
+    /** Hands [intent] to the Clock or Calendar app: at once while a call is on or the app is on screen (with
+     *  [skipUi] the Clock sets it without showing itself), else a notification December taps. */
+    private fun clock(c: Context, intent: Intent, done: String, skipUi: Boolean = true): JSONObject {
+        if (skipUi) intent.putExtra(android.provider.AlarmClock.EXTRA_SKIP_UI, true)
+        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        if (intent.resolveActivity(c.packageManager) == null)
+            return fail("no app on the phone handles that (Clock or Calendar missing)")
+        if ((Call.active || AppLock.visible) && runCatching { c.startActivity(intent) }.isSuccess) return ok(done)
+        return AppNav.show(c, intent, intent.action.hashCode(), "Mochi: tap to finish (${done.substringBefore(":")})", done)
+    }
 
     /** Phone numbers never leave the phone (December's privacy rule): numbers are only used here, on the phone. */
     private val NUMBER = Regex("""\+?\d[\d\s().-]{5,}\d""")

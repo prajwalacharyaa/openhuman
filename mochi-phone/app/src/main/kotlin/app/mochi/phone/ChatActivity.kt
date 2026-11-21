@@ -544,7 +544,7 @@ private fun AttachmentChip(a: Attachment, onRemove: () -> Unit) {
         if (thumb != null) Image(thumb.asImageBitmap(), a.name, Modifier.size(40.dp).clip(RoundedCornerShape(12.dp)))
         else Text(a.name, style = Type.small, color = c.ink, maxLines = 1, overflow = TextOverflow.Ellipsis,
             modifier = Modifier.widthIn(max = 140.dp).padding(start = Space.s))
-        Box(Modifier.size(32.dp).clip(RoundedCornerShape(16.dp)).clickable(role = Role.Button, onClick = onRemove)
+        Box(Modifier.size(44.dp).clip(RoundedCornerShape(22.dp)).clickable(role = Role.Button, onClick = onRemove)
             .semantics { contentDescription = "Remove ${a.name}" }, contentAlignment = Alignment.Center) {
             LineIcon(Icons2.Close, c.muted, 16.dp)
         }
