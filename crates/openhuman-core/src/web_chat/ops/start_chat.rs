@@ -566,7 +566,8 @@ async fn start_chat_inner(
             // The reply is stored now, before the slot is released (#6034).
             let mut deferred_done = None;
             let deferred_error = match result {
-                Ok(chat_result) => {
+                Ok(mut chat_result) => {
+                    chat_result.full_response = crate::web_chat::presentation::tidy_reply(&chat_result.full_response);
                     crate::web_chat::presentation::persist_reply(
                         &thread_id_task,
                         &request_id_task,

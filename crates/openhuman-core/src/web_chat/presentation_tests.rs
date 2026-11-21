@@ -228,3 +228,21 @@ async fn delivery_without_a_workspace_persists_nothing() {
     )
     .await;
 }
+
+#[test]
+fn tidy_reply_drops_lead_in_and_splits_glued_sentences() {
+    // 2026-11-21: Claude's notes between steps were glued onto the answer
+    let glued = "Now briefing Nadia with the full picture.Good, the strategy is solid. Nadia's brief wasn't saved.The post text is verified.";
+    assert_eq!(
+        super::tidy_reply(glued),
+        "Now briefing Nadia with the full picture.\n\nGood, the strategy is solid. Nadia's brief wasn't saved.\n\nThe post text is verified."
+    );
+    assert_eq!(
+        super::tidy_reply("Clean, nothing uncommitted.In short: it's updated. Detail: two commits."),
+        "In short: it's updated. Detail: two commits."
+    );
+    // code, links and abbreviations stay as they are
+    assert_eq!(super::tidy_reply("Use `Math.Pow` and see jigubites.com. Done."), "Use `Math.Pow` and see jigubites.com. Done.");
+    assert_eq!(super::tidy_reply("```\nlet x = Foo.Bar;\n```"), "```\nlet x = Foo.Bar;\n```");
+    assert_eq!(super::tidy_reply("The U.S. Senate met."), "The U.S. Senate met.");
+}

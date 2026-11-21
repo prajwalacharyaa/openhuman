@@ -42,9 +42,39 @@ const MAX_ANSWER_CHARS: usize = 12000;
 
 /// Sent when December starts a typed turn in this call's chat.
 pub(crate) const TYPED_NOTE: &str = "(Server note, not December speaking: December just typed or pasted a \
-message into this chat, and it's being worked on. You can't see its text and don't need to. Say in a few \
-words that you got it and you're on it; never ask December to say or paste it again. The answer will come to \
-you.)";
+message into this chat, and it's being worked on. Its text didn't reach you: if December asks about it, hand \
+that question on with mochi-ask (Claude sees the chat). Say in a few words that you got it; never say you can't \
+see the chat, and never ask December to say or paste it again. The answer will come to you.)";
+
+/// The most of a typed message passed into the call.
+const MAX_TYPED_CHARS: usize = 600;
+
+/// Sent when December types into this call's chat, with what they typed (2026-11-21: December pasted their
+/// LinkedIn link in the chat and asked the voice to check it; the voice, told it couldn't see the text, said three
+/// times it "can't access the chat"). Phone numbers are taken out first: they never go to Gemini.
+pub(crate) fn typed_text_note(typed: &str) -> String {
+    let typed: String = strip_phone_numbers(typed.trim()).chars().take(MAX_TYPED_CHARS).collect();
+    format!(
+        "(Server note, not December speaking: December just typed or pasted this into the chat, and it's being \
+         worked on: \"{typed}\". You can see it now: use it when December asks about it (a link, a name, a \
+         number). Say in a few words that you got it; never say you can't see the chat, and never ask December to \
+         say or paste it again. The answer will come to you.)"
+    )
+}
+
+/// Digits that look like a phone number (eight or more, with spaces, dashes, dots or a leading +) become
+/// "[number]": December's phone data never goes to the voice model. Dates (2026-11-21) stay.
+pub(crate) fn strip_phone_numbers(text: &str) -> String {
+    static NUMBER: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    static DATE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    let number = NUMBER.get_or_init(|| regex::Regex::new(r"\+?\d(?:[\s.\-()]*\d){7,}").expect("valid regex"));
+    let date = DATE.get_or_init(|| regex::Regex::new(r"^\d{4}-\d{1,2}-\d{1,2}$").expect("valid regex"));
+    number
+        .replace_all(text, |found: &regex::Captures| {
+            if date.is_match(&found[0]) { found[0].to_string() } else { "[number]".to_string() }
+        })
+        .into_owned()
+}
 
 /// The note that makes the live model tell December how a `mochi-ask`
 /// request for this thread ended, or that December typed into this chat (and
@@ -63,14 +93,22 @@ pub(crate) fn claude_reply_note(event: &WebChannelEvent, thread_id: &str) -> Opt
                 return None;
             }
             let answer: String = answer.chars().take(MAX_ANSWER_CHARS).collect();
+            // 2026-11-21: December kept getting summaries when they needed all of it, and didn't know more was
+            // there. A long answer now ends with an offer; "yes" reads it all (mochi-ask --read).
+            let offer = if has_more(&answer) {
+                " There is more than that part: end by asking in a few words whether December wants the whole \
+                 thing. On a yes, run mochi-ask --read --start and read out what it gives you, part by part."
+            } else {
+                ""
+            };
             Some(format!(
                 "(Server note, not December speaking: Claude finished the request you handed it. \
                  Tell December now, without waiting to be asked, as yourself (never name Claude): say only its \
                  \"In short\" part (or, without one, its main point in one or two sentences), then stop. Keep the \
                  rest: when December asks for more (\"more\", \"why\", \"which ones\"), answer from it, without \
-                 handing anything on again. Read all of it only if December asked for the full story or details. \
+                 handing anything on again. If December asks for all of it, run mochi-ask --read --start. \
                  If it asks December to decide something, name each choice and ask; never drop a choice or a \
-                 warning.)\n\n{answer}"
+                 warning.{offer})\n\n{answer}"
             ))
         }
         // 2026-11-12: an approved task stopped by a newer message came out as "I wasn't able to complete that"
@@ -110,6 +148,41 @@ pub(crate) fn from_in_short(answer: &str) -> &str {
     if rest.is_empty() { answer } else { rest }
 }
 
+/// Whether an answer has much more than its "In short" part (worth offering the rest).
+pub(crate) fn has_more(answer: &str) -> bool {
+    let short = match answer.find("Detail:") {
+        Some(at) => answer[..at].chars().count(),
+        None => answer.split_inclusive(['.', '!', '?']).take(2).map(|s| s.chars().count()).sum(),
+    };
+    answer.chars().count() > short + 400
+}
+
+/// The answer note when December asked for all of it ("tell me everything", "read it", "पूरा"), or chose long
+/// answers in the app: read out whole, part by part, through mochi-ask --read (the same even pace as books).
+pub(crate) fn full_answer_note(note: &str) -> String {
+    let answer = note.split_once("\n\n").map_or("", |(_, answer)| answer);
+    format!(
+        "(Server note, not December speaking: {ANSWER_MARK} December asked for all of it, so don't shorten it: \
+         run mochi-ask --read --start now and read out what it gives you as it is, at an even pace, then mochi-ask \
+         --read for each next part until the end, unless December stops you or asks something else. Speak as \
+         yourself (never name Claude). If it asks December to decide something, name each choice and ask.)\n\n{answer}"
+    )
+}
+
+/// How December asks for all of something (lowercased): the full news, the whole answer, read it out.
+const FULL_ASKED: &[&str] = &[
+    "full", "whole", "everything", "all of it", "in detail", "details", "detail", "word by word", "read it",
+    "read me", "read out", "read that", "the complete", "पूरा", "पुरा", "सबै", "विस्तार", "डिटेल", "फुल",
+];
+/// ...unless they want it short ("explain it simply", "just the summary").
+const SHORT_ASKED: &[&str] = &["simpl", "short", "brief", "summar", "quick", "छोटो", "सजिलो", "सारांश"];
+
+/// Whether December's words ask for all of it, not a summary.
+pub(crate) fn asks_full(text: &str) -> bool {
+    let text = text.to_lowercase();
+    FULL_ASKED.iter().any(|w| text.contains(w)) && !SHORT_ASKED.iter().any(|w| text.contains(w))
+}
+
 /// Whether a note carries Claude's finished answer (the model's next words retell it: they aren't saved
 /// again, the answer is already in the chat).
 pub(crate) fn is_answer_note(note: &str) -> bool {
@@ -139,6 +212,15 @@ pub(crate) const MAX_EARLIER_THREADS: usize = 8;
 /// Chats used earlier in this call: the `earlier_threads` the phone app sends in the start frame when it
 /// passes the phone (2026-11-10: Nadia's answer finished after the phone went back to Mochi, and the new
 /// session, on Mochi's chat, dropped it). Read straight from the frame so the start request stays as it was.
+/// December's "read long answers in full" choice from the app, in the start frame (read straight from it, like
+/// `earlier_threads`).
+pub(crate) fn wants_long_answers(start_frame: &str) -> bool {
+    serde_json::from_str::<serde_json::Value>(start_frame)
+        .ok()
+        .and_then(|value| value.get("long_answers").and_then(serde_json::Value::as_bool))
+        .unwrap_or(false)
+}
+
 pub(crate) fn earlier_threads(start_frame: &str) -> Vec<String> {
     let Ok(value) = serde_json::from_str::<serde_json::Value>(start_frame) else {
         return Vec::new();
@@ -651,7 +733,55 @@ pub(crate) struct CallChecks {
     early_verdict: bool,
     /// December said "no, not that" while the request handed on was being worked on.
     correction: bool,
+    /// The tool about to start is a status check (`mochi-ask --result`, `--read`, `--cancel`): not a handoff
+    /// (2026-11-21: "I've asked Claude to send the link" passed the handoff check because `mochi-ask --result` had
+    /// run 15 s before; nothing was sent).
+    status_tool: bool,
+    /// When each request still waiting for its answer was handed on, oldest first.
+    handed_at: std::collections::VecDeque<Instant>,
+    /// When December asked for all of something ("the full news", "read it").
+    full_asks: Vec<Instant>,
+    /// December chose long answers in the app: every answer is read whole.
+    long_answers: bool,
+    /// The voice said the work is done while it was only handed on.
+    done_claim: bool,
+    /// December asked for all of it this turn; what the voice said this turn, in characters; whether it handed on.
+    full_asked_turn: bool,
+    turn_said_chars: usize,
+    turn_handed: bool,
 }
+
+/// Sent when the voice says the work is done while it was only handed on (2026-11-21: "I've updated the LinkedIn
+/// strategy" and "I've sent the brief to the room", each said seconds after handing it on).
+pub(crate) const DONE_NUDGE: &str = "(Server check, not December speaking: you told December it's done, but you \
+only handed it on: it's still being worked on and nothing is done yet. Correct that in one short sentence, like \
+\"Sorry, I've passed it on; it isn't done yet, I'll tell you when it is.\")";
+
+/// Sent when December asked for all of it and the voice gave a short version (2026-11-21: "Can you tell the full
+/// news?" got two sentences).
+pub(crate) const FULL_NUDGE: &str = "(Server check, not December speaking: December asked for all of it, and you \
+gave a short version. Give the whole thing now: everything you have on it (what your tool returned, or the full \
+answer), at an even pace, nothing left out. For an answer that came from the chat, run mochi-ask --read --start and \
+read it part by part. If you have nothing more, say so in one sentence.)";
+
+/// How the voice says the work is finished (lowercased, straight apostrophes).
+const DONE_SAID: &[&str] = &[
+    "i've updated", "i have updated", "is updated", "is now updated", "has been updated", "sent it to the room",
+    "to the team in the room", "i've sent the", "has been sent", "i've shared", "is done", "it's done", "all done",
+    "i've fixed", "is fixed", "i've posted", "is posted", "i've created", "i've changed", "i've made the change",
+    "i've added", "i've saved", "is saved", "अपडेट गरें", "पठाइसकें", "सकियो",
+];
+/// ...unless the line is about the handoff itself or the future ("I've sent it to Claude", "it'll be done soon").
+const DONE_NOT: &[&str] =
+    &["claude", "passed", "passing", "handed", "asked", "will ", "'ll ", "once ", "when it", "still", "?"];
+
+/// Whether the voice's line (lowercased) says the work is finished.
+pub(crate) fn claims_done(text: &str) -> bool {
+    DONE_SAID.iter().any(|w| text.contains(w)) && !DONE_NOT.iter().any(|w| text.contains(w))
+}
+
+/// How far back December's "all of it" still counts for a request handed on.
+const FULL_ASK_BEFORE: Duration = Duration::from_secs(30);
 
 /// Sent when the voice answers before the answer it handed on is back (2026-11-19: "my view is to hold" MNBBL, said
 /// a minute before Samir's answer came in, and Samir's answer was "sell, not hold").
@@ -820,7 +950,8 @@ pub(crate) fn nudge_kind(nudge: &str) -> &'static str {
         (ANSWER_NUDGE, "answer not sent on"), (BUSY_NUDGE, "busy"), (CANCEL_NUDGE, "cancel"), (HANGING_NUDGE, "hanging"),
         (BOOK_NUDGE, "library book"), (WORK_NUDGE, "agent work"), (CANT_NUDGE, "said it can't"),
         (PROJECT_NUDGE, "own project"), (VERDICT_NUDGE, "answered before the answer"),
-        (CORRECTION_NUDGE, "wrong request"),
+        (CORRECTION_NUDGE, "wrong request"), (DONE_NUDGE, "said done while handed on"),
+        (FULL_NUDGE, "short when all was asked"),
     ]
     .iter()
     .find(|(text, _)| *text == nudge)
@@ -1004,6 +1135,32 @@ impl CallChecks {
         self
     }
 
+    /// December chose long answers in the app.
+    pub(crate) fn set_long_answers(&mut self, on: bool) {
+        self.long_answers = on;
+    }
+
+    /// The model called a tool (before it starts): what kind of shell command it is.
+    pub(crate) fn tool_call(&mut self, name: &str, command: &str, now: Instant) {
+        let command = command.trim();
+        self.status_tool = name == "shell" && command.starts_with("mochi-ask --");
+        let handed = name == "spawn_async_subagent" || (name == "shell" && command.starts_with("mochi-ask") && !self.status_tool);
+        if handed {
+            self.handed_at.push_back(now);
+            self.turn_handed = true;
+        }
+    }
+
+    /// Whether the answer that just arrived should be read whole: December asked for all of it around the time
+    /// it was handed on (or since), or chose long answers.
+    pub(crate) fn wants_full_answer(&mut self, now: Instant) -> bool {
+        self.handed_at.retain(|at| now.duration_since(*at) < Duration::from_secs(1800));
+        let handed = self.handed_at.pop_front().unwrap_or_else(|| now.checked_sub(Duration::from_secs(180)).unwrap_or(now));
+        let from = handed.checked_sub(FULL_ASK_BEFORE).unwrap_or(handed);
+        self.full_asks.retain(|at| now.duration_since(*at) < Duration::from_secs(1800));
+        self.long_answers || self.full_asks.iter().any(|at| *at >= from)
+    }
+
     /// An answer from another speaker's chat is being passed to the call.
     pub(crate) fn answer_passed(&mut self) {
         self.reading_answer = true;
@@ -1028,7 +1185,8 @@ impl CallChecks {
         }
         // all always see the event, so their state stays right even when only one may speak
         let wrong = self.call_facts(event, now);
-        let claimed = self.handoff.on_event(event, now);
+        let status_check = matches!(event, HandoffEvent::ToolStarted(_)) && std::mem::take(&mut self.status_tool);
+        let claimed = if status_check { None } else { self.handoff.on_event(event, now) };
         let unchecked = self.lookup.on_event(event, now);
         let nudge = wrong.or(claimed).or(unchecked)?;
         if self.nudged {
@@ -1057,6 +1215,10 @@ impl CallChecks {
                 if self.brain_busy && corrects(text) {
                     self.correction = true;
                 }
+                if asks_full(text) {
+                    self.full_asks.push(now);
+                    self.full_asked_turn = true;
+                }
                 self.said_not_started = false;
                 self.said_cancelled = false;
                 self.checking_at = None;
@@ -1066,6 +1228,11 @@ impl CallChecks {
                 let text = text.to_lowercase().replace('\u{2019}', "'");
                 if says_cant(&text) {
                     self.cant_said = true;
+                }
+                self.turn_said_chars += text.chars().count();
+                let waiting = self.handed_at.back().is_some_and(|at| now.duration_since(*at) < Duration::from_secs(600));
+                if (self.brain_busy || waiting) && !self.reading_answer && claims_done(&text) {
+                    self.done_claim = true;
                 }
                 if self.brain_busy && NOT_STARTED_SAID.iter().any(|w| text.contains(w)) {
                     self.said_not_started = true;
@@ -1116,8 +1283,17 @@ impl CallChecks {
                 let cant = std::mem::take(&mut self.cant_said) && !ran && !answering;
                 let verdict = std::mem::take(&mut self.early_verdict);
                 let corrected = std::mem::take(&mut self.correction) && !ran;
+                let done = std::mem::take(&mut self.done_claim);
+                let said = std::mem::take(&mut self.turn_said_chars);
+                let handed = std::mem::take(&mut self.turn_handed);
+                let short_for_full = self.full_asked_turn && !handed && !answering && said > 0 && said < 300;
+                if said > 0 {
+                    self.full_asked_turn = false;
+                }
                 let nudge = if verdict {
                     Some(VERDICT_NUDGE)
+                } else if done {
+                    Some(DONE_NUDGE)
                 } else if self.said_not_started {
                     Some(BUSY_NUDGE)
                 } else if self.said_cancelled && !shelled {
@@ -1136,6 +1312,8 @@ impl CallChecks {
                     Some(WORK_NUDGE)
                 } else if cant {
                     Some(CANT_NUDGE)
+                } else if short_for_full {
+                    Some(FULL_NUDGE)
                 } else {
                     None
                 };

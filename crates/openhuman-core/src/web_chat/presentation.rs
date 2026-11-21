@@ -390,3 +390,41 @@ pub mod test_support;
 #[cfg(test)]
 #[path = "presentation_tests.rs"]
 mod tests;
+
+/// Claude's notes from between its steps, glued onto the answer ("...conflicts with the new direction.Good, the
+/// strategy is solid. Now I need the brief.Nadia's brief wasn't saved..."; 2026-11-21, read as several messages run
+/// together): the short lead-in before an "In short:" answer is dropped, and sentences that ran into each other get
+/// a paragraph break. Otherwise the text is kept as it is.
+pub(crate) fn tidy_reply(text: &str) -> String {
+    static GLUED: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    let glued = GLUED
+        .get_or_init(|| regex::Regex::new(r#"([a-z0-9)\]"'\u{2019}][.!?\u{2026}])([A-Z][a-z])"#).expect("valid regex"));
+    let mut text = text;
+    if let Some(at) = text.find("In short:") {
+        if at > 0 && text[..at].chars().count() < 800 {
+            text = &text[at..];
+        }
+    }
+    // code (fenced or `inline`) is left exactly as it is: "Math.Pow" there is not two sentences
+    let mut out = String::with_capacity(text.len() + 16);
+    for (i, block) in text.split("```").enumerate() {
+        if i > 0 {
+            out.push_str("```");
+        }
+        if i % 2 == 1 {
+            out.push_str(block);
+            continue;
+        }
+        for (j, part) in block.split('`').enumerate() {
+            if j > 0 {
+                out.push('`');
+            }
+            if j % 2 == 1 {
+                out.push_str(part);
+            } else {
+                out.push_str(&glued.replace_all(part, "$1\n\n$2"));
+            }
+        }
+    }
+    out
+}

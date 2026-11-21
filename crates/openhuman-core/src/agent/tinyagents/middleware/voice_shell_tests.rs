@@ -102,6 +102,7 @@ fn a_call_may_read_books_but_not_change_the_library() {
     assert!(voice_may_run("mochi-room who cafe"));
     assert!(voice_may_run("mochi-room show 2"));
     assert!(voice_may_run("mochi-room send"));
+    assert!(voice_may_run("mochi-room link"), "the room link goes to the phone (2026-11-21: asked for three times)");
     assert!(!voice_may_run("mochi-room draft \"should I hire\""), "the brief is Claude's (room skill)");
     assert!(!voice_may_run("mochi-room pdf"));
     assert!(!voice_may_run("mochi-books summary-set alice book"));

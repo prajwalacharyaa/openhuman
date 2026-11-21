@@ -20,7 +20,8 @@ use tinyagents_live::LiveAgentEvent;
 
 use super::error::LiveVoiceError;
 use super::handoff::{
-    asks_december, claude_reply_note, earlier_reply_note, earlier_threads, hung_up, resume_handle_clear,
+    asks_december, claude_reply_note, earlier_reply_note, earlier_threads, full_answer_note, hung_up,
+    is_answer_note, resume_handle_clear, typed_text_note, wants_long_answers, ASK_CLIENT, TYPED_NOTE,
     resume_handle_set, CallChecks, HandoffEvent, NoteGate, NudgeDelay, Retelling, NUDGE, nudge_kind, unspoken_clear,
     unspoken_set, unspoken_take,
 };
@@ -159,6 +160,7 @@ pub(crate) fn parse_start(message: &Message) -> Result<LiveStartRequest, LiveVoi
             agent,
             dry_run,
             reconnect,
+            long_answers: _,
         }) => Ok(LiveStartRequest {
             provider,
             thread_id,
@@ -192,6 +194,7 @@ pub async fn handle_live_voice_ws(socket: WebSocket, config: Arc<Config>) {
         Message::Text(text) => earlier_threads(text),
         _ => Vec::new(),
     };
+    let long_answers = matches!(&first, Message::Text(text) if wants_long_answers(text));
     let request = match parse_start(&first) {
         Ok(request) => request,
         Err(error) => {
@@ -202,6 +205,7 @@ pub async fn handle_live_voice_ws(socket: WebSocket, config: Arc<Config>) {
     };
 
     let dry_run = request.dry_run;
+    let input_rate = request.input_sample_rate;
     let agent = request.agent.as_deref().and_then(|name| session::agent_voice(&config.workspace_dir, name));
     let agent_call = agent.is_some();
     let started = match session::start(config.clone(), request, &session_id).await {
@@ -245,6 +249,11 @@ pub async fn handle_live_voice_ws(socket: WebSocket, config: Arc<Config>) {
     let timing_on = timing::enabled_from(std::env::var(timing::TIMING_ENV).ok().as_deref());
     let mut timing = VoiceTiming::default();
     let mut checks = CallChecks::for_call(agent_call);
+    checks.set_long_answers(long_answers);
+    // the last sound from the phone or laptop: Gemini closes a session that hears nothing ("client inactivity",
+    // 2026-11-21 on the desktop app while December waited for an answer), so silence is sent in its place
+    let mut last_client_audio = std::time::Instant::now();
+    let mut last_keepalive = std::time::Instant::now();
     let mut notes = NoteGate::default();
     let mut retell = Retelling::default();
     let mut nudges = NudgeDelay::default();
@@ -299,6 +308,7 @@ pub async fn handle_live_voice_ws(socket: WebSocket, config: Arc<Config>) {
                 };
                 let result = match message {
                     Message::Binary(pcm) => {
+                        last_client_audio = std::time::Instant::now();
                         if timing_on {
                             timing.on_client_audio(&pcm, std::time::Instant::now());
                         }
@@ -339,7 +349,30 @@ pub async fn handle_live_voice_ws(socket: WebSocket, config: Arc<Config>) {
                                 _ => {}
                             }
                         }
-                        let note = claude_reply_note(&chat, &thread_id).or_else(|| {
+                        let mut note = claude_reply_note(&chat, &thread_id);
+                        if chat.thread_id == thread_id && chat.client_id == ASK_CLIENT
+                            && matches!(chat.event.as_str(), "chat_done" | "chat_error")
+                        {
+                            let full = checks.wants_full_answer(std::time::Instant::now());
+                            if full && chat.event == "chat_done" {
+                                note = note.filter(|n| is_answer_note(n)).map(|n| full_answer_note(&n));
+                                tracing::info!(session_id, "{LOG_PREFIX} December asked for all of it: the answer is read whole");
+                            }
+                        }
+                        // what December typed goes to the voice too, so it can talk about it
+                        if note.as_deref() == Some(TYPED_NOTE) {
+                            let typed = crate::threads::store::blocking::get_messages(config.workspace_dir.clone(), thread_id.clone())
+                                .await
+                                .ok()
+                                .and_then(|messages| {
+                                    messages.into_iter().rev().find(|m| m.sender == "user" && !m.content.trim().is_empty())
+                                })
+                                .map(|m| m.content);
+                            if let Some(typed) = typed {
+                                note = Some(typed_text_note(&typed));
+                            }
+                        }
+                        let note = note.or_else(|| {
                             let note = earlier_reply_note(&chat, &earlier);
                             if note.is_some() {
                                 checks.answer_passed();
@@ -362,6 +395,17 @@ pub async fn handle_live_voice_ws(socket: WebSocket, config: Arc<Config>) {
                 }
             }
             _ = note_tick.tick() => {
+                let now = std::time::Instant::now();
+                if now.duration_since(last_client_audio) > Duration::from_secs(15)
+                    && now.duration_since(last_keepalive) > Duration::from_secs(10)
+                {
+                    if last_keepalive <= last_client_audio {
+                        tracing::info!(session_id, "{LOG_PREFIX} no sound from the phone or laptop for 15 s: sending silence so the line stays open");
+                    }
+                    last_keepalive = now;
+                    let silence = vec![0u8; (input_rate as usize / 10) * 2]; // 100 ms of PCM16 mono
+                    let _ = sender.send_audio(silence).await;
+                }
                 if let Some(nudge) = nudges.due(std::time::Instant::now()) {
                     if nudge == NUDGE {
                         tracing::info!(session_id, "{LOG_PREFIX} said it's on it without a handoff call: nudging");
@@ -457,6 +501,8 @@ pub async fn handle_live_voice_ws(socket: WebSocket, config: Arc<Config>) {
                     tracing::info!(session_id, ?time_left_ms, "{LOG_PREFIX} the provider will close this connection soon");
                 }
                 if let LiveAgentEvent::Live(LiveEvent::ToolCall(call)) = &event {
+                    let command = call.args.get("command").and_then(serde_json::Value::as_str).unwrap_or_default();
+                    checks.tool_call(&call.name, command, std::time::Instant::now());
                     if reads_phone(&call.name, &call.args) {
                         persister.mark_private(); // December's phone data stays out of memory
                     }
@@ -496,7 +542,12 @@ pub async fn handle_live_voice_ws(socket: WebSocket, config: Arc<Config>) {
                         Outbound::Json(frame) => sink.send(json_message(&frame)).await,
                         Outbound::Audio(pcm) => sink.send(Message::Binary(pcm)).await,
                         // a retelling of Claude's answer: the answer itself is in the chat already
-                        Outbound::Persist(TranscriptRole::Agent, _) if retell.skips_agent_line() => Ok(()),
+                        // logged (the journal stays in memory), so "I got two replies" can be checked later
+                        Outbound::Persist(TranscriptRole::Agent, text) if retell.skips_agent_line() => {
+                            let said: String = text.chars().take(160).collect();
+                            tracing::info!(session_id, chars = text.chars().count(), said = %said, "{LOG_PREFIX} said, retelling an answer");
+                            Ok(())
+                        }
                         Outbound::Persist(role, text) => {
                             persister.save(role, &text).await;
                             Ok(())

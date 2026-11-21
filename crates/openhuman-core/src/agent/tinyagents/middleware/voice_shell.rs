@@ -92,7 +92,7 @@ pub(crate) fn voice_may_run(command: &str) -> bool {
 
 /// What a call may do with `mochi-room`: read the room's meetings, and send the draft Mochi's Claude wrote and read
 /// back once December said yes. Writing a brief (`draft`) is Claude's job (the room skill), never the voice's.
-const VOICE_ROOM_COMMANDS: &[&str] = &["list", "show", "who", "report", "pattern", "send"];
+const VOICE_ROOM_COMMANDS: &[&str] = &["list", "show", "who", "report", "pattern", "send", "link"];
 
 fn room_only_reads_or_sends(part: &str) -> bool {
     let mut words = part.split_whitespace();

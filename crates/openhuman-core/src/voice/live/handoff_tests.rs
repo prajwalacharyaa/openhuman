@@ -717,3 +717,95 @@ fn a_nepali_i_couldnt_is_a_refusal() {
     // 2026-11-21 12:41: "I couldn't check the live status, contact Buddha Air" (the flight question)
     assert!(says_cant("मैले आजको बुद्ध एयरको पोखरा जाने फ्लाइटको लाइभ स्टेटस हेर्न सकिनँ।"));
 }
+
+#[test]
+fn a_status_check_does_not_cover_a_claimed_handoff() {
+    // 2026-11-21 21:50: mochi-ask --result ran, then "I've asked Claude to send the room link" with nothing sent
+    let t0 = std::time::Instant::now();
+    let later = |s: u64| t0 + std::time::Duration::from_secs(s);
+    let mut checks = CallChecks::default();
+    checks.on_event(HandoffEvent::UserSaid("Provide me the link for that room discussion."), t0);
+    checks.tool_call("shell", "mochi-ask --result", later(1));
+    checks.on_event(HandoffEvent::ToolStarted("shell"), later(1));
+    checks.on_event(HandoffEvent::TurnComplete, later(3));
+    checks.on_event(HandoffEvent::UserSaid("Tell Claude to provide that link to me in the chat."), later(15));
+    checks.on_event(HandoffEvent::AgentSaid("I've asked Claude to send the room discussion link directly to your chat."), later(16));
+    assert_eq!(checks.on_event(HandoffEvent::TurnComplete, later(17)), Some(NUDGE));
+
+    // a real handoff still covers the claim
+    let mut checks = CallChecks::default();
+    checks.on_event(HandoffEvent::UserSaid("Ask Claude for the link."), t0);
+    checks.tool_call("shell", "mochi-ask \"Send December the room link\"", later(1));
+    checks.on_event(HandoffEvent::ToolStarted("shell"), later(1));
+    checks.on_event(HandoffEvent::AgentSaid("I've asked Claude to send it."), later(2));
+    assert_eq!(checks.on_event(HandoffEvent::TurnComplete, later(3)), None);
+}
+
+#[test]
+fn done_said_while_only_handed_on_is_corrected() {
+    // 2026-11-21 21:49 and 22:04: "I've updated the LinkedIn strategy", "I've sent the brief to the room"
+    assert!(claims_done("i've updated the linkedin strategy to focus on your technical knowledge."));
+    assert!(claims_done("i've sent the linkedin strategy brief to the team in the room for their decision."));
+    assert!(!claims_done("i've sent it to claude, it's working on it."));
+    assert!(!claims_done("it'll be done in a minute."));
+    let t0 = std::time::Instant::now();
+    let later = |s: u64| t0 + std::time::Duration::from_secs(s);
+    let mut checks = CallChecks::default();
+    checks.on_event(HandoffEvent::UserSaid("Okay, let's send it to the room."), t0);
+    checks.tool_call("shell", "mochi-ask \"Send the LinkedIn brief to the room\"", later(1));
+    checks.on_event(HandoffEvent::ToolStarted("shell"), later(1));
+    checks.on_event(HandoffEvent::AgentSaid("I've sent the LinkedIn strategy brief to the team in the room for their decision."), later(5));
+    assert_eq!(checks.on_event(HandoffEvent::TurnComplete, later(6)), Some(DONE_NUDGE));
+    // once the answer is back, passing it on is not a false claim
+    checks.wants_full_answer(later(30));
+    checks.brain_finished(false);
+    checks.on_event(HandoffEvent::AgentSaid("It's done: the room is meeting on it now."), later(31));
+    assert_eq!(checks.on_event(HandoffEvent::TurnComplete, later(32)), None);
+}
+
+#[test]
+fn all_of_it_means_all_of_it() {
+    // 2026-11-21 03:42: "Can you tell the full news?" got two sentences
+    assert!(asks_full("About the Russia bombing campaign, can you tell the full news?"));
+    assert!(asks_full("Read me the whole thing."));
+    assert!(asks_full("पूरा भन त"));
+    assert!(!asks_full("What? I don't get it. Explain to me simply."));
+    assert!(!asks_full("Is it completed?"));
+    let t0 = std::time::Instant::now();
+    let later = |s: u64| t0 + std::time::Duration::from_secs(s);
+    let mut checks = CallChecks::default();
+    checks.on_event(HandoffEvent::UserSaid("Can you tell the full news?"), t0);
+    checks.on_event(HandoffEvent::AgentSaid("Russia started bombing Ukraine's energy grid during peace talks."), later(2));
+    assert_eq!(checks.on_event(HandoffEvent::TurnComplete, later(3)), Some(FULL_NUDGE));
+
+    // an answer handed on while December asked for all of it is read whole; one asked plainly is not
+    let mut checks = CallChecks::default();
+    checks.on_event(HandoffEvent::UserSaid("Check the JiguBites repos and tell me everything."), t0);
+    checks.tool_call("shell", "mochi-ask \"Check the JiguBites repos\"", later(1));
+    checks.on_event(HandoffEvent::UserSaid("And what's the weather?"), later(60));
+    checks.tool_call("shell", "mochi-ask \"Weather in Kathmandu\"", later(61));
+    assert!(checks.wants_full_answer(later(100)));
+    assert!(!checks.wants_full_answer(later(130)));
+    let mut checks = CallChecks::default();
+    checks.set_long_answers(true);
+    assert!(checks.wants_full_answer(later(5)), "December chose long answers in the app");
+}
+
+#[test]
+fn typed_text_reaches_the_voice_without_phone_numbers() {
+    // 2026-11-21 21:45: the pasted LinkedIn link, and "I can't access the chat" three times
+    let note = typed_text_note("https://www.linkedin.com/in/acharyaprajwal/");
+    assert!(note.contains("https://www.linkedin.com/in/acharyaprajwal/"));
+    assert!(!TYPED_NOTE.contains("can't see its text"));
+    assert_eq!(strip_phone_numbers("call 9841-234567 or +977 1 4412345 today"), "call [number] or [number] today");
+    assert_eq!(strip_phone_numbers("post 2 of 10 on 2026-11-21, 1500000 rupees"), "post 2 of 10 on 2026-11-21, 1500000 rupees");
+}
+
+#[test]
+fn a_long_answer_offers_the_rest_and_a_full_one_reads_it_all() {
+    let long = format!("In short: two repos are behind. Detail: {}", "Nepal Hazard Explorer is two commits behind. ".repeat(20));
+    assert!(has_more(&long));
+    assert!(!has_more("In short: all up to date. Detail: four repos checked."));
+    let note = full_answer_note(&format!("(Server note, not December speaking: x)\n\n{long}"));
+    assert!(is_answer_note(&note) && note.contains("mochi-ask --read --start") && note.ends_with(long.as_str()));
+}

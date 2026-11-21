@@ -127,6 +127,9 @@ pub enum ClientFrame {
         /// The same call coming back after a dropped connection: it keeps the voice it started with.
         #[serde(default)]
         reconnect: bool,
+        /// December chose "read long answers in full" in the app: Claude's answers are read whole, part by part.
+        #[serde(default)]
+        long_answers: bool,
     },
     /// A typed user message.
     Text { text: String },
