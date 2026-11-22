@@ -254,6 +254,10 @@ pub async fn handle_live_voice_ws(socket: WebSocket, config: Arc<Config>) {
     // 2026-11-21 on the desktop app while December waited for an answer), so silence is sent in its place
     let mut last_client_audio = std::time::Instant::now();
     let mut last_keepalive = std::time::Instant::now();
+    // the memory embedder unloads after 10 idle minutes (it holds ~390 MB of the 2 GB server) and takes ~3 s to load:
+    // asked for at the start of a call and every few minutes during it, so a hand-off's memory recall isn't cold
+    // (2026-11-22: the first hand-off of a call waited 7 s for memory, 3.2 s of it loading the embedder)
+    let mut embedder_warmed: Option<std::time::Instant> = None;
     let mut notes = NoteGate::default();
     let mut retell = Retelling::default();
     let mut nudges = NudgeDelay::default();
@@ -396,6 +400,10 @@ pub async fn handle_live_voice_ws(socket: WebSocket, config: Arc<Config>) {
             }
             _ = note_tick.tick() => {
                 let now = std::time::Instant::now();
+                if !dry_run && embedder_warmed.map_or(true, |at| now.duration_since(at) > super::embedder::WARM_EVERY) {
+                    embedder_warmed = Some(now);
+                    tokio::spawn(super::embedder::warm());
+                }
                 if now.duration_since(last_client_audio) > Duration::from_secs(15)
                     && now.duration_since(last_keepalive) > Duration::from_secs(10)
                 {

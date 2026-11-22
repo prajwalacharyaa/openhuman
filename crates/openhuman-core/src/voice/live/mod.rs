@@ -17,6 +17,7 @@
 //! Provider protocols live in `tinyliveagents`; nothing here speaks a
 //! provider's wire format.
 
+mod embedder;
 mod error;
 #[cfg(feature = "http-server")]
 mod handoff;
