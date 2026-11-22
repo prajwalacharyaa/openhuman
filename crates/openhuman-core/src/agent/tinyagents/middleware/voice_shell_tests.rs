@@ -191,3 +191,15 @@ fn every_search_result_carries_the_facts_note() {
         assert!(note.contains(must), "{must}");
     }
 }
+
+/// 2026-11-22: a call may ask whether the repos are current and read LinkedIn drafts, never change either.
+#[test]
+fn a_call_reads_git_and_linkedin_but_never_changes_them() {
+    for ok in ["mochi-git uptodate", "mochi-git repos", "mochi-linkedin list", "mochi-linkedin show 1a56e05e"] {
+        assert!(voice_may_run(ok), "{ok}");
+    }
+    for no in ["mochi-git push mochi/x", "mochi-git sync portfolio-site", "mochi-git clone x", "mochi-git",
+               "mochi-linkedin post 1a56e05e", "mochi-linkedin draft --file x", "mochi-linkedin"] {
+        assert!(!voice_may_run(no), "{no}");
+    }
+}

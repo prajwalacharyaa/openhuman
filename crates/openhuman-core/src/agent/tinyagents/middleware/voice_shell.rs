@@ -16,8 +16,21 @@ use tinytools::ToolResult as TaToolResult;
 /// `cat` reads only Mochi's workspace (see [`cat_reads_only_workspace`]).
 pub(crate) const VOICE_COMMANDS: &[&str] = &[
     "cat", "date", "mochi-ask", "mochi-phone", "mochi-remind", "mochi-watch", "mochi-mail", "mochi-notify",
-    "mochi-call", "mochi-books", "mochi-guest", "mochi-room",
+    "mochi-call", "mochi-books", "mochi-guest", "mochi-room", "mochi-git", "mochi-linkedin",
 ];
+
+/// Helpers a call may only read with (2026-11-22: "are my repos up to date?" and "read me the LinkedIn draft" went
+/// to Claude, 71 s and 23 s, for what these answer in seconds). Cloning, pushing, drafting and posting stay Claude's.
+const VOICE_READ_ONLY: &[(&str, &[&str])] = &[("mochi-git", &["uptodate", "repos"]), ("mochi-linkedin", &["list", "show"])];
+
+fn only_reads(part: &str) -> bool {
+    let mut words = part.split_whitespace();
+    let Some(program) = words.next().map(|p| p.rsplit('/').next().unwrap_or(p)) else { return true };
+    match VOICE_READ_ONLY.iter().find(|(name, _)| *name == program) {
+        Some((_, subs)) => words.next().is_some_and(|sub| subs.contains(&sub)),
+        None => true,
+    }
+}
 
 /// December handed the phone to someone (`mochi-guest`): the file that says so, in the workspace.
 const GUEST_FILE: &str = "guest.json";
@@ -88,6 +101,7 @@ pub(crate) fn voice_may_run(command: &str) -> bool {
         && parts.iter().all(|part| cat_reads_only_workspace(part))
         && parts.iter().all(|part| books_only_read(part))
         && parts.iter().all(|part| room_only_reads_or_sends(part))
+        && parts.iter().all(|part| only_reads(part))
 }
 
 /// What a call may do with `mochi-room`: read the room's meetings, and send the draft Mochi's Claude wrote and read
