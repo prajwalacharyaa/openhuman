@@ -822,3 +822,10 @@ fn the_in_short_and_detail_labels_are_never_read_out() {
     );
     assert_eq!(without_labels("No labels here."), "No labels here.");
 }
+
+#[test]
+fn saying_it_learned_without_learning_is_caught() {
+    assert!(says_learning("understood, thank you for showing me. i am learning."));
+    assert!(says_learning("yes, i understand now and have learned the action."));
+    assert!(!says_learning("done."));
+}

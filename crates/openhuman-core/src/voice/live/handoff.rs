@@ -737,6 +737,9 @@ pub(crate) struct CallChecks {
     turn_shell: bool,
     /// The voice said it can't do something, this turn.
     cant_said: bool,
+    /// The voice said it's watching or learning this turn, and whether it ran mochi-phone learn.
+    learn_said: bool,
+    turn_learned: bool,
     /// The turn is the voice passing on Claude's answer (whose "I can't" is Claude's verdict, not a refusal).
     reading_answer: bool,
     /// December named one of their own projects this turn.
@@ -879,6 +882,20 @@ words, and say in a few words what you're doing (never \"I'm on it\"). Only the 
 something December does by touch in the app (deleting a book, clearing the inbox, locking), open that screen for them \
 with mochi-phone screen and say what to tap.)";
 
+/// Sent when the voice said it's watching or learning December's tap but didn't start it (2026-11-22 23:00: "I am
+/// learning", "I have learned the action", three times, and mochi-phone learn never ran).
+pub(crate) const LEARN_NUDGE: &str = "(Server check, not December speaking: you said you're watching or learning, \
+but nothing is watching: only mochi-phone learn makes the phone remember December's next tap. Run it now with what \
+December is about to show, in a few words (mochi-phone learn \"close the mini player\"), and say \"Go ahead\". \
+Never say you learned something unless mochi-phone learn ran.)";
+
+/// How the voice says it's watching or learning (lowercased).
+pub(crate) fn says_learning(text: &str) -> bool {
+    ["learning", "learned", "learnt", "i'm watching", "i am watching", "ready to learn", "watching you", "show me how"]
+        .iter()
+        .any(|w| text.contains(w))
+}
+
 /// How the voice says it can't (lowercased, straight apostrophes).
 const CANT_SAID: &[&str] = &[
     "i can't", "i cannot", "i can not", "i'm not able", "i am not able", "i'm unable", "i am unable",
@@ -965,7 +982,7 @@ pub(crate) fn nudge_kind(nudge: &str) -> &'static str {
     [
         (NUDGE, "handoff claimed"), (LOOKUP_NUDGE, "lookup"), (STATUS_NUDGE, "status"), (MEMORY_NUDGE, "memory"),
         (ANSWER_NUDGE, "answer not sent on"), (BUSY_NUDGE, "busy"), (CANCEL_NUDGE, "cancel"), (HANGING_NUDGE, "hanging"),
-        (BOOK_NUDGE, "library book"), (WORK_NUDGE, "agent work"), (CANT_NUDGE, "said it can't"),
+        (BOOK_NUDGE, "library book"), (WORK_NUDGE, "agent work"), (CANT_NUDGE, "said it can't"), (LEARN_NUDGE, "said it's learning"),
         (PROJECT_NUDGE, "own project"), (VERDICT_NUDGE, "answered before the answer"),
         (CORRECTION_NUDGE, "wrong request"), (DONE_NUDGE, "said done while handed on"),
         (FULL_NUDGE, "short when all was asked"),
@@ -1160,6 +1177,9 @@ impl CallChecks {
     /// The model called a tool (before it starts): what kind of shell command it is.
     pub(crate) fn tool_call(&mut self, name: &str, command: &str, now: Instant) {
         let command = command.trim();
+        if name == "shell" && command.starts_with("mochi-phone learn") {
+            self.turn_learned = true;
+        }
         self.status_tool = name == "shell" && command.starts_with("mochi-ask --");
         let handed = name == "spawn_async_subagent" || (name == "shell" && command.starts_with("mochi-ask") && !self.status_tool);
         if handed {
@@ -1246,6 +1266,9 @@ impl CallChecks {
                 if says_cant(&text) {
                     self.cant_said = true;
                 }
+                if says_learning(&text) {
+                    self.learn_said = true;
+                }
                 self.turn_said_chars += text.chars().count();
                 let waiting = self.handed_at.back().is_some_and(|at| now.duration_since(*at) < Duration::from_secs(600));
                 if (self.brain_busy || waiting) && !self.reading_answer && claims_done(&text) {
@@ -1298,6 +1321,8 @@ impl CallChecks {
                 let work = std::mem::take(&mut self.work_asked) && !ran;
                 let project = std::mem::take(&mut self.project_asked) && !ran && !answering;
                 let cant = std::mem::take(&mut self.cant_said) && !ran && !answering;
+                let learn = std::mem::take(&mut self.learn_said) && !std::mem::take(&mut self.turn_learned);
+                self.turn_learned = false;
                 let verdict = std::mem::take(&mut self.early_verdict);
                 let corrected = std::mem::take(&mut self.correction) && !ran;
                 let done = std::mem::take(&mut self.done_claim);
@@ -1307,7 +1332,9 @@ impl CallChecks {
                 if said > 0 {
                     self.full_asked_turn = false;
                 }
-                let nudge = if verdict {
+                let nudge = if learn {
+                    Some(LEARN_NUDGE)
+                } else if verdict {
                     Some(VERDICT_NUDGE)
                 } else if done {
                     Some(DONE_NUDGE)
