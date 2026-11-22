@@ -69,8 +69,10 @@ class PhoneControl : AccessibilityService() {
                 "swipe", "scroll" -> swipe(s, op, args.optString("dir").lowercase())
                 "tap" -> if (args.optString("label").trim().lowercase() in setOf("first", "the first", "first one", "first video"))
                     tapFirst(s) else tap(s, args.optString("label"), args.optBoolean("yes"))
-                "type" -> type(s, args.optString("text"))
-                else -> fail("unknown step: home, back, recents, notifications, swipe, scroll, app, tap, type")
+                "type" -> type(s, args.optString("text"), args.optBoolean("enter"))
+                // the keyboard's Enter / Search key in the box on screen: runs a search in any app
+                "enter" -> enter(s)
+                else -> fail("unknown step: home, back, recents, notifications, swipe, scroll, app, tap, type, enter, search")
             }
         }
 
@@ -168,7 +170,7 @@ class PhoneControl : AccessibilityService() {
         }
 
         /** Type into the box in focus (or the first one on the screen). Never presses send. */
-        private fun type(s: PhoneControl, text: String): JSONObject {
+        private fun type(s: PhoneControl, text: String, enter: Boolean = false): JSONObject {
             if (text.isEmpty()) return fail("type what?")
             val all = nodes(s)
             val box = all.firstOrNull { it.isEditable && it.isFocused } ?: all.firstOrNull { it.isEditable && it.isVisibleToUser }
@@ -178,7 +180,18 @@ class PhoneControl : AccessibilityService() {
             val args = Bundle().apply {
                 putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, if (before.isBlank()) text else "$before $text")
             }
-            return if (box.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)) ok("typed it (not sent)") else fail("the box didn't take the text")
+            if (!box.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)) return fail("the box didn't take the text")
+            if (!enter) return ok("typed it (not sent)")
+            // a search box: Enter runs the search (in a chat box Enter may send, so it's only asked for searches)
+            return if (box.performAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_IME_ENTER.id)) ok("typed it and pressed Enter")
+                else ok("typed it; Enter didn't work here: tap the search button")
+        }
+
+        /** The keyboard's Enter key in the focused box. */
+        private fun enter(s: PhoneControl): JSONObject {
+            val box = nodes(s).firstOrNull { it.isEditable && it.isFocused } ?: return fail("no text box is selected")
+            return if (box.performAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_IME_ENTER.id)) ok("pressed Enter")
+                else fail("Enter didn't work in this box: tap the button instead")
         }
 
         /** Open an installed app by the name December says ("Instagram", "insta", "YouTube"). No accessibility needed. */
