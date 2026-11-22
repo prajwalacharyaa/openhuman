@@ -79,6 +79,7 @@ class CallActivity : ComponentActivity(), Call.Listener {
     private var question by mutableStateOf("") // what Mochi is calling about, while it rings
     private var tick by mutableIntStateOf(0) // redraws the buttons after mute/speaker changes
     private var call: JSONObject? = null
+    private var freezeTapAt = 0L
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -335,6 +336,11 @@ class CallActivity : ComponentActivity(), Call.Listener {
                             // one tap, no speech recognition needed: Mochi hears nothing until unfrozen
                             CallButton(Icons2.Snow, if (Call.frozen) "Unfreeze" else "Freeze", if (Call.frozen) "Unfreeze" else "Freeze",
                                 if (Call.frozen) c.blueInk else c.field, if (Call.frozen) c.bg else c.ink) {
+                                // a second tap within a second is the same press (2026-11-22: unfreeze, freeze, unfreeze
+                                // in 2 s, and Mochi said "I'm here" twice)
+                                val t = System.currentTimeMillis()
+                                if (t - freezeTapAt < 1_000) return@CallButton
+                                freezeTapAt = t
                                 if (Call.frozen) Call.unfreeze() else Call.freezeNow()
                                 window.decorView.postDelayed({ showControls() }, 150)
                             }

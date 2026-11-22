@@ -878,6 +878,9 @@ const CANT_SAID: &[&str] = &[
 /// ...unless it's about hearing or certainty ("I can't hear you", "I can't say for sure"), not a refusal.
 const CANT_NOT_REFUSAL: &[&str] = &[
     "hear", "understand", "catch", "make out", "wait", "guarantee", "promise", "be sure", "for sure", "सुनि",
+    // an apology for offering too much isn't a refusal to hand on (2026-11-22: "I apologize for suggesting something
+    // I can't actually do" drew the nudge, and Mark apologised a second time)
+    "apolog", "sorry", "my mistake", "shouldn't have", "should have", "overreach", "माफ",
 ];
 
 /// Whether the voice's line says it can't do something.

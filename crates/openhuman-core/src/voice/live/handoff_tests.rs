@@ -603,6 +603,7 @@ fn hearing_trouble_is_not_a_refusal() {
     assert!(says_cant("I can't generate images or visual designs directly."));
     assert!(says_cant("I don't have the ability to publish to LinkedIn directly."));
     assert!(!says_cant("Sorry, I can't hear you well, could you say that again?"));
+    assert!(!says_cant("You're completely right. I overreached, and I apologize for suggesting something I can't actually do."), "an apology, not a refusal");
     assert!(!says_cant("I can't say for sure without checking."));
     assert!(!says_cant("I couldn't find Iris in your phone contacts."));
 }
