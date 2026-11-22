@@ -57,7 +57,9 @@ object PhoneActions {
                 }
             }
             // "open settings" / "show my holdings": a screen of this app (a fixed list, see AppNav)
-            "app.open" -> AppNav.open(c, args.optString("screen"), args.optString("arg"))
+            // in another app (Instagram, WhatsApp...), "go to chats" means that app's chats, not Mochi's (2026-11-22)
+            "app.open" -> PhoneControl.inOtherApp(c, args.optString("screen"))
+                ?: AppNav.open(c, args.optString("screen"), args.optString("arg"))
             // phone control by voice: home, back, swipe, scroll, open an app, tap a named button, type (PhoneControl)
             "screen.do" -> PhoneControl.act(c, args)
             // "message Samir on Instagram: mango": the chat opens with the words typed, never sent

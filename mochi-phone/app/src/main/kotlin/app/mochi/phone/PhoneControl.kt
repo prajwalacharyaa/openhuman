@@ -155,6 +155,42 @@ class PhoneControl : AccessibilityService() {
         private fun ok(result: String) = JSONObject().put("ok", true).put("result", result)
         private fun fail(error: String) = JSONObject().put("ok", false).put("error", error)
 
+        /** What December may call a screen inside any app, and the button names apps give it. */
+        private val SCREEN_WORDS = mapOf(
+            "chats" to listOf("Messages", "Messenger", "Direct", "Chats", "Chat", "Inbox", "Direct messages"),
+            "chat" to listOf("Messages", "Messenger", "Direct", "Chats", "Chat", "Inbox"),
+            "inbox" to listOf("Inbox", "Messages", "Notifications", "Activity"),
+            "home" to listOf("Home", "Feed"),
+            "settings" to listOf("Settings", "Options", "Menu"),
+            "maps" to listOf("Map", "Maps"),
+            "memory" to emptyList(), "reminders" to emptyList(), "doing" to emptyList(), "agents" to emptyList(),
+            "trading" to emptyList(), "abilities" to emptyList(), "books" to emptyList(), "room" to emptyList(),
+        )
+
+        /**
+         * December is in another app (phone control on): a screen name like "chats" or "home" means that app's own
+         * one, so its button is tapped. Null: Mochi's own screen opens as before (Mochi in front, the launcher, phone
+         * control off, or a screen only Mochi has).
+         */
+        fun inOtherApp(c: Context, screen: String): JSONObject? {
+            if (!allowed(c)) return null
+            val s = running ?: return null
+            val pkg = s.rootInActiveWindow?.packageName?.toString() ?: return null
+            if (pkg == c.packageName || pkg.contains("launcher") || pkg == "com.android.systemui") return null
+            val names = SCREEN_WORDS[screen.lowercase()] ?: return null
+            if (names.isEmpty()) return null
+            val app = runCatching { c.packageManager.getApplicationLabel(c.packageManager.getApplicationInfo(pkg, 0)).toString() }
+                .getOrDefault("this app")
+            // what December showed for it ("watch how I go to chats") comes first
+            (tapLearned(c, s, "go to $screen") ?: tapLearned(c, s, screen))?.let { if (it.optBoolean("ok")) return it }
+            for (n in names) {
+                val r = tap(c, s, n, false)
+                if (r.optBoolean("ok")) return ok("$app's ${screen.lowercase()} (tapped \"$n\")")
+            }
+            return fail("December is in $app: its ${screen.lowercase()} button has no name I know: mochi-phone tap \"<its name>\", " +
+                "or December shows it once (mochi-phone learn \"go to ${screen.lowercase()}\"). Mochi's own screen: open the Mochi app first")
+        }
+
         /** Why it can't act now, or null. */
         private fun blocked(c: Context): String? = when {
             !allowed(c) -> "phone control is off: December turns it on in the Mochi app, Settings > Phone abilities > Phone control"
