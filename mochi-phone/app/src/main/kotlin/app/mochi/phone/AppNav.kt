@@ -33,7 +33,9 @@ object AppNav {
             "chat" -> Intent(c, ChatActivity::class.java).putExtra(ChatActivity.EXTRA_NEW, a.lowercase() == "new")
             "doing" -> Intent(c, DoingActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT)
             "agents" -> Intent(c, AgentsActivity::class.java).apply {
-                if (a.isNotEmpty()) putExtra(AgentsActivity.EXTRA_AGENT, a.lowercase())
+                // by id or by the name December says ("nadia" is the agent "linkedin"): an unknown id showed an empty page
+                if (a.isNotEmpty()) putExtra(AgentsActivity.EXTRA_AGENT, Agents.cached(c).firstOrNull {
+                    it.name.equals(a, true) || it.display.equals(a, true) }?.name ?: a.lowercase())
                 addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT)
             }
             "trading" -> Intent(c, ResearchActivity::class.java).apply {
