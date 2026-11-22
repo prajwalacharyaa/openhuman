@@ -284,6 +284,91 @@ pub(crate) const SEARCH_HANDOFF_NOTE: &str = "\n\n(Several searches already: if 
 December fully, hand the question to Claude with mochi-ask now, with everything you found, instead of \
 searching again.)";
 
+/// Added to every web search result a call gets, so the voice reads it at the moment it answers (a rule in
+/// VOICE.md was not enough). 2026-11-22: asked who won the NPL final, the results held only the schedule ("Final:
+/// Nov 21") and Wikipedia's not-yet-updated "Current champion: Lumbini Lions (1st title)" from the season before;
+/// the voice put them together and said Lumbini won "yesterday". The real winner was Sudurpaschim.
+pub(crate) fn search_facts_note(today: &str) -> String {
+    format!(
+        "\n\n(Before you answer: today is {today}. These are search snippets: many are undated or old, and an \
+         encyclopaedia's \"current\" box can still be last season's. Say only what a snippet states outright about \
+         exactly what December asked (this season, this date), and say where and when it's from (\"Nepal News, \
+         yesterday\"). If no snippet states it, say you couldn't confirm it and offer to hand it to Claude with \
+         mochi-ask. Never piece an answer together from a schedule, a preview or an old page.)"
+    )
+}
+
+/// A question about something that happens or changes day to day (news, results, who won, scores, elections):
+/// searched as dated news from the last week instead of the web at large, where old pages rank first. A past year
+/// in the question ("who won the 2022 World Cup") is history: the ordinary search.
+pub(crate) fn wants_news(query: &str, this_year: i32) -> bool {
+    let q = format!(" {} ", query.to_lowercase().replace(|c: char| !c.is_alphanumeric(), " "));
+    let past_year = q.split_whitespace().filter_map(|w| w.parse::<i32>().ok())
+        .any(|y| (1900..this_year).contains(&y));
+    if past_year {
+        return false;
+    }
+    // weather, prices and outages have better pages than news articles
+    const NOT: &[&str] = &[" weather ", " forecast ", " rain ", " price ", " prices ", " rate ", " rates ", " nepse ",
+        " stock ", " share ", " down ", " not working ", " outage "];
+    if NOT.iter().any(|w| q.contains(w)) {
+        return false;
+    }
+    const WORDS: &[&str] = &[
+        " news ", " latest ", " yesterday ", " this week ", " breaking ", " headlines ", " result ", " results ",
+        " score ", " scores ", " won ", " win ", " wins ", " winner ", " winners ", " champion ", " champions ",
+        " final ", " election ", " elected ", " died ", " dies ", " resign ", " resigned ",
+    ];
+    WORDS.iter().any(|w| q.contains(w))
+}
+
+/// Tavily's news results (topic news, last week) as the voice reads them: newest first, each with its date and
+/// source; undated ones last, marked so. `None` when there's nothing to read (the ordinary search runs instead).
+pub(crate) fn render_news(query: &str, reply: &serde_json::Value) -> Option<String> {
+    let items = reply.get("results")?.as_array()?;
+    let mut rows: Vec<(Option<chrono::DateTime<chrono::FixedOffset>>, String)> = items
+        .iter()
+        .filter_map(|r| {
+            let title = r.get("title")?.as_str()?.trim();
+            let url = r.get("url").and_then(|u| u.as_str()).unwrap_or_default();
+            let site = url.split('/').nth(2).unwrap_or(url).trim_start_matches("www.");
+            let date = r.get("published_date").and_then(|d| d.as_str())
+                .and_then(|d| chrono::DateTime::parse_from_rfc2822(d).or_else(|_| chrono::DateTime::parse_from_rfc3339(d)).ok());
+            let when = date.map(|d| d.format("%a %d %b %Y").to_string()).unwrap_or_else(|| "date unknown".to_string());
+            let text: String = r.get("content").and_then(|c| c.as_str()).unwrap_or_default()
+                .split_whitespace().collect::<Vec<_>>().join(" ").chars().take(320).collect();
+            Some((date, format!("{title} ({site}, {when})\n   {text}")))
+        })
+        .collect();
+    if rows.is_empty() {
+        return None;
+    }
+    rows.sort_by(|a, b| b.0.cmp(&a.0));
+    let mut out = format!("News for: {query} (the last 7 days, newest first)");
+    for (i, (_, row)) in rows.iter().enumerate() {
+        out.push_str(&format!("\n{}. {row}", i + 1));
+    }
+    Some(out)
+}
+
+/// Dated news from Tavily for a call's news question, with the key the engine already has. `None` on any failure:
+/// the ordinary search then runs.
+async fn dated_news(query: &str) -> Option<String> {
+    if crate::search::tools::local_only_search_block("tavily_search").is_some() {
+        return None;
+    }
+    let key = std::env::var("TAVILY_API_KEY").ok().filter(|k| !k.trim().is_empty())?;
+    let reply: serde_json::Value = reqwest::Client::new()
+        .post("https://api.tavily.com/search")
+        .bearer_auth(key.trim())
+        .timeout(std::time::Duration::from_secs(12))
+        .json(&serde_json::json!({"query": query, "topic": "news", "time_range": "week", "max_results": 6}))
+        .send().await.ok()?
+        .error_for_status().ok()?
+        .json().await.ok()?;
+    render_news(query, &reply)
+}
+
 /// `wrap_tool`: refuse a shell command outside [`VOICE_COMMANDS`]. Installed on live (voice) harnesses only.
 pub(crate) struct VoiceShellMiddleware {
     /// A test call (`dry_run` in its start frame): after the gate, a tool call is logged in full and answered
@@ -358,11 +443,26 @@ impl ToolMiddleware<(), crate::agent::tinyagents::host::OpenHumanRunContext> for
                 Ok(many) => many_searches = many,
             }
         }
-        let mut outcome = next.run(ctx, state, call).await?;
+        let is_search = call.name.contains("web_search");
+        let news = if is_search {
+            let query = call.arguments.get("query").and_then(|q| q.as_str()).unwrap_or_default().to_string();
+            let year = chrono::Datelike::year(&chrono::Local::now());
+            if wants_news(&query, year) { dated_news(&query).await } else { None }
+        } else {
+            None
+        };
+        let mut outcome = match news {
+            Some(text) => {
+                tracing::info!("[voice-live] news question: answered from dated news (last 7 days)");
+                MiddlewareToolOutcome::Result(TaToolResult::success(text))
+            }
+            None => next.run(ctx, state, call).await?,
+        };
         if let MiddlewareToolOutcome::Result(result) = &mut outcome {
-            if many_searches && !result.is_error {
-                let text = super::tool_result_text(result);
-                super::replace_tool_result_text(result, text + SEARCH_HANDOFF_NOTE);
+            if is_search && !result.is_error {
+                let today = chrono::Local::now().format("%A %d %B %Y").to_string();
+                let text = super::tool_result_text(result) + &search_facts_note(&today);
+                super::replace_tool_result_text(result, if many_searches { text + SEARCH_HANDOFF_NOTE } else { text });
             }
         }
         if let MiddlewareToolOutcome::Result(result) = &outcome {

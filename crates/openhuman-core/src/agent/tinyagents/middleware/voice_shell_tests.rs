@@ -150,3 +150,44 @@ fn a_guest_on_the_phone_gets_no_tool_of_decembers() {
     assert!(!guest_may("memory", &serde_json::json!({ "query": "December's shares" })));
     assert!(voice_may_run("mochi-guest \"Prabesh\" \"JiguBites\""));
 }
+
+/// 2026-11-22, the NPL final: "who won" and "latest news" go to dated news; history and how-to don't.
+#[test]
+fn news_questions_are_searched_as_dated_news() {
+    for q in ["winner of 2026 Nepal Premier League Final", "latest news from Nepal", "Nepal Premier League schedule status 2026 results",
+              "who won the match yesterday", "election results Madhesh"] {
+        assert!(wants_news(q, 2026), "{q}");
+    }
+    for q in ["who won the 2022 world cup", "how to make momo", "Animal Farm summary", "weather in Pokhara today",
+              "why is Outlook not working today", "latest NEPSE share price"] {
+        assert!(!wants_news(q, 2026), "{q}");
+    }
+}
+
+/// Newest first, each with its source and date; undated last and marked; nothing to read is None.
+#[test]
+fn news_is_read_newest_first_with_source_and_date() {
+    let reply = serde_json::json!({"results": [
+        {"title": "Sudur Paschim Royals win NPL 2026 final", "url": "https://www.facebook.com/x", "content": "Royals beat Lumbini by 10 wickets."},
+        {"title": "NPL 2026 Final: Date, Time", "url": "https://gurutravelsltd.com/blog", "published_date": "Fri, 20 Nov 2026 13:00:00 GMT", "content": "Final on 21 November."},
+        {"title": "Sudurpaschim Royals win third NPL title", "url": "https://english.nepalnews.com/s/sports/x",
+         "published_date": "Sat, 21 Nov 2026 15:00:00 GMT", "content": "Sudurpaschim Royals clinched their first-ever NPL title."}
+    ]});
+    let text = render_news("winner of the NPL final", &reply).expect("results");
+    let first = text.find("english.nepalnews.com, Sat 21 Nov 2026").expect("dated source");
+    let second = text.find("gurutravelsltd.com, Fri 20 Nov 2026").expect("second");
+    let undated = text.find("facebook.com, date unknown").expect("undated marked");
+    assert!(first < second && second < undated, "{text}");
+    assert!(render_news("x", &serde_json::json!({"results": []})).is_none());
+}
+
+/// Every search result a call reads ends with the facts note: today's date, only what a snippet states, say the
+/// source and date, never piece it together, offer Claude.
+#[test]
+fn every_search_result_carries_the_facts_note() {
+    let note = search_facts_note("Sunday 22 November 2026");
+    for must in ["today is Sunday 22 November 2026", "states outright", "where and when", "couldn't confirm", "mochi-ask",
+                 "Never piece an answer together", "last season"] {
+        assert!(note.contains(must), "{must}");
+    }
+}
