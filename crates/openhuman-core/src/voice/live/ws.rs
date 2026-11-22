@@ -258,6 +258,8 @@ pub async fn handle_live_voice_ws(socket: WebSocket, config: Arc<Config>) {
     // asked for at the start of a call and every few minutes during it, so a hand-off's memory recall isn't cold
     // (2026-11-22: the first hand-off of a call waited 7 s for memory, 3.2 s of it loading the embedder)
     let mut embedder_warmed: Option<std::time::Instant> = None;
+    // stranger mode at a table: replies to talk that isn't for Mochi are held back (table.rs)
+    let mut table = super::table::Table::default();
     let mut notes = NoteGate::default();
     let mut retell = Retelling::default();
     let mut nudges = NudgeDelay::default();
@@ -324,6 +326,14 @@ pub async fn handle_live_voice_ws(socket: WebSocket, config: Arc<Config>) {
                             sender.send_text(text).await
                         }
                         Ok(ClientFrame::Interrupt) => sender.interrupt().await,
+                        Ok(ClientFrame::Table { on }) => {
+                            if on != table.on {
+                                tracing::info!(session_id, on, "{LOG_PREFIX} stranger mode: other voices nearby {}",
+                                    if on { "(Mochi answers only what's for it)" } else { "gone (back to normal)" });
+                            }
+                            table.set(on);
+                            Ok(())
+                        }
                         Ok(ClientFrame::Stop) => {
                             ended_because = "December hung up (stop frame)".to_string();
                             let _ = sender.close().await;
@@ -523,6 +533,15 @@ pub async fn handle_live_voice_ws(socket: WebSocket, config: Arc<Config>) {
                     }
                     _ => {}
                 }
+                if let LiveAgentEvent::Live(LiveEvent::InputTranscript { text, is_final }) = &event {
+                    if let Some(hush) = table.user_said(text, *is_final, std::time::Instant::now()) {
+                        tracing::info!(session_id, hush, "{LOG_PREFIX} {}", if hush {
+                            "table talk, not for Mochi: its reply is held back"
+                        } else {
+                            "December is talking to Mochi again"
+                        });
+                    }
+                }
                 let handoff_step = match &event {
                     LiveAgentEvent::ToolStarted { name, .. } => Some(HandoffEvent::ToolStarted(name.as_str())),
                     LiveAgentEvent::Live(LiveEvent::InputTranscript { text, is_final: true }) => {
@@ -546,6 +565,16 @@ pub async fn handle_live_voice_ws(socket: WebSocket, config: Arc<Config>) {
                     }
                 }
                 for outbound in map_event(event, &session_id, &provider, &thread_id) {
+                    // a reply to table talk: neither heard on the phone nor kept in the chat
+                    if table.hush && matches!(&outbound, Outbound::Audio(_)
+                        | Outbound::Json(ServerFrame::Transcript { role: TranscriptRole::Agent, .. })
+                        | Outbound::Persist(TranscriptRole::Agent, _))
+                    {
+                        continue;
+                    }
+                    if matches!(&outbound, Outbound::Audio(_)) {
+                        table.mochi_spoke(std::time::Instant::now());
+                    }
                     let sent = match outbound {
                         Outbound::Json(frame) => sink.send(json_message(&frame)).await,
                         Outbound::Audio(pcm) => sink.send(Message::Binary(pcm)).await,

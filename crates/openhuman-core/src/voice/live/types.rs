@@ -135,6 +135,8 @@ pub enum ClientFrame {
     Text { text: String },
     /// Stop the agent's current reply.
     Interrupt,
+    /// Stranger mode heard other voices nearby (on) or none for a while (off): see `table.rs`.
+    Table { on: bool },
     /// End the session.
     Stop,
 }

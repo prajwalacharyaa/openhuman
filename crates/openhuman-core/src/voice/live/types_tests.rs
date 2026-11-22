@@ -52,3 +52,10 @@ fn server_frames_serialize_the_documented_shape() {
         json!({"type": "tool_finished", "call_id": "c", "name": "n", "ok": false, "cancelled": true})
     );
 }
+
+/// Stranger mode's table frame from the phone (an older engine ignores it as an unknown frame).
+#[test]
+fn the_phone_says_when_other_voices_are_near() {
+    let on: ClientFrame = serde_json::from_str(r#"{"type":"table","on":true}"#).unwrap();
+    assert_eq!(on, ClientFrame::Table { on: true });
+}

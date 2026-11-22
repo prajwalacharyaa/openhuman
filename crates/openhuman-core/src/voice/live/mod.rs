@@ -26,6 +26,7 @@ mod persist;
 mod providers;
 pub mod schemas;
 mod session;
+mod table;
 #[cfg(feature = "http-server")]
 mod timing;
 pub mod types;
