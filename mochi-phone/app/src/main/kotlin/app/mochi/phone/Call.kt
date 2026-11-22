@@ -441,6 +441,7 @@ object Call {
     }
 
     private fun freeze(socket: WebSocket) {
+        if (!active || ws !== socket) return // the call ended before the freeze ran: no listener left on the mic
         frozen = true
         quiet = true
         socket.send("""{"type":"interrupt"}""")
@@ -645,10 +646,8 @@ object Call {
         }
     }
 
-    private fun record(socket: WebSocket) = audio(socket) {
-        if (app.checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
-            throw IllegalStateException("microphone permission is off")
-        }
+    /** A new recording from the call mic, already started; throws with a plain reason when it can't record. */
+    private fun openMic(): AudioRecord {
         val min = AudioRecord.getMinBufferSize(RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
         val rec = AudioRecord(MediaRecorder.AudioSource.VOICE_COMMUNICATION, RATE, AudioFormat.CHANNEL_IN_MONO,
             AudioFormat.ENCODING_PCM_16BIT, maxOf(min, FRAME_BYTES * 4))
@@ -656,13 +655,35 @@ object Call {
             rec.release()
             throw IllegalStateException("the microphone is busy")
         }
-        val echo = if (AcousticEchoCanceler.isAvailable()) AcousticEchoCanceler.create(rec.audioSessionId) else null
-        val noise = if (NoiseSuppressor.isAvailable()) NoiseSuppressor.create(rec.audioSessionId) else null
-        echo?.enabled = true
-        noise?.enabled = true
+        rec.startRecording()
+        if (rec.recordingState != AudioRecord.RECORDSTATE_RECORDING) {
+            rec.release()
+            throw IllegalStateException("the microphone is busy (another app may be using it)")
+        }
+        return rec
+    }
+
+    private fun record(socket: WebSocket) = audio(socket) {
+        if (app.checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            throw IllegalStateException("microphone permission is off")
+        }
+        var rec = openMic()
+        var echo: AcousticEchoCanceler? = null
+        var noise: NoiseSuppressor? = null
+        fun effects() {
+            echo?.release(); noise?.release()
+            echo = if (AcousticEchoCanceler.isAvailable()) AcousticEchoCanceler.create(rec.audioSessionId) else null
+            noise = if (NoiseSuppressor.isAvailable()) NoiseSuppressor.create(rec.audioSessionId) else null
+            echo?.enabled = true
+            noise?.enabled = true
+        }
+        effects()
         val buf = ByteArray(FRAME_BYTES)
         val silence = ByteArray(FRAME_BYTES)
         var quietSent = 0 // silent frames sent since the mute / freeze began
+        var failed = 0     // mic reads in a row that gave nothing
+        var lastError = 0
+        var reopened = 0
         fun quiet() {
             quietSent++
             // the first second tells Gemini December stopped; then one frame every 20 s so the session isn't dropped
@@ -671,12 +692,18 @@ object Call {
             sentBytes += silence.size
         }
         try {
-            rec.startRecording()
             while (active && ws === socket) {
                 if (Unfreeze.needsMic) {
+                    // 2026-11-22: a whole call went to Mochi as silence. The unfreeze listener only ever runs during
+                    // a freeze; outside one it's a leftover holding the mic, so it's stopped here.
+                    if (!frozen) {
+                        Unfreeze.stop()
+                        Crashes.note(app, "call: the unfreeze listener held the mic outside a freeze; let go")
+                        continue
+                    }
                     // checking what came after "Mochi" on the phone: the recognizer needs the mic; the call stays open
                     rec.stop()
-                    while (Unfreeze.needsMic && active && ws === socket) {
+                    while (Unfreeze.needsMic && frozen && active && ws === socket) {
                         quiet()
                         Thread.sleep(100)
                     }
@@ -686,10 +713,15 @@ object Call {
                 var n = 0
                 while (n < FRAME_BYTES && active) {
                     val got = rec.read(buf, n, FRAME_BYTES - n)
-                    if (got <= 0) break
+                    if (got <= 0) { lastError = got; break }
                     n += got
                 }
                 if (n == FRAME_BYTES) {
+                    if (failed >= 10) {
+                        if (!muted && !frozen) status("Listening")
+                        Crashes.note(app, "call: the microphone works again after ${failed / 10} s")
+                    }
+                    failed = 0
                     if (muted || frozen) {
                         quiet()
                     } else if (Stranger.on) {
@@ -715,6 +747,21 @@ object Call {
                     // with the same silent keepalive as a mute, or Gemini closes it for inactivity after ~2 min
                     quiet()
                     Thread.sleep(100)
+                    failed++
+                    // 2026-11-22: this used to go on silently for a whole call ("Listening" on screen, Mochi heard
+                    // nothing). After 1 s: say so, tell the server why, and open the mic again (3 tries, then hang up).
+                    if (failed == 10) {
+                        Crashes.note(app, "call: the microphone gave nothing for 1 s (read $lastError, muted=$muted, frozen=$frozen); opening it again")
+                        if (!muted && !frozen) status("The microphone gives no sound: trying again…")
+                    }
+                    if (failed % 10 == 0) {
+                        if (reopened >= 3) throw IllegalStateException("the microphone gives no sound (another app may be using it)")
+                        reopened++
+                        runCatching { rec.stop() }
+                        rec.release()
+                        rec = openMic()
+                        effects()
+                    }
                 }
             }
         } finally {

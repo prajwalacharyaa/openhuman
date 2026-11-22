@@ -42,4 +42,23 @@ object Crashes {
             }
         }.start()
     }
+
+    /** A call problem that isn't a crash (the mic giving nothing): sent now, at most one every 10 s, into the same
+     *  log as crashes, so a call review shows why Mochi heard nothing. Only what happened: no audio, no words. */
+    @Volatile private var lastNote = 0L
+    fun note(c: Context, what: String) {
+        val now = System.currentTimeMillis()
+        if (now - lastNote < 10_000) return
+        lastNote = now
+        Thread {
+            runCatching {
+                val version = runCatching { c.packageManager.getPackageInfo(c.packageName, 0).versionName }.getOrNull()
+                val body = JSONObject().put("report", "note (not a crash), version ${version ?: "?"}: $what")
+                val req = Request.Builder().url("${Mochi.ringUrl(c)}/app/crash")
+                    .header("Authorization", "Bearer ${Mochi.token(c)}")
+                    .post(body.toString().toRequestBody("application/json".toMediaType())).build()
+                Mochi.http.newCall(req).execute().close()
+            }
+        }.start()
+    }
 }
