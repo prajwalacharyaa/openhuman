@@ -55,11 +55,11 @@ class AbilitiesActivity : Activity() {
                 if (inAndroid) Ui.GREEN else Ui.BLUE) {
                 PhoneControl.openAndroidSettings(this)
             }, Ui.matchWidth(this, 8))
-            // what December showed it ("watch how I close this"), kept only on this phone
+            // what December showed it ("watch how I close this"): on the phone, a copy on the server (PhoneControl.sync)
             val lessons = PhoneControl.learned(this)
             if (lessons.isNotEmpty()) {
                 val pm = packageManager
-                card.addView(Ui.text(this, "Learned by watching you (kept only on this phone):\n" + lessons.joinToString("\n") { l ->
+                card.addView(Ui.text(this, "Learned by watching you (on this phone, with a copy in your server's vault so a reinstall gets them back):\n" + lessons.joinToString("\n") { l ->
                     val app = runCatching { pm.getApplicationLabel(pm.getApplicationInfo(l.optString("app"), 0)).toString() }
                         .getOrDefault(l.optString("app"))
                     "• ${l.optString("name")} ($app)"

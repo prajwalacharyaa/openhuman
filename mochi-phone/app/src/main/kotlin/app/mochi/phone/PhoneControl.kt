@@ -11,6 +11,8 @@ import android.os.Bundle
 import android.provider.Settings
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
 
 /**
@@ -66,8 +68,41 @@ class PhoneControl : AccessibilityService() {
             (0 until a.length()).map { a.getJSONObject(it) }
         }.getOrDefault(emptyList())
 
-        private fun store(c: Context, list: List<JSONObject>) =
-            Mochi.prefs(c).edit().putString(LEARNED, org.json.JSONArray(list).toString()).apply()
+        private fun store(c: Context, list: List<JSONObject>) {
+            Mochi.prefs(c).edit().putString(LEARNED, org.json.JSONArray(list.takeLast(200)).toString())
+                .putBoolean(LEARNED_DIRTY, true).apply()
+            Thread { push(c) }.start()
+        }
+
+        // the server keeps a copy of the phone's list (2026-11-22, December: get them back after a reinstall). The
+        // phone's list wins: every change sends it whole; one that couldn't go (offline) is sent at the next start.
+        private const val LEARNED_DIRTY = "phone_control_learned_dirty"
+        private const val LEARNED_RESTORED = "phone_control_learned_restored"
+        private const val LESSONS_PATH = "/phone-control/lessons"
+
+        private fun push(c: Context) = runCatching {
+            val body = JSONObject().put("lessons", org.json.JSONArray(learned(c)))
+            val req = okhttp3.Request.Builder().url(Mochi.ringUrl(c) + LESSONS_PATH)
+                .header("Authorization", "Bearer ${Mochi.token(c)}")
+                .post(body.toString().toRequestBody("application/json".toMediaType())).build()
+            Mochi.http.newCall(req).execute().use { if (it.isSuccessful) Mochi.prefs(c).edit().putBoolean(LEARNED_DIRTY, false).apply() }
+        }
+
+        /** At the app's start: send changes that didn't go; on a fresh install (nothing here yet), take the server's copy. */
+        fun sync(c: Context) = Thread {
+            val prefs = Mochi.prefs(c)
+            if (prefs.getBoolean(LEARNED_DIRTY, false)) { push(c); return@Thread }
+            if (learned(c).isNotEmpty() || prefs.getBoolean(LEARNED_RESTORED, false)) return@Thread
+            runCatching {
+                val req = okhttp3.Request.Builder().url(Mochi.ringUrl(c) + LESSONS_PATH)
+                    .header("Authorization", "Bearer ${Mochi.token(c)}").build()
+                Mochi.http.newCall(req).execute().use { r ->
+                    if (!r.isSuccessful) return@use
+                    val got = JSONObject(r.body?.string().orEmpty()).optJSONArray("lessons") ?: org.json.JSONArray()
+                    prefs.edit().putString(LEARNED, got.toString()).putBoolean(LEARNED_RESTORED, true).apply()
+                }
+            }
+        }.start()
 
         /** One lesson per name and app: showing it again replaces it. */
         private fun save(c: Context, step: JSONObject) = store(c, learned(c).filterNot {

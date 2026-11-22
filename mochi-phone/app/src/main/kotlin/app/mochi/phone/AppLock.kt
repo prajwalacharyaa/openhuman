@@ -96,6 +96,7 @@ class MochiApp : Application() {
             override fun onReceive(c: Context, i: Intent) = AppLock.relock()
         }, android.content.IntentFilter(Intent.ACTION_SCREEN_OFF))
         Crashes.sendPending(this)
+        if (Mochi.configured(this)) PhoneControl.sync(this) // learned taps: send what didn't go, or get them back after a reinstall
     }
 }
 
