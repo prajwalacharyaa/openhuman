@@ -260,6 +260,8 @@ pub async fn handle_live_voice_ws(socket: WebSocket, config: Arc<Config>) {
     let mut embedder_warmed: Option<std::time::Instant> = None;
     // stranger mode at a table: replies to talk that isn't for Mochi are held back (table.rs)
     let mut table = super::table::Table::default();
+    // a phone step that worked needs no words (quiet.rs): its reply is held back
+    let mut quiet = super::quiet::Quiet::default();
     let mut notes = NoteGate::default();
     let mut retell = Retelling::default();
     let mut nudges = NudgeDelay::default();
@@ -521,6 +523,7 @@ pub async fn handle_live_voice_ws(socket: WebSocket, config: Arc<Config>) {
                 if let LiveAgentEvent::Live(LiveEvent::ToolCall(call)) = &event {
                     let command = call.args.get("command").and_then(serde_json::Value::as_str).unwrap_or_default();
                     checks.tool_call(&call.name, command, std::time::Instant::now());
+                    quiet.tool_call(&call.call_id, &call.name, command);
                     if reads_phone(&call.name, &call.args) {
                         persister.mark_private(); // December's phone data stays out of memory
                     }
@@ -531,6 +534,15 @@ pub async fn handle_live_voice_ws(socket: WebSocket, config: Arc<Config>) {
                     LiveAgentEvent::Live(LiveEvent::OutputTranscript { text, is_final: true }) if !text.trim().is_empty() => {
                         read_spoke = true
                     }
+                    _ => {}
+                }
+                match &event {
+                    LiveAgentEvent::ToolFinished { call_id, is_error, .. } => {
+                        if quiet.tool_finished(call_id, *is_error) {
+                            tracing::info!(session_id, "{LOG_PREFIX} a phone step worked: its spoken reply is held back");
+                        }
+                    }
+                    LiveAgentEvent::Live(LiveEvent::InputTranscript { .. } | LiveEvent::TurnComplete { .. }) => quiet.end(),
                     _ => {}
                 }
                 if let LiveAgentEvent::Live(LiveEvent::InputTranscript { text, is_final }) = &event {
@@ -566,7 +578,7 @@ pub async fn handle_live_voice_ws(socket: WebSocket, config: Arc<Config>) {
                 }
                 for outbound in map_event(event, &session_id, &provider, &thread_id) {
                     // a reply to table talk: neither heard on the phone nor kept in the chat
-                    if table.hush && matches!(&outbound, Outbound::Audio(_)
+                    if (table.hush || quiet.on) && matches!(&outbound, Outbound::Audio(_)
                         | Outbound::Json(ServerFrame::Transcript { role: TranscriptRole::Agent, .. })
                         | Outbound::Persist(TranscriptRole::Agent, _))
                     {

@@ -27,6 +27,7 @@ mod providers;
 pub mod schemas;
 mod session;
 mod table;
+mod quiet;
 #[cfg(feature = "http-server")]
 mod timing;
 pub mod types;
