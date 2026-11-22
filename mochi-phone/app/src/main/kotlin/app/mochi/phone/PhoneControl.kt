@@ -184,7 +184,9 @@ class PhoneControl : AccessibilityService() {
                 "type" -> type(s, args.optString("text"), args.optBoolean("enter"))
                 // the keyboard's Enter / Search key in the box on screen: runs a search in any app
                 "enter" -> enter(s)
-                else -> fail("unknown step: home, back, recents, notifications, swipe, scroll, app, tap, type, enter, search, learn, forget")
+                // "remove what's typed": empty the text box on screen
+                "clear" -> clear(s)
+                else -> fail("unknown step: home, back, recents, notifications, swipe, scroll, app, tap, type, enter, search, learn, forget, clear, media")
             }
         }
 
@@ -345,6 +347,15 @@ class PhoneControl : AccessibilityService() {
             // a search box: Enter runs the search (in a chat box Enter may send, so it's only asked for searches)
             return if (box.performAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_IME_ENTER.id)) ok("typed it and pressed Enter")
                 else ok("typed it; Enter didn't work here: tap the search button")
+        }
+
+        /** Empty the box in focus (or the first one on screen). */
+        private fun clear(s: PhoneControl): JSONObject {
+            val all = nodes(s)
+            val box = all.firstOrNull { it.isEditable && it.isFocused } ?: all.firstOrNull { it.isEditable && it.isVisibleToUser }
+                ?: return fail("there's no text box on the screen now")
+            val args = Bundle().apply { putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, "") }
+            return if (box.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)) ok("cleared") else fail("the box didn't clear")
         }
 
         /** The keyboard's Enter key in the focused box. */
