@@ -17,6 +17,9 @@ android {
         targetSdk = 35
         versionCode = (System.getenv("MOCHI_VERSION_CODE") ?: "1").toInt()
         versionName = System.getenv("MOCHI_VERSION_NAME") ?: "dev"
+        // the voice check's runtime (onnxruntime) ships native code: 64-bit ARM only (every current phone),
+        // so the app grows ~7 MB instead of ~28 MB for all four kinds
+        ndk { abiFilters += "arm64-v8a" }
     }
 
     signingConfigs {
@@ -66,4 +69,6 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.8.7")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
+    // Voice recognition (VoiceId): runs December's speaker model on the phone; the model itself is downloaded
+    implementation("com.microsoft.onnxruntime:onnxruntime-android:1.20.0")
 }

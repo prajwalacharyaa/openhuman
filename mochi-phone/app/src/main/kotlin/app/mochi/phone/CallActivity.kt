@@ -229,6 +229,9 @@ class CallActivity : ComponentActivity(), Call.Listener {
                         }, style = Type.small, color = c.muted, maxLines = 2, overflow = TextOverflow.Ellipsis,
                         // TalkBack says it when it changes: connecting, reconnecting, ended
                         modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite })
+                    // who the voice check thinks is talking (listen-only while the threshold is set from real calls)
+                    if (Call.active && !incoming && VoiceId.enabled(this@CallActivity) && VoiceId.lastLabel.isNotEmpty())
+                        Text("Hearing: ${VoiceId.lastLabel} (testing)", style = Type.small, color = c.muted, maxLines = 1)
                     // this call's tokens: Claude's exact (from the server's feed), Gemini's estimated from the audio
                     if (Call.active && !incoming) Text("Claude ${Doing.fmt(Doing.claudeSince(Call.startedAtMs).total)}" +
                         " · Gemini ≈${Doing.fmt(Call.geminiTokens)} tokens", style = Type.small, color = c.muted, maxLines = 1)

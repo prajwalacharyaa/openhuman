@@ -334,6 +334,7 @@ object Call {
         Doing.addGeminiToday(app, geminiTokens)
         frozen = false
         Unfreeze.stop()
+        VoiceId.callEnded(app)
         ws?.let { runCatching { it.send("""{"type":"stop"}"""); it.close(1000, "hang up") } }
         ws = null
         val am = app.getSystemService(AudioManager::class.java)
@@ -692,6 +693,8 @@ object Call {
                         quietSent = 0
                         socket.send(buf.toByteString())
                         sentBytes += buf.size
+                        // the voice check (listen-only: scores only), off the audio path: it copies the frame
+                        VoiceId.onFrame(app, buf.copyOf(), talking())
                     }
                 } else if (active) {
                     // the mic gave nothing (another app holds it, a Bluetooth switch): keep the session alive

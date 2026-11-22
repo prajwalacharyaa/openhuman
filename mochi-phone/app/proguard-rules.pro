@@ -5,3 +5,6 @@
 -dontwarn org.openjsse.**
 # readable crash stacks in the logs
 -keepattributes SourceFile,LineNumberTable
+
+# onnxruntime (VoiceId) is called from native code: keep its classes as they are
+-keep class ai.onnxruntime.** { *; }
