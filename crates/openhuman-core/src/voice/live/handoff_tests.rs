@@ -828,4 +828,7 @@ fn saying_it_learned_without_learning_is_caught() {
     assert!(says_learning("understood, thank you for showing me. i am learning."));
     assert!(says_learning("yes, i understand now and have learned the action."));
     assert!(!says_learning("done."));
+    assert!(asks_learn("No, it's not done. Learn from this, okay? You have to click here."));
+    assert!(asks_learn("Watch how I close this video."));
+    assert!(!asks_learn("Close the minimized video."));
 }

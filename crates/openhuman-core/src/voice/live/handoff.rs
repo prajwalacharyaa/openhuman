@@ -739,6 +739,7 @@ pub(crate) struct CallChecks {
     cant_said: bool,
     /// The voice said it's watching or learning this turn, and whether it ran mochi-phone learn.
     learn_said: bool,
+    learn_asked: bool,
     turn_learned: bool,
     /// The turn is the voice passing on Claude's answer (whose "I can't" is Claude's verdict, not a refusal).
     reading_answer: bool,
@@ -892,6 +893,15 @@ Never say you learned something unless mochi-phone learn ran.)";
 /// How the voice says it's watching or learning (lowercased).
 pub(crate) fn says_learning(text: &str) -> bool {
     ["learning", "learned", "learnt", "i'm watching", "i am watching", "ready to learn", "watching you", "show me how"]
+        .iter()
+        .any(|w| text.contains(w))
+}
+
+/// December asking Mochi to learn a tap ("watch how I close this", "learn from this", "I'll teach you").
+pub(crate) fn asks_learn(text: &str) -> bool {
+    let text = text.to_lowercase().replace('\u{2019}', "'");
+    ["watch how", "watch me", "learn how", "learn from", "learn this", "learn that", "teach you", "i'll show you",
+        "i will show you", "सिक"]
         .iter()
         .any(|w| text.contains(w))
 }
@@ -1256,6 +1266,9 @@ impl CallChecks {
                     self.full_asks.push(now);
                     self.full_asked_turn = true;
                 }
+                if asks_learn(text) {
+                    self.learn_asked = true;
+                }
                 self.said_not_started = false;
                 self.said_cancelled = false;
                 self.checking_at = None;
@@ -1321,7 +1334,8 @@ impl CallChecks {
                 let work = std::mem::take(&mut self.work_asked) && !ran;
                 let project = std::mem::take(&mut self.project_asked) && !ran && !answering;
                 let cant = std::mem::take(&mut self.cant_said) && !ran && !answering;
-                let learn = std::mem::take(&mut self.learn_said) && !std::mem::take(&mut self.turn_learned);
+                let learn = (std::mem::take(&mut self.learn_said) | std::mem::take(&mut self.learn_asked))
+                    && !std::mem::take(&mut self.turn_learned);
                 self.turn_learned = false;
                 let verdict = std::mem::take(&mut self.early_verdict);
                 let corrected = std::mem::take(&mut self.correction) && !ran;
