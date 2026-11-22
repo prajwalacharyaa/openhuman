@@ -187,6 +187,7 @@ private fun VoiceRecognition() {
     var progress by remember { mutableStateOf(-1f) }
     var note by remember { mutableStateOf("") }
     var teaching by remember { mutableStateOf(false) }
+    var fresh by remember { mutableStateOf(false) }
     var own by remember { mutableStateOf(VoiceId.hasOwnPrint(ctx)) }
     Text("Mochi learns to tell your voice from other people's. Your voice and voiceprint stay on this phone; " +
         "only a yes or no goes to the server.", style = Type.small, color = c.muted)
@@ -206,20 +207,25 @@ private fun VoiceRecognition() {
             "Stranger mode and \"only your voice\" come after a few calls." else "Off: Mochi doesn't check who's talking.", on) { want ->
             VoiceId.setEnabled(ctx, want); on = want
         }
-        NavRow("Teach Mochi your voice", if (own) "Done: your voiceprint was made on this phone" else
+        NavRow(if (own) "Teach Mochi more" else "Teach Mochi your voice", if (own)
+            "${VoiceId.ownClips(ctx)} sentences so far. Add 5 more somewhere else (on speaker, across the room, a noisy " +
+                "place): your voice sounds different there, and Mochi needs all of them" else
             "Read 5 short sentences (about 30 seconds) for the best match") { teaching = true }
+        if (own) Text("Start the voiceprint over", style = Type.small, color = c.muted,
+            modifier = Modifier.clip(RoundedCornerShape(8.dp)).clickable(role = Role.Button) { fresh = true; teaching = true }
+                .heightIn(min = 44.dp).padding(vertical = Space.s))
         Text("Remove the voice model from this phone", style = Type.small, color = c.danger,
             modifier = Modifier.clip(RoundedCornerShape(8.dp)).clickable(role = Role.Button) {
                 VoiceId.remove(ctx); downloaded = false; on = false; own = false
             }.heightIn(min = 44.dp).padding(vertical = Space.s))
     }
     if (note.isNotEmpty()) Text(note, style = Type.small, color = c.danger)
-    if (teaching) TeachVoice({ teaching = false }) { own = true; note = it }
+    if (teaching) TeachVoice(fresh, { teaching = false; fresh = false }) { own = true; note = it }
 }
 
 /** Five sentences read aloud, each recorded on the phone; their mean is the "own" voiceprint. */
 @Composable
-private fun TeachVoice(onClose: () -> Unit, onDone: (String) -> Unit) {
+private fun TeachVoice(fresh: Boolean, onClose: () -> Unit, onDone: (String) -> Unit) {
     val ctx = LocalContext.current
     val c = LocalMochi.current
     val scope = androidx.compose.runtime.rememberCoroutineScope()
@@ -265,7 +271,7 @@ private fun TeachVoice(onClose: () -> Unit, onDone: (String) -> Unit) {
                 }) { Text(if (recording) "Stop" else "Record") }
                 !saving -> androidx.compose.material3.TextButton({
                     saving = true
-                    io(scope, { VoiceId.teach(ctx, clips.toList()) }, { saving = false; error = Room.friendly(it); clips.clear() }) { alike ->
+                    io(scope, { VoiceId.teach(ctx, clips.toList(), fresh) }, { saving = false; error = Room.friendly(it); clips.clear() }) { alike ->
                         saving = false
                         onDone(if (alike < 0.6f) "Saved, but the recordings didn't sound much alike: a quieter room helps. You can teach it again." else "")
                         onClose()

@@ -158,16 +158,27 @@ object VoiceId {
     /** The scores of [emb] against each voiceprint (cosine, -1..1). */
     fun scores(c: Context, emb: FloatArray): Map<String, Float> = prints(c).mapValues { cosine(emb, it.value) }
 
-    /** "Teach Mochi your voice": the mean of the clips' embeddings becomes the "own" voiceprint. Returns how alike
-     *  the clips were (the lowest score of a clip against the mean: low means a noisy or mixed recording). */
-    fun teach(c: Context, clips: List<ShortArray>): Float {
+    /** "Teach Mochi your voice": the clips' embeddings join the "own" voiceprint (a running sum, so teaching more
+     *  in another place, or holding the phone another way, widens it instead of replacing it; [fresh] starts over).
+     *  Returns how alike the new clips were to the result (the lowest score: low means a noisy or mixed recording). */
+    fun teach(c: Context, clips: List<ShortArray>, fresh: Boolean = false): Float {
         val embs = clips.mapNotNull { embed(c, it) }
         require(embs.size >= 3) { "Each sentence needs at least a second of speech: try again a bit slower." }
-        val mean = normalise(FloatArray(embs[0].size) { i -> embs.sumOf { it[i].toDouble() }.toFloat() / embs.size })
-        ownPrintFile(c).writeText(JSONObject().put("mean", JSONArray(mean.map { it.toDouble() })).put("clips", embs.size)
+        val old = if (fresh) null else runCatching { JSONObject(ownPrintFile(c).readText()) }.getOrNull()
+        val sum = floats(old?.optJSONArray("sum")) ?: floats(old?.optJSONArray("mean"))
+            ?.let { m -> val n = old!!.optInt("clips", 5); FloatArray(m.size) { m[it] * n } }
+            ?: FloatArray(embs[0].size)
+        for (e in embs) for (i in e.indices) sum[i] += e[i]
+        val count = (old?.optInt("clips", 0) ?: 0) + embs.size
+        val mean = normalise(sum)
+        ownPrintFile(c).writeText(JSONObject().put("mean", JSONArray(mean.map { it.toDouble() }))
+            .put("sum", JSONArray(sum.map { it.toDouble() })).put("clips", count)
             .put("made", System.currentTimeMillis()).toString())
         return embs.minOf { cosine(it, mean) }
     }
+
+    /** How many sentences the "own" voiceprint is made of (0: none). */
+    fun ownClips(c: Context): Int = runCatching { JSONObject(ownPrintFile(c).readText()).optInt("clips", 5) }.getOrDefault(0)
 
     // ---- listen-only scoring during a call ----
 
