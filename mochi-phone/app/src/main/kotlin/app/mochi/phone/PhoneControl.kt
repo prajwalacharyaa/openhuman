@@ -167,6 +167,7 @@ class PhoneControl : AccessibilityService() {
             val op = args.optString("op")
             if (op == "app") return openApp(c, args.optString("name"))
             if (op == "search") return search(c, args.optString("app"), args.optString("query"))
+            if (op == "media") return media(c, args.optString("key"))
             blocked(c)?.let { return fail(it) }
             val s = running ?: return fail("phone control isn't connected")
             return when (op) {
@@ -284,6 +285,31 @@ class PhoneControl : AccessibilityService() {
             val said = if (n == -1) "the last one" else "number $n"
             if (hit.first.performAction(AccessibilityNodeInfo.ACTION_CLICK)) return ok("opened $said")
             return gesture(s, Path().apply { moveTo(hit.second.exactCenterX(), hit.second.exactCenterY()) }, 60L, "opened $said")
+        }
+
+        /**
+         * "Pause", "play", "next song": the phone's media buttons, as headphones press them, for whatever is playing
+         * (YouTube, Spotify, most video players). An app that ignores them (Instagram Reels): December shows it once
+         * ("watch how I pause this") and the learned tap does it.
+         */
+        fun media(c: Context, key: String): JSONObject {
+            val code = when (key) {
+                "pause" -> android.view.KeyEvent.KEYCODE_MEDIA_PAUSE
+                "play" -> android.view.KeyEvent.KEYCODE_MEDIA_PLAY
+                "next" -> android.view.KeyEvent.KEYCODE_MEDIA_NEXT
+                "previous" -> android.view.KeyEvent.KEYCODE_MEDIA_PREVIOUS
+                else -> return fail("pause, play, next or previous")
+            }
+            val am = c.getSystemService(android.media.AudioManager::class.java)
+            val wasPlaying = am.isMusicActive
+            am.dispatchMediaKeyEvent(android.view.KeyEvent(android.view.KeyEvent.ACTION_DOWN, code))
+            am.dispatchMediaKeyEvent(android.view.KeyEvent(android.view.KeyEvent.ACTION_UP, code))
+            // a pause that didn't stop anything: this app ignores media buttons
+            if (key == "pause" && wasPlaying) {
+                Thread.sleep(400)
+                if (am.isMusicActive) return fail("this app ignores the pause button: if December shows it once (\"watch how I pause\"), then tap \"pause\"")
+            }
+            return ok(key)
         }
 
         /** "Search YouTube for lofi music": the app's own search results, straight from a link (no typing needed). */
