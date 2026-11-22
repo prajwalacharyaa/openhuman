@@ -26,6 +26,7 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
@@ -215,48 +216,18 @@ class CallActivity : ComponentActivity(), Call.Listener {
             now - Call.lastSpoke > SLEEPY_AFTER_MS -> Mood.Sleepy
             else -> Mood.Listening
         }
-        Column(Modifier.fillMaxSize().background(c.bg).systemBarsPadding().padding(Space.l),
-            horizontalAlignment = Alignment.CenterHorizontally) {
-            // top: back to Home (the call goes on; Home shows "Back to call"), with "Mochi", what it's doing and
-            // this call's tokens beside it (like the "What Mochi is doing" header)
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(Space.m)) {
+        val statusLine = when {
+            Call.silent && !incoming -> "$status · Mochi answers in text"
+            mood == Mood.Sleepy && !Call.frozen && !incoming -> "Listening (quiet for a while)"
+            else -> status
+        }
+        Column(Modifier.fillMaxSize().background(c.bg).systemBarsPadding()) {
+            // top bar: back to Home (the call goes on; Home shows "Back to call"), and on Mochi's call the agent
+            // working for it now (tap: pass the phone; hold: see what they're doing)
+            Row(Modifier.fillMaxWidth().padding(horizontal = Space.l, vertical = Space.s),
+                verticalAlignment = Alignment.CenterVertically) {
                 RoundButton(Icons2.Back, "Back to Home", c.field, c.ink, 44.dp) { finish() }
-                Column(Modifier.weight(1f)) {
-                    Text(speakerName, style = Type.title, color = c.ink)
-                    Text(when {
-                            Call.silent && !incoming -> "$status · silent: Mochi answers in text"
-                            mood == Mood.Sleepy && !Call.frozen && !incoming -> "Listening (quiet for a while)"
-                            else -> status
-                        }, style = Type.small, color = c.muted, maxLines = 2, overflow = TextOverflow.Ellipsis,
-                        // TalkBack says it when it changes: connecting, reconnecting, ended
-                        modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite })
-                    // stranger mode: a tap turns it on or off (also by voice: "stranger mode" / "turn off stranger mode")
-                    if (Call.active && !incoming && VoiceId.enabled(this@CallActivity)) {
-                        // read with the 1 s tick (and the tap), so the state and "hearing" stay current
-                        @Suppress("UNUSED_VARIABLE") val tick = now + strangerTaps
-                        val strangerOn = Stranger.on
-                        Text(if (strangerOn) "Stranger mode on" + (if (Stranger.last.isNotEmpty()) " · hearing: ${Stranger.last}" else "") +
-                                (if (Stranger.tableOn) " · others nearby" else "") else "Stranger mode off",
-                            style = Type.small.copy(fontWeight = if (strangerOn) Type.strong else null),
-                            color = if (strangerOn) c.blueInk else c.muted, maxLines = 2,
-                            modifier = Modifier.clip(RoundedCornerShape(8.dp))
-                                .toggleable(value = strangerOn, role = Role.Switch) { want ->
-                                    val said = Stranger.set(this@CallActivity, want)
-                                    strangerTaps++
-                                    if (said.startsWith("can't")) android.widget.Toast.makeText(this@CallActivity,
-                                        said.removePrefix("can't: ").replaceFirstChar { it.uppercase() }, android.widget.Toast.LENGTH_LONG).show()
-                                }
-                                .heightIn(min = 44.dp).padding(vertical = Space.xs))
-                        if (!strangerOn && VoiceId.lastLabel.isNotEmpty())
-                            Text("Hearing: ${VoiceId.lastLabel} (testing)", style = Type.small, color = c.muted, maxLines = 1)
-                    }
-                    // this call's tokens: Claude's exact (from the server's feed), Gemini's estimated from the audio
-                    if (Call.active && !incoming) Text("Claude ${Doing.fmt(Doing.claudeSince(Call.startedAtMs).total)}" +
-                        " · Gemini ≈${Doing.fmt(Call.geminiTokens)} tokens", style = Type.small, color = c.muted, maxLines = 1)
-                }
-                // top right: on a call with an agent, Mochi; on Mochi's call, the agent working for it right now.
-                // A tap passes the phone to them; holding opens what they're doing (the call goes on)
+                Box(Modifier.weight(1f))
                 val other: Pair<String?, Agents.Agent?>? = when {
                     incoming || !Call.active -> null
                     Call.agent != null -> null to null
@@ -265,7 +236,7 @@ class CallActivity : ComponentActivity(), Call.Listener {
                 if (other != null) {
                     val (otherName, otherAgent) = other
                     val label = otherAgent?.display ?: "Mochi"
-                    Box(Modifier.size(52.dp).clip(CircleShape).background(c.card)
+                    Box(Modifier.size(44.dp).clip(CircleShape).background(c.card)
                         .combinedClickable(role = Role.Button, enabled = !Call.switching,
                             onClickLabel = "Pass the phone to $label", onLongClickLabel = "See what $label is doing",
                             onClick = { Call.switchTo(otherName) },
@@ -273,95 +244,150 @@ class CallActivity : ComponentActivity(), Call.Listener {
                                 if (otherName == null) DoingActivity.open(this@CallActivity)
                                 else AgentsActivity.open(this@CallActivity, otherName)
                             }), contentAlignment = Alignment.Center) {
-                        Mascot(Modifier.size(42.dp), mood = if (otherAgent != null) Mood.Thinking else Mood.Idle,
+                        Mascot(Modifier.size(36.dp), mood = if (otherAgent != null) Mood.Thinking else Mood.Idle,
                             look = otherAgent?.look, label = label)
                     }
                 }
             }
-            // who you're talking with (a tap opens what they're doing), then the conversation
-            Mascot(Modifier.padding(top = Space.s).size(96.dp), mood = if (Call.switching) Mood.Surprised else mood,
-                look = speaker?.look, label = speakerName, onTap = {
-                    val a = Call.agent
-                    if (a == null) DoingActivity.open(this@CallActivity) else AgentsActivity.open(this@CallActivity, a)
-                })
+            // who you're talking with: the face, the name, what it's doing (a tap on the face opens what it's doing)
+            Column(Modifier.fillMaxWidth().padding(horizontal = Space.l), horizontalAlignment = Alignment.CenterHorizontally) {
+                Mascot(Modifier.size(104.dp), mood = if (Call.switching) Mood.Surprised else mood,
+                    look = speaker?.look, label = speakerName, onTap = {
+                        val a = Call.agent
+                        if (a == null) DoingActivity.open(this@CallActivity) else AgentsActivity.open(this@CallActivity, a)
+                    })
+                Text(speakerName, style = Type.display, color = c.ink, modifier = Modifier.padding(top = Space.s))
+                Text(statusLine, style = Type.small, color = c.muted, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                    textAlign = TextAlign.Center,
+                    // TalkBack says it when it changes: connecting, reconnecting, ended
+                    modifier = Modifier.padding(top = 2.dp).semantics { liveRegion = LiveRegionMode.Polite })
+                if (Call.active && !incoming) {
+                    // read with the 1 s tick (and the tap), so the state stays current
+                    @Suppress("UNUSED_VARIABLE") val tick = now + strangerTaps
+                    Row(Modifier.padding(top = Space.m), horizontalArrangement = Arrangement.spacedBy(Space.s),
+                        verticalAlignment = Alignment.CenterVertically) {
+                        // stranger mode: a tap turns it on or off (also by voice: "stranger mode" / "turn off stranger mode")
+                        if (VoiceId.enabled(this@CallActivity)) {
+                            val on = Stranger.on
+                            Row(Modifier.clip(RoundedCornerShape(50)).background(if (on) c.blueBg else c.field)
+                                .toggleable(value = on, role = Role.Switch) { want ->
+                                    val said = Stranger.set(this@CallActivity, want)
+                                    strangerTaps++
+                                    if (said.startsWith("can't")) android.widget.Toast.makeText(this@CallActivity,
+                                        said.removePrefix("can't: ").replaceFirstChar { it.uppercase() }, android.widget.Toast.LENGTH_LONG).show()
+                                }
+                                .semantics { contentDescription = if (on) "Stranger mode on: only your voice reaches Mochi" else "Stranger mode off" }
+                                .heightIn(min = 36.dp).padding(horizontal = Space.m, vertical = Space.xs),
+                                verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                Box(Modifier.size(8.dp).clip(CircleShape).background(if (on) c.blueInk else c.muted))
+                                Text(when {
+                                        !on -> "Stranger mode"
+                                        Stranger.tableOn -> "Only you · talking with others"
+                                        else -> "Only you"
+                                    }, style = Type.small.copy(fontWeight = Type.strong), color = if (on) c.blueInk else c.muted)
+                            }
+                        }
+                        // this call's tokens: Claude's exact (from the server's feed), Gemini's estimated from the audio
+                        Text("Claude ${Doing.fmt(Doing.claudeSince(Call.startedAtMs).total)} · Gemini ≈${Doing.fmt(Call.geminiTokens)}",
+                            style = Type.small, color = c.muted, maxLines = 1)
+                    }
+                }
+            }
+            // the conversation
             LazyColumn(state = list, modifier = Modifier.weight(1f).fillMaxWidth(),
-                contentPadding = PaddingValues(vertical = Space.l), verticalArrangement = Arrangement.spacedBy(Space.m)) {
-                if (incoming && question.isNotBlank()) item { Bubble(false, question, true) }
-                items(lines) { l ->
+                contentPadding = PaddingValues(horizontal = Space.l, vertical = Space.l),
+                verticalArrangement = Arrangement.spacedBy(Space.s)) {
+                if (incoming && question.isNotBlank()) item { Bubble(false, question, true, speakerName) }
+                itemsIndexed(lines) { i, l ->
                     if (l.role == "system") Text(l.text, style = Type.small, color = c.muted, textAlign = TextAlign.Center,
                         modifier = Modifier.fillMaxWidth().padding(vertical = Space.xs))
-                    else Bubble(l.role == "user", l.text, l.final)
+                    // the name only where the speaker changes, not over every line
+                    else Bubble(l.role == "user", l.text, l.final, speakerName.takeIf { i == 0 || lines[i - 1].role != l.role })
                 }
             }
             key(tick) {
-                // while Mochi talks: one big tap stops the rest of that reply (no speech detection needed). Always laid
-                // out and only faded in and out: adding and removing it each time Mochi started or stopped talking
-                // crashed the call screen (phone-v67, NullPointerException in a layout pass, 4 times on 2026-11-14)
-                if (!incoming) {
-                    val shown = talking
-                    Box(Modifier.padding(bottom = Space.m).fillMaxWidth().heightIn(min = 56.dp).alpha(if (shown) 1f else 0f)
-                        .clip(RoundedCornerShape(28.dp)).background(c.ink)
-                        .clickable(enabled = shown, role = Role.Button) { Call.holdOn() }
-                        .semantics { contentDescription = "Hold on: stop Mochi's answer" }, contentAlignment = Alignment.Center) {
-                        Text("Hold on", style = Type.body.copy(fontWeight = Type.strong), color = c.bg)
+                Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp)).background(c.card)
+                    .padding(start = Space.l, end = Space.l, top = Space.m, bottom = Space.l)) {
+                    // while Mochi talks: one big tap stops the rest of that reply (no speech detection needed). Always laid
+                    // out and only faded in and out: adding and removing it each time Mochi started or stopped talking
+                    // crashed the call screen (phone-v67, NullPointerException in a layout pass, 4 times on 2026-11-14)
+                    if (!incoming) {
+                        val shown = talking
+                        Box(Modifier.padding(bottom = Space.m).fillMaxWidth().heightIn(min = 48.dp).alpha(if (shown) 1f else 0f)
+                            .clip(RoundedCornerShape(24.dp)).background(c.ink)
+                            .clickable(enabled = shown, role = Role.Button) { Call.holdOn() }
+                            .semantics { contentDescription = "Hold on: stop Mochi's answer" }, contentAlignment = Alignment.Center) {
+                            Text("Hold on", style = Type.body.copy(fontWeight = Type.strong), color = c.bg)
+                        }
                     }
-                }
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly,
-                    verticalAlignment = Alignment.CenterVertically) {
-                    if (incoming) {
-                        CallButton(Icons2.HangUp, "Decline", c.danger, Color.White) { decline() }
-                        CallButton(Icons2.Phone, "Answer", Color(0xFF2E9D5B), Color.White) { answer() }
-                    } else {
-                        CallButton(if (Call.muted) Icons2.MicOff else Icons2.Mic, if (Call.muted) "Unmute" else "Mute",
-                            if (Call.muted) c.ink else c.field, if (Call.muted) c.bg else c.ink) {
-                            Call.muted = !Call.muted
-                            showControls()
-                        }
-                        // one tap, no speech recognition needed: Mochi hears nothing until unfrozen
-                        CallButton(Icons2.Snow, if (Call.frozen) "Unfreeze" else "Freeze",
-                            if (Call.frozen) c.blueInk else c.field, if (Call.frozen) c.bg else c.ink) {
-                            if (Call.frozen) Call.unfreeze() else Call.freezeNow()
-                            window.decorView.postDelayed({ showControls() }, 150)
-                        }
-                        // Speaker → Earpiece → Silent (Mochi's words only as text) → Speaker
-                        val sound = when { Call.silent -> "silent"; Call.speaker -> "speaker"; else -> "earpiece" }
-                        CallButton(when (sound) { "silent" -> Icons2.Muted; "speaker" -> Icons2.Speaker; else -> Icons2.Earpiece },
-                            when (sound) {
-                                "silent" -> "Silent: Mochi answers in text. Switch to speaker"
-                                "speaker" -> "Speaker: switch to earpiece"
-                                else -> "Earpiece: switch to silent"
-                            }, if (sound == "silent") c.ink else c.field, if (sound == "silent") c.bg else c.ink) {
-                            when (sound) {
-                                "speaker" -> Call.setSpeaker(false)
-                                "earpiece" -> Call.silent = true
-                                else -> { Call.silent = false; Call.setSpeaker(true) }
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly,
+                        verticalAlignment = Alignment.Top) {
+                        if (incoming) {
+                            CallButton(Icons2.HangUp, "Decline", "Decline", c.danger, Color.White) { decline() }
+                            CallButton(Icons2.Phone, "Answer", "Answer", Color(0xFF2E9D5B), Color.White) { answer() }
+                        } else {
+                            CallButton(if (Call.muted) Icons2.MicOff else Icons2.Mic, if (Call.muted) "Unmute" else "Mute",
+                                if (Call.muted) "Unmute" else "Mute",
+                                if (Call.muted) c.ink else c.field, if (Call.muted) c.bg else c.ink) {
+                                Call.muted = !Call.muted
+                                showControls()
                             }
-                            showControls()
+                            // one tap, no speech recognition needed: Mochi hears nothing until unfrozen
+                            CallButton(Icons2.Snow, if (Call.frozen) "Unfreeze" else "Freeze", if (Call.frozen) "Unfreeze" else "Freeze",
+                                if (Call.frozen) c.blueInk else c.field, if (Call.frozen) c.bg else c.ink) {
+                                if (Call.frozen) Call.unfreeze() else Call.freezeNow()
+                                window.decorView.postDelayed({ showControls() }, 150)
+                            }
+                            // Speaker → Earpiece → Silent (Mochi's words only as text) → Speaker
+                            val sound = when { Call.silent -> "silent"; Call.speaker -> "speaker"; else -> "earpiece" }
+                            CallButton(when (sound) { "silent" -> Icons2.Muted; "speaker" -> Icons2.Speaker; else -> Icons2.Earpiece },
+                                when (sound) { "silent" -> "Text only"; "speaker" -> "Speaker"; else -> "Earpiece" },
+                                when (sound) {
+                                    "silent" -> "Silent: Mochi answers in text. Switch to speaker"
+                                    "speaker" -> "Speaker: switch to earpiece"
+                                    else -> "Earpiece: switch to silent"
+                                }, if (sound == "silent") c.ink else c.field, if (sound == "silent") c.bg else c.ink) {
+                                when (sound) {
+                                    "speaker" -> Call.setSpeaker(false)
+                                    "earpiece" -> Call.silent = true
+                                    else -> { Call.silent = false; Call.setSpeaker(true) }
+                                }
+                                showControls()
+                            }
+                            CallButton(Icons2.HangUp, "End", "Hang up", c.danger, Color.White) { if (Call.active) Call.end() else finish() }
                         }
-                        CallButton(Icons2.HangUp, "Hang up", c.danger, Color.White) { if (Call.active) Call.end() else finish() }
                     }
                 }
             }
         }
     }
 
+    /** One line of the call: December's on the right, Mochi's on the left with its name above the first line. */
     @Composable
-    private fun Bubble(user: Boolean, text: String, final: Boolean) {
+    private fun Bubble(user: Boolean, text: String, final: Boolean, name: String?) {
         val c = LocalMochi.current
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = if (user) Arrangement.End else Arrangement.Start) {
-            Text(text, style = Type.body, color = (if (user) c.onUserBubble else c.ink).copy(alpha = if (final) 1f else 0.65f),
-                modifier = Modifier.widthIn(max = 320.dp).clip(RoundedCornerShape(22.dp))
+        val shape = if (user) RoundedCornerShape(20.dp, 20.dp, 6.dp, 20.dp) else RoundedCornerShape(20.dp, 20.dp, 20.dp, 6.dp)
+        Column(Modifier.fillMaxWidth(), horizontalAlignment = if (user) Alignment.End else Alignment.Start) {
+            if (name != null) Text(if (user) "You" else name, style = Type.small, color = c.muted,
+                modifier = Modifier.padding(start = Space.s, end = Space.s, top = Space.s, bottom = 2.dp))
+            Text(text, style = Type.body, color = (if (user) c.onUserBubble else c.ink).copy(alpha = if (final) 1f else 0.6f),
+                modifier = Modifier.widthIn(max = 300.dp).clip(shape)
                     .background(if (user) c.userBubble else c.card).padding(horizontal = Space.l, vertical = Space.m))
         }
     }
 
-    /** A round icon call button, 72 dp (named for TalkBack). */
+    /** A round icon call button with its name under it (64 dp; [label] is what TalkBack says). */
     @Composable
-    private fun CallButton(icon: androidx.compose.ui.graphics.vector.ImageVector, label: String, bg: Color, fg: Color,
-                           onClick: () -> Unit) {
-        Box(Modifier.size(72.dp).clip(CircleShape).background(bg).clickable(role = Role.Button, onClick = onClick)
-            .semantics { contentDescription = label }, contentAlignment = Alignment.Center) {
-            LineIcon(icon, fg, 30.dp)
+    private fun CallButton(icon: androidx.compose.ui.graphics.vector.ImageVector, name: String, label: String, bg: Color,
+                           fg: Color, onClick: () -> Unit) {
+        val c = LocalMochi.current
+        Column(Modifier.widthIn(min = 72.dp).clip(RoundedCornerShape(16.dp)).clickable(role = Role.Button, onClick = onClick)
+            .semantics(mergeDescendants = true) { contentDescription = label }.padding(vertical = Space.xs),
+            horizontalAlignment = Alignment.CenterHorizontally) {
+            Box(Modifier.size(64.dp).clip(CircleShape).background(bg), contentAlignment = Alignment.Center) {
+                LineIcon(icon, fg, 28.dp)
+            }
+            Text(name, style = Type.small, color = c.muted, modifier = Modifier.padding(top = 6.dp))
         }
     }
 

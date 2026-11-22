@@ -370,6 +370,16 @@ object Call {
         val from = agent
         val name = target?.let { Agents.display(it, Agents.cached(app)) } ?: "Mochi"
         status("Passing you to $name…")
+        // the one passing the phone goes quiet at once, and a short handover sound plays instead of words
+        ws?.send("""{"type":"interrupt"}""")
+        cutTurn = true          // what the old session still sends isn't played
+        playback.clear()
+        flushPlayback = true
+        runCatching {
+            val tone = android.media.ToneGenerator(android.media.AudioManager.STREAM_VOICE_CALL, 50)
+            tone.startTone(android.media.ToneGenerator.TONE_PROP_ACK, 180)
+            main.postDelayed({ tone.release() }, 600)
+        }
         Thread {
             val thread = runCatching {
                 if (target == null) Mochi.callThread(app) ?: Mochi.newThread(app)
@@ -495,7 +505,18 @@ object Call {
                         callThreads.add(it)
                         if (call == null && agent == null) Mochi.setThread(app, it) // an agent's chat stays its own
                     }
+                    val passed = switching && !reconnecting
                     switching = false
+                    if (passed) {
+                        cutTurn = false
+                        // 2026-11-22: the one taking the phone answers like a person handed a phone ("Hi, Mark here"),
+                        // instead of Mochi saying "Passing you to..." and being cut off mid-word
+                        val name = agent?.let { Agents.display(it, Agents.cached(app)) } ?: "Mochi"
+                        webSocket.send(JSONObject().put("type", "text").put("text",
+                            "(December was just handed over to you on this call. Answer like someone handed the phone: " +
+                                "a few words with your name, like \"Hi, $name here\" or \"$name speaking, go ahead\" (vary it), " +
+                                "then listen.)").toString())
+                    }
                     if (reconnecting) {
                         reconnecting = false
                         reconnects = 0

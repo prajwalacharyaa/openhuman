@@ -465,7 +465,12 @@ internal fun InboxScreen(onBack: () -> Unit) {
                     val body = n.optString("body")
                     if (body.isNotBlank()) Text(body, style = Type.body, color = c.ink, maxLines = if (open) Int.MAX_VALUE else 4,
                         overflow = TextOverflow.Ellipsis)
+                    val link = remember(body) { Regex("""https?://[^\s<>"')]+""").find(body)?.value?.trimEnd('.', ',', ';', ':') }
                     Row(horizontalArrangement = Arrangement.spacedBy(Space.l)) {
+                        if (link != null) Text("Open link", style = Type.small.copy(fontWeight = Type.strong), color = c.blueInk,
+                            modifier = Modifier.clickable(role = Role.Button) {
+                                runCatching { ctx.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(link))) }
+                            })
                         if (body.length > 220 || body.count { it == '\n' } > 3)
                             Text(if (open) "Show less" else "Show all", style = Type.small, color = c.blueInk)
                         Text(if (agent != null) "Open ${agent.display}" else "Open chat", style = Type.small, color = c.blueInk,

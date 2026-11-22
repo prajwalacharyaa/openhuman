@@ -1,30 +1,34 @@
 //! Stranger mode at a table (2026-11-22): December switched on stranger mode on the phone and the phone hears
 //! other voices nearby. It sends Mochi only December's own voice, but December also talks to the people at the
 //! table; Mochi should answer only what is for it. The phone says so with a `table` frame; while it's on, a turn
-//! of December's counts as for Mochi when it names Mochi near its start, or follows Mochi's last words closely.
+//! of December's counts as for Mochi when it names Mochi near its start or end, or follows Mochi's last words closely.
 //! Otherwise the reply is held back: its audio and words never reach the phone or the chat.
 
 use std::time::{Duration, Instant};
 
 /// December speaking this soon after Mochi stopped is taken as a follow-up.
 pub(crate) const FOLLOW_UP: Duration = Duration::from_secs(15);
-/// "Mochi" must come within this many words of the start ("okay so Mochi, …").
+/// "Mochi" within this many words of the start ("okay so Mochi, …")…
 const NAME_WITHIN: usize = 5;
+/// …or of the end ("what's the server status, Mochi?", 2026-11-22: held back with the name as the 6th word).
+const NAME_AT_END: usize = 2;
 
 /// Whether December's words (so far) are for Mochi.
 pub(crate) fn addressed(text: &str, mochi_last_spoke: Option<Instant>, now: Instant) -> bool {
     if mochi_last_spoke.is_some_and(|at| now.duration_since(at) <= FOLLOW_UP) {
         return true;
     }
-    text.split(|c: char| c.is_whitespace() || matches!(c, ',' | '.' | '!' | '?' | '।'))
+    let words: Vec<String> = text
+        .split(|c: char| c.is_whitespace() || matches!(c, ',' | '.' | '!' | '?' | '।'))
         .filter(|w| !w.is_empty())
-        .take(NAME_WITHIN)
-        .any(|w| {
-            let w = w.to_lowercase();
-            // how the name comes out of the transcript: Mochi, Mochie, Mochee, Motchi, Moochi, मोची, मोचि, मची
-            w.starts_with("moch") || w.starts_with("mooch") || w.starts_with("motch") || w.starts_with("मोच")
-                || w.starts_with("मच")
-        })
+        .map(str::to_lowercase)
+        .collect();
+    let is_name = |w: &String| {
+        // how the name comes out of the transcript: Mochi, Mochie, Mochee, Motchi, Moochi, मोची, मोचि, मची
+        w.starts_with("moch") || w.starts_with("mooch") || w.starts_with("motch") || w.starts_with("मोच")
+            || w.starts_with("मच")
+    };
+    words.iter().take(NAME_WITHIN).any(is_name) || words.iter().rev().take(NAME_AT_END).any(is_name)
 }
 
 /// The call's table state: on/off from the phone, and whether the reply now being made is held back.
@@ -56,10 +60,10 @@ impl Table {
         if is_final {
             self.heard.clear();
         }
-        (hush != self.hush).then(|| {
-            self.hush = hush;
-            hush
-        })
+        // every held-back turn is logged (at its last words), not only the first of a run
+        let changed = hush != self.hush;
+        self.hush = hush;
+        (changed || (hush && is_final)).then_some(hush)
     }
 
     /// Mochi's voice reached the phone (not a held-back reply): follow-ups count from here.

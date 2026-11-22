@@ -184,8 +184,15 @@ class RingService : Service() {
             if (notice.has("url")) return approvalNotice(c, notice.optString("body"))
             Mochi.addToInbox(c, notice)
             MochiWidget.update(c, force = true) // the red count
-            val open = landing(c, notice, 7 + notices % 50)
             val body = notice.optString("body")
+            // 2026-11-22: the room's link in a notice couldn't be tapped (notification text never is). A notice with a
+            // link opens it in the browser, and has an "Open link" button too; the server's "open" still wins.
+            val link = Regex("""https?://[^\s<>"')]+""").find(body)?.value?.trimEnd('.', ',', ';', ':')
+            val browse = link?.let {
+                PendingIntent.getActivity(c, 200 + notices % 50, Intent(Intent.ACTION_VIEW, android.net.Uri.parse(it))
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
+            }
+            val open = if (browse != null && notice.optString("open").isBlank()) browse else landing(c, notice, 7 + notices % 50)
             val title = notice.optString("title")
             val id = Mochi.NOTIFY_NOTICE_BASE + notices++ % 50
             // answerable from the notification: an agent's notice goes to that agent's chat, any other to Mochi's
@@ -198,6 +205,7 @@ class RingService : Service() {
                 .setStyle(Notification.BigTextStyle().bigText(body))
                 .setContentIntent(open)
                 .setAutoCancel(true)
+                .apply { if (browse != null) addAction(Notification.Action.Builder(null, "Open link", browse).build()) }
                 .apply { if (Mochi.configured(c)) addAction(ReplyReceiver.action(c, id, title, body, agent)) }
                 .build()
             c.getSystemService(NotificationManager::class.java).notify(id, n)

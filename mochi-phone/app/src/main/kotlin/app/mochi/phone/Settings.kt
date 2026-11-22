@@ -120,7 +120,7 @@ fun SettingsScreen(onBack: () -> Unit) {
         else -> Screen("Settings", onBack) {
             val configured = Mochi.configured(ctx)
             val voice = when {
-                VoiceId.enabled(ctx) -> "Voice recognition on (testing)"
+                VoiceId.enabled(ctx) -> "Voice recognition on"
                 VoiceId.downloaded(ctx) -> "Voice recognition off"
                 else -> "Voice recognition not set up"
             }
@@ -203,8 +203,7 @@ private fun VoiceRecognition() {
         }
         Text("From your server over Tailscale, once. On the server it's kept in the encrypted vault.", style = Type.small, color = c.muted)
     } else {
-        SwitchRow("Voice recognition", if (on) "Testing: for now Mochi only notes who's talking, to set how sure it must be. " +
-            "Stranger mode and \"only your voice\" come after a few calls." else "Off: Mochi doesn't check who's talking.", on) { want ->
+        SwitchRow("Voice recognition", if (on) "On: Mochi knows your voice. Say \"stranger mode\" on a call and only your voice reaches it." else "Off: Mochi doesn't check who's talking.", on) { want ->
             VoiceId.setEnabled(ctx, want); on = want
         }
         NavRow(if (own) "Teach Mochi more" else "Teach Mochi your voice", if (own)
