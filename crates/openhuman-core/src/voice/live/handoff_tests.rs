@@ -223,7 +223,9 @@ fn an_answer_note_asks_for_the_short_part_only() {
         ..Default::default()
     };
     let note = claude_reply_note(&done, "t1").unwrap();
-    assert!(note.contains("say only its \"In short\" part"), "{note}");
+    assert!(note.contains("say only its first part"), "{note}");
+    assert!(note.ends_with("hold, wait for 351.\n\n(more, only if asked) volume is a fifth of the average."), "{note}");
+    assert!(!note.contains("In short:") && !note.contains("Detail:"), "no labels to read out: {note}");
     assert_eq!(from_in_short("Graph exists. Let me query it.In short: a hazard map."), "In short: a hazard map.");
     assert_eq!(from_in_short("Done, PR 13 is up."), "Done, PR 13 is up.");
     assert!(!note.contains("read all of it out, completely"));
@@ -809,4 +811,14 @@ fn a_long_answer_offers_the_rest_and_a_full_one_reads_it_all() {
     assert!(!has_more("In short: all up to date. Detail: four repos checked."));
     let note = full_answer_note(&format!("(Server note, not December speaking: x)\n\n{long}"));
     assert!(is_answer_note(&note) && note.contains("mochi-ask --read --start") && note.ends_with(long.as_str()));
+}
+
+#[test]
+fn the_in_short_and_detail_labels_are_never_read_out() {
+    assert_eq!(without_labels("In short: YouTube is open on your phone now."), "YouTube is open on your phone now.");
+    assert_eq!(
+        without_labels("In short: de7mber-design is synced. Detail: it pulled the newest commits."),
+        "de7mber-design is synced.\n\n(more, only if asked) it pulled the newest commits."
+    );
+    assert_eq!(without_labels("No labels here."), "No labels here.");
 }

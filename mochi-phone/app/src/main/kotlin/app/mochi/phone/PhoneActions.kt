@@ -58,6 +58,10 @@ object PhoneActions {
             }
             // "open settings" / "show my holdings": a screen of this app (a fixed list, see AppNav)
             "app.open" -> AppNav.open(c, args.optString("screen"), args.optString("arg"))
+            // phone control by voice: home, back, swipe, scroll, open an app, tap a named button, type (PhoneControl)
+            "screen.do" -> PhoneControl.act(c, args)
+            // "message Samir on Instagram: mango": the chat opens with the words typed, never sent
+            "message.open" -> PhoneControl.message(c, args)
             // Samir's chart popup: shown or changed while December watches, closed by them (×) or by Samir
             "chart.show" -> ChartBus.show(c, args)
             "chart.close" -> ChartBus.close()
@@ -531,6 +535,9 @@ object PhoneActions {
     }
 
     /** A contact name ("Mom") or a number, as (name, number). */
+    /** A contact's number by name, for phone control's chats (WhatsApp, SMS): used here only, never sent anywhere. */
+    fun numberOf(c: Context, to: String): String? = runCatching { resolve(c, to)?.second }.getOrNull()
+
     private fun resolve(c: Context, to: String): Pair<String, String>? {
         val digits = to.filter { it.isDigit() || it == '+' }
         if (digits.count(Char::isDigit) >= 6 && digits.length >= to.trim().length - 3) {

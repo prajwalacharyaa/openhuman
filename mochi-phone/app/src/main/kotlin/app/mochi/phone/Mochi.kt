@@ -48,7 +48,7 @@ object Mochi {
     private val quick: OkHttpClient = http.newBuilder().readTimeout(20, TimeUnit.SECONDS)
         .connectTimeout(10, TimeUnit.SECONDS).build()
 
-    private fun prefs(c: Context) = c.getSharedPreferences("mochi", Context.MODE_PRIVATE)
+    internal fun prefs(c: Context) = c.getSharedPreferences("mochi", Context.MODE_PRIVATE)
     fun host(c: Context): String = prefs(c).getString("host", "") ?: ""
     fun token(c: Context): String = prefs(c).getString("token", "") ?: ""
     fun configured(c: Context) = host(c).isNotEmpty() && token(c).isNotEmpty()

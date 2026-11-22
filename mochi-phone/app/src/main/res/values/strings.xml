@@ -5,4 +5,5 @@
     <string name="tile_label">Call Mochi</string>
     <string name="widget_label">Mochi</string>
     <string name="widget_about">What Mochi is doing, and call or hang up</string>
+    <string name="phone_control_description">Lets Mochi do what you ask by voice on a call: go home, go back, swipe, scroll, open an app, tap a button by its name and type text. Nothing on your screen is sent anywhere; Mochi never sends, posts or pays without your word.</string>
 </resources>

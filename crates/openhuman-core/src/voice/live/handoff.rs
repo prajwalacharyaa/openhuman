@@ -32,7 +32,7 @@ const HANDOFF_TOOLS: &[&str] = &["shell", "spawn_async_subagent"];
 pub(crate) const NUDGE: &str = "(Server check, not December speaking: you said you're on it, but you did not \
 run mochi-ask, so nothing was handed on and nobody is working on it. Run mochi-ask now with your shell tool, \
 with December's full request and the context it needs, then confirm in one short sentence. If you already \
-handed this same request on earlier in this call, don't call it again; just say you're still on it.)";
+handed this same request on earlier in this call, don't call it again; just say in a few words what it's still doing.)";
 
 /// The web-chat `client_id` `mochi-ask` (tiny-setup) sends its requests as.
 pub(crate) const ASK_CLIENT: &str = "mochi-ask";
@@ -92,7 +92,7 @@ pub(crate) fn claude_reply_note(event: &WebChannelEvent, thread_id: &str) -> Opt
             if answer.is_empty() {
                 return None;
             }
-            let answer: String = answer.chars().take(MAX_ANSWER_CHARS).collect();
+            let answer: String = without_labels(answer).chars().take(MAX_ANSWER_CHARS).collect();
             // 2026-11-21: December kept getting summaries when they needed all of it, and didn't know more was
             // there. A long answer now ends with an offer; "yes" reads it all (mochi-ask --read).
             let offer = if has_more(&answer) {
@@ -104,7 +104,8 @@ pub(crate) fn claude_reply_note(event: &WebChannelEvent, thread_id: &str) -> Opt
             Some(format!(
                 "(Server note, not December speaking: Claude finished the request you handed it. \
                  Tell December now, without waiting to be asked, as yourself (never name Claude): say only its \
-                 \"In short\" part (or, without one, its main point in one or two sentences), then stop. Keep the \
+                 first part, the lines before \"(more, only if asked)\", in your own words (or, without that mark, \
+                 its main point in one or two sentences), then stop. Never say \"in short\". Keep the \
                  rest: when December asks for more (\"more\", \"why\", \"which ones\"), answer from it, without \
                  handing anything on again. If December asks for all of it, run mochi-ask --read --start. \
                  If it asks December to decide something, name each choice and ask; never drop a choice or a \
@@ -148,9 +149,22 @@ pub(crate) fn from_in_short(answer: &str) -> &str {
     if rest.is_empty() { answer } else { rest }
 }
 
+/// The answer without its "In short:" / "Detail:" labels, which were read out word for word (2026-11-22: "In
+/// short, YouTube is open on your phone now"): the short part first, then the rest under a mark the voice keeps.
+pub(crate) fn without_labels(answer: &str) -> String {
+    let body = answer.trim().strip_prefix("In short:").map_or(answer.trim(), str::trim_start);
+    match body.split_once("Detail:") {
+        Some((short, rest)) if !rest.trim().is_empty() => {
+            format!("{}\n\n(more, only if asked) {}", short.trim(), rest.trim())
+        }
+        Some((short, _)) => short.trim().to_string(),
+        None => body.to_string(),
+    }
+}
+
 /// Whether an answer has much more than its "In short" part (worth offering the rest).
 pub(crate) fn has_more(answer: &str) -> bool {
-    let short = match answer.find("Detail:") {
+    let short = match answer.find("Detail:").or_else(|| answer.find("(more, only if asked)")) {
         Some(at) => answer[..at].chars().count(),
         None => answer.split_inclusive(['.', '!', '?']).take(2).map(|s| s.chars().count()).sum(),
     };
@@ -253,7 +267,7 @@ pub(crate) fn earlier_reply_note(event: &WebChannelEvent, earlier: &[String]) ->
             if answer.is_empty() {
                 return None;
             }
-            let answer: String = answer.chars().take(MAX_ANSWER_CHARS).collect();
+            let answer: String = without_labels(answer).chars().take(MAX_ANSWER_CHARS).collect();
             Some(format!(
                 "(Server note, not December speaking: {EARLIER_ANSWER_MARK} (it was asked in another speaker's \
                  chat). When December isn't in the middle of something with you, tell them in one or two short \
@@ -280,7 +294,7 @@ fn typed_turn_note(event: &WebChannelEvent) -> Option<String> {
             if answer.is_empty() {
                 return None;
             }
-            let answer: String = answer.chars().take(MAX_ANSWER_CHARS).collect();
+            let answer: String = without_labels(answer).chars().take(MAX_ANSWER_CHARS).collect();
             Some(format!(
                 "(Server note, not December speaking: Claude answered what December typed into the chat. \
                  Tell December the gist now, briefly, in spoken style and as yourself (never name Claude). The full \
@@ -502,7 +516,7 @@ answer briefly. If the search fails or this needs deeper research, hand it to Cl
 /// Sent to the live model when December asked how Claude's work is going and it answered without checking.
 pub(crate) const STATUS_NUDGE: &str = "(Server check, not December speaking: December asked how Claude's work \
 is going and you answered without checking. Run mochi-ask --result now and say what it shows in one short \
-sentence, like \"Still on it\" or \"Done, pull request 13 is up\". Send nothing new.)";
+sentence, like \"Still checking the repos\" or \"Done, pull request 13 is up\". Send nothing new.)";
 
 /// Sent to the live model when December asked about something from before and it answered without memory.
 pub(crate) const MEMORY_NUDGE: &str = "(Server check, not December speaking: December asked about something from \
@@ -839,7 +853,7 @@ pub(crate) fn hung_up(reason: &str) -> bool {
 pub(crate) const WORK_NUDGE: &str = "(Server check, not December speaking: December asked you for work (ideas, a \
 list, a draft, a plan, a check, posting) and you answered from your own head. On a call you are only the voice: \
 what you know, your notes and your tools are in your own chat. Hand December's request to it now with mochi-ask, \
-in their words with what they said they want, and say in one short line that you're on it. When the answer \
+in their words with what they said they want, and say in a few words what you're doing (\"Looking up the GitHub projects\"), never \"I'm on it\". When the answer \
 comes, say that one; what you said from your own head doesn't count.)";
 
 /// Words of a request for work, in a call with an agent.
@@ -861,7 +875,7 @@ pub(crate) fn asks_work(text: &str) -> bool {
 pub(crate) const CANT_NUDGE: &str = "(Server check, not December speaking: you told December you can't do that, \
 without trying. Mochi's team does much more than you can on a call: drawings and designs (Iris), writing (Mark), \
 LinkedIn (Nadia), shares (Samir), code, research, the server. Hand the request on with mochi-ask now, in December's \
-words, and say in a few words that you're on it. Only the answer that comes back can say it can't be done. If it is \
+words, and say in a few words what you're doing (never \"I'm on it\"). Only the answer that comes back can say it can't be done. If it is \
 something December does by touch in the app (deleting a book, clearing the inbox, locking), open that screen for them \
 with mochi-phone screen and say what to tap.)";
 
@@ -893,8 +907,8 @@ pub(crate) fn says_cant(text: &str) -> bool {
 /// in Nepal Hazard project?" was web-searched and answered with someone else's project).
 pub(crate) const PROJECT_NUDGE: &str = "(Server check, not December speaking: December asked about one of their \
 own projects, and you answered without handing it on. A web search can't see their repos or their work, and what \
-you remember may be old. Hand it to Claude now with mochi-ask, in December's words, and say in a few words that \
-you're on it; what you said before doesn't count.)";
+you remember may be old. Hand it to Claude now with mochi-ask, in December's words, and say in a few words \
+what you're doing (never \"I'm on it\"); what you said before doesn't count.)";
 
 /// Words that are too common to stand for a project on their own ("portfolio" is also the shares portfolio).
 const PROJECT_TOO_COMMON: &[&str] = &[

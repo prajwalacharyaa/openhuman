@@ -35,6 +35,28 @@ class AbilitiesActivity : Activity() {
 
     private fun draw() {
         body.removeAllViews()
+        // phone control by voice (2026-11-22): two switches, Mochi's own and Android's accessibility permission
+        run {
+            val on = PhoneControl.allowed(this)
+            val inAndroid = PhoneControl.connected()
+            val card = Ui.card(this)
+            card.addView(Ui.text(this, "Phone control by voice", 17f))
+            card.addView(Ui.text(this, "On a call: \"go home\", \"swipe left\", \"open Instagram\", \"tap Reels\", " +
+                "\"type mango\", \"message Samir on Instagram: hi\". It all happens on the phone: nothing on your screen " +
+                "is sent anywhere, and Mochi never sends, posts or pays unless you say so.", 13f, Ui.MUTED)
+                .apply { setPadding(0, Ui.dp(this@AbilitiesActivity, 4), 0, 0) })
+            card.addView(Ui.button(this, if (on) "✓ Phone control on (tap to turn off)" else "Turn on phone control",
+                if (on) Ui.GREEN else Ui.BLUE) {
+                PhoneControl.setAllowed(this, !on)
+                if (!on && !PhoneControl.connected()) PhoneControl.openAndroidSettings(this)
+                draw()
+            }, Ui.matchWidth(this, 8))
+            if (on) card.addView(Ui.button(this, if (inAndroid) "✓ Allowed in Android" else "Allow in Android: Accessibility > Mochi phone control",
+                if (inAndroid) Ui.GREEN else Ui.BLUE) {
+                PhoneControl.openAndroidSettings(this)
+            }, Ui.matchWidth(this, 8))
+            body.addView(card)
+        }
         section("Contacts, calls and texts",
             "Mochi can find a contact, say who called, read your latest texts, and call or text someone. On a voice " +
                 "call with Mochi, it asks which contact, number and SIM (and remembers), then calls when you say yes; " +
