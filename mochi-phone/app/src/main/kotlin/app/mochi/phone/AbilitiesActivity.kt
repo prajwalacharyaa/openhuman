@@ -55,6 +55,19 @@ class AbilitiesActivity : Activity() {
                 if (inAndroid) Ui.GREEN else Ui.BLUE) {
                 PhoneControl.openAndroidSettings(this)
             }, Ui.matchWidth(this, 8))
+            // what December showed it ("watch how I close this"), kept only on this phone
+            val lessons = PhoneControl.learned(this)
+            if (lessons.isNotEmpty()) {
+                val pm = packageManager
+                card.addView(Ui.text(this, "Learned by watching you (kept only on this phone):\n" + lessons.joinToString("\n") { l ->
+                    val app = runCatching { pm.getApplicationLabel(pm.getApplicationInfo(l.optString("app"), 0)).toString() }
+                        .getOrDefault(l.optString("app"))
+                    "• ${l.optString("name")} ($app)"
+                }, 13f, Ui.MUTED).apply { setPadding(0, Ui.dp(this@AbilitiesActivity, 10), 0, 0) })
+                card.addView(Ui.button(this, "Forget everything it learned", Ui.BLUE) {
+                    PhoneControl.forgetAll(this); draw()
+                }, Ui.matchWidth(this, 8))
+            }
             body.addView(card)
         }
         section("Contacts, calls and texts",

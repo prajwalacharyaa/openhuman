@@ -27,7 +27,24 @@ class PhoneControl : AccessibilityService() {
     override fun onServiceConnected() { running = this }
     override fun onUnbind(intent: Intent?): Boolean { if (running === this) running = null; return super.onUnbind(intent) }
     override fun onDestroy() { if (running === this) running = null; super.onDestroy() }
-    override fun onAccessibilityEvent(event: AccessibilityEvent?) = Unit
+    override fun onAccessibilityEvent(event: AccessibilityEvent?) {
+        if (event?.eventType != AccessibilityEvent.TYPE_VIEW_CLICKED) return
+        val want = learning ?: return
+        if (System.currentTimeMillis() > learningUntil) { learning = null; return }
+        val pkg = event.packageName?.toString() ?: return
+        if (pkg == packageName) return // a tap inside Mochi itself isn't the lesson
+        val node = event.source ?: return
+        val r = Rect().also { node.getBoundsInScreen(it) }
+        val m = resources.displayMetrics
+        val step = JSONObject().put("name", want).put("app", pkg).put("id", node.viewIdResourceName ?: "")
+            .put("label", label(node).take(80)).put("rx", r.exactCenterX() / m.widthPixels).put("ry", r.exactCenterY() / m.heightPixels)
+            .put("at", System.currentTimeMillis())
+        learning = null
+        save(this, step)
+        android.os.Handler(mainLooper).post {
+            android.widget.Toast.makeText(this, "Mochi learned \"$want\"", android.widget.Toast.LENGTH_SHORT).show()
+        }
+    }
     override fun onInterrupt() = Unit
 
     companion object {
@@ -35,6 +52,62 @@ class PhoneControl : AccessibilityService() {
         private const val PREF = "phone_control"
         /** Words on buttons that act for December where others see it, or can't be undone. */
         private val RISKY = Regex("""\b(send|post|share|pay|buy|order|delete|remove|confirm|publish|transfer|submit|call)\b""", RegexOption.IGNORE_CASE)
+
+        // learned taps (2026-11-22, December: "look how I close it, then do it next time"): on the phone only
+        private const val LEARNED = "phone_control_learned"
+        @Volatile private var learning: String? = null
+        @Volatile private var learningUntil = 0L
+
+        private fun norm(name: String) = name.trim().lowercase().replace(Regex("[^a-z0-9\\p{L} ]"), "")
+            .removePrefix("the ").replace(Regex("\\s+"), " ")
+
+        fun learned(c: Context): List<JSONObject> = runCatching {
+            val a = org.json.JSONArray(Mochi.prefs(c).getString(LEARNED, "[]"))
+            (0 until a.length()).map { a.getJSONObject(it) }
+        }.getOrDefault(emptyList())
+
+        private fun store(c: Context, list: List<JSONObject>) =
+            Mochi.prefs(c).edit().putString(LEARNED, org.json.JSONArray(list).toString()).apply()
+
+        /** One lesson per name and app: showing it again replaces it. */
+        private fun save(c: Context, step: JSONObject) = store(c, learned(c).filterNot {
+            norm(it.optString("name")) == norm(step.optString("name")) && it.optString("app") == step.optString("app")
+        } + step)
+
+        fun forgetAll(c: Context) = store(c, emptyList())
+
+        private fun learn(c: Context, name: String): JSONObject {
+            if (norm(name).isEmpty()) return fail("learn what? say what it does, like \"close the video\"")
+            learning = name.trim()
+            learningUntil = System.currentTimeMillis() + 30_000
+            return ok("watching: December taps it now (within 30 seconds), and next time \"$name\" taps the same thing in this app")
+        }
+
+        private fun forget(c: Context, name: String): JSONObject {
+            val before = learned(c)
+            val left = if (norm(name) in setOf("everything", "all", "")) emptyList() else before.filterNot { norm(it.optString("name")) == norm(name) }
+            store(c, left)
+            return if (left.size < before.size) ok("forgot it") else fail("nothing learned called \"$name\"")
+        }
+
+        /** A lesson for these words in the app on screen: the same button by its id, else its name, else its place. */
+        private fun tapLearned(c: Context, s: PhoneControl, wanted: String): JSONObject? {
+            val pkg = s.rootInActiveWindow?.packageName?.toString() ?: return null
+            val w = norm(wanted)
+            val lesson = learned(c).filter { it.optString("app") == pkg }.firstOrNull {
+                val n = norm(it.optString("name")); n == w || (n.length > 3 && (w.contains(n) || n.contains(w)))
+            } ?: return null
+            val name = lesson.optString("name")
+            val all = nodes(s).filter { it.isVisibleToUser }
+            val byId = lesson.optString("id").takeIf { it.isNotEmpty() }?.let { id -> all.firstOrNull { it.viewIdResourceName == id } }
+            val byLabel = lesson.optString("label").takeIf { it.isNotEmpty() }?.let { l -> all.firstOrNull { label(it) == l } }
+            var n: AccessibilityNodeInfo? = byId ?: byLabel
+            while (n != null && !n.isClickable) n = n.parent
+            if (n != null && n.performAction(AccessibilityNodeInfo.ACTION_CLICK)) return ok("did \"$name\" (as December showed)")
+            val m = s.resources.displayMetrics
+            val x = lesson.optDouble("rx").toFloat() * m.widthPixels; val y = lesson.optDouble("ry").toFloat() * m.heightPixels
+            return gesture(s, Path().apply { moveTo(x, y) }, 60L, "did \"$name\" (where December tapped)")
+        }
 
         fun allowed(c: Context) = Mochi.prefs(c).getBoolean(PREF, false)
         fun setAllowed(c: Context, on: Boolean) = Mochi.prefs(c).edit().putBoolean(PREF, on).apply()
@@ -67,12 +140,15 @@ class PhoneControl : AccessibilityService() {
                 "recents" -> global(s, GLOBAL_ACTION_RECENTS, "recent apps shown")
                 "notifications" -> global(s, GLOBAL_ACTION_NOTIFICATIONS, "notifications pulled down")
                 "swipe", "scroll" -> swipe(s, op, args.optString("dir").lowercase())
-                "tap" -> if (args.optString("label").trim().lowercase() in setOf("first", "the first", "first one", "first video"))
-                    tapFirst(s) else tap(s, args.optString("label"), args.optBoolean("yes"))
+                "tap" -> position(args.optString("label"))?.let { tapNth(s, it) }
+                    ?: tap(c, s, args.optString("label"), args.optBoolean("yes"))
+                // "watch how I close this": the next tap December makes is remembered under that name (on the phone)
+                "learn" -> learn(c, args.optString("name"))
+                "forget" -> forget(c, args.optString("name"))
                 "type" -> type(s, args.optString("text"), args.optBoolean("enter"))
                 // the keyboard's Enter / Search key in the box on screen: runs a search in any app
                 "enter" -> enter(s)
-                else -> fail("unknown step: home, back, recents, notifications, swipe, scroll, app, tap, type, enter, search")
+                else -> fail("unknown step: home, back, recents, notifications, swipe, scroll, app, tap, type, enter, search, learn, forget")
             }
         }
 
@@ -117,9 +193,10 @@ class PhoneControl : AccessibilityService() {
         private fun label(n: AccessibilityNodeInfo) = (n.text?.toString() ?: n.contentDescription?.toString() ?: "").trim()
 
         /** Tap the button or text December named: exact name first, then one that starts with it, then contains it. */
-        private fun tap(s: PhoneControl, wanted: String, yes: Boolean): JSONObject {
+        private fun tap(c: Context, s: PhoneControl, wanted: String, yes: Boolean): JSONObject {
             val w = wanted.trim().lowercase()
             if (w.isEmpty()) return fail("tap what? say the button's name")
+            if (!RISKY.containsMatchIn(w) || yes) tapLearned(c, s, wanted)?.let { return it }
             if (RISKY.containsMatchIn(w) && !yes)
                 return fail("\"$wanted\" acts for December (sends, posts, pays or deletes): only after December says so themselves, then mochi-phone tap \"$wanted\" --yes")
             val all = nodes(s).filter { it.isVisibleToUser && label(it).isNotEmpty() }
@@ -135,21 +212,43 @@ class PhoneControl : AccessibilityService() {
             return gesture(s, Path().apply { moveTo(r.exactCenterX(), r.exactCenterY()) }, 60L, "tapped \"${label(hit).take(40)}\"")
         }
 
+        /** "first", "second video", "the 3rd one", "last" -> 1, 2, 3, -1; null when it isn't a position. */
+        fun position(label: String): Int? {
+            val w = label.trim().lowercase().removePrefix("the ").split(" ").firstOrNull() ?: return null
+            val rest = label.trim().lowercase().removePrefix("the ").removePrefix(w).trim()
+            if (rest.isNotEmpty() && rest !in setOf("one", "video", "reel", "post", "result", "item", "message", "chat", "short"))
+                return null
+            return when (w) {
+                "first", "1st", "top" -> 1; "second", "2nd" -> 2; "third", "3rd" -> 3; "fourth", "4th" -> 4
+                "fifth", "5th" -> 5; "sixth", "6th" -> 6; "last" -> -1
+                else -> null
+            }
+        }
+
         /**
-         * "Open the first video": the first big item in the list on screen (a video, a reel, a post), found by its size
-         * and place, not by reading it: the topmost tappable thing at least 60% as wide as the screen and 12% as tall,
-         * below the app's top bar.
+         * "Open the second video": the nth big item in the list on screen (a video, a reel, a post, a chat), found by
+         * its size and place, not by reading it: tappable things at least 60% as wide as the screen and 8% as tall,
+         * below the app's top bar, top to bottom, one per row (a card's inner parts aren't counted again).
          */
-        private fun tapFirst(s: PhoneControl): JSONObject {
+        private fun tapNth(s: PhoneControl, n: Int): JSONObject {
             val m = s.resources.displayMetrics
             val r = Rect()
-            val hit = nodes(s).filter { it.isClickable && it.isVisibleToUser }.mapNotNull { n ->
-                n.getBoundsInScreen(r)
-                if (r.top > m.heightPixels * 0.1 && r.width() >= m.widthPixels * 0.6 && r.height() >= m.heightPixels * 0.12)
-                    n to Rect(r) else null
-            }.minByOrNull { it.second.top } ?: return fail("no list of videos or posts on the screen now")
-            if (hit.first.performAction(AccessibilityNodeInfo.ACTION_CLICK)) return ok("opened the first one")
-            return gesture(s, Path().apply { moveTo(hit.second.exactCenterX(), hit.second.exactCenterY()) }, 60L, "opened the first one")
+            val all = nodes(s).filter { it.isClickable && it.isVisibleToUser }.mapNotNull { node ->
+                node.getBoundsInScreen(r)
+                if (r.top > m.heightPixels * 0.08 && r.width() >= m.widthPixels * 0.6 && r.height() >= m.heightPixels * 0.08)
+                    node to Rect(r) else null
+            }.sortedWith(compareBy({ it.second.top }, { -it.second.height() }))
+            val rows = ArrayList<Pair<AccessibilityNodeInfo, Rect>>()
+            for (item in all) {
+                val last = rows.lastOrNull()
+                if (last == null || item.second.top >= last.second.bottom - last.second.height() / 10) rows.add(item)
+            }
+            if (rows.isEmpty()) return fail("no list of videos or posts on the screen now")
+            val hit = (if (n == -1) rows.last() else rows.getOrNull(n - 1))
+                ?: return fail("only ${rows.size} on the screen now: scroll down for more")
+            val said = if (n == -1) "the last one" else "number $n"
+            if (hit.first.performAction(AccessibilityNodeInfo.ACTION_CLICK)) return ok("opened $said")
+            return gesture(s, Path().apply { moveTo(hit.second.exactCenterX(), hit.second.exactCenterY()) }, 60L, "opened $said")
         }
 
         /** "Search YouTube for lofi music": the app's own search results, straight from a link (no typing needed). */
