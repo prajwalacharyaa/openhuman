@@ -187,7 +187,7 @@ object VoiceId {
     @Volatile var lastLabel = ""        // shown on the call screen: "you", "someone else" or "" (not sure / off)
     @Volatile var lastScore = 0f
     /** Until the threshold is set from real calls: the old laptop voiceprint's own threshold. */
-    private const val TRIAL_THRESHOLD = 0.52f
+    private const val TRIAL_THRESHOLD = Stranger.YOU
 
     private val segment = java.io.ByteArrayOutputStream()
     private var silentFrames = 0
@@ -253,6 +253,8 @@ object VoiceId {
             pending.put(JSONObject().put("at", System.currentTimeMillis() / 1000).put("score", score.toDouble())
                 .put("print", "own-stranger").put("secs", pcm.size / RATE.toDouble()).put("mochi_talking", Call.talking()))
         }
+        // sent during the call (every few checks), so a stranger-mode problem can be seen while December is on it
+        if (synchronized(pending) { pending.length() } >= 4) flush(c)
     }
 
     /** Loads the model ahead of the first check (stranger mode turned on). */

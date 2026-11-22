@@ -13,12 +13,14 @@ import android.content.Context
  * - Other voices heard in the last 2 minutes: the phone tells the engine ("table"), which then lets Mochi answer
  *   only what names Mochi or follows its last words (table.rs on the server).
  *
- * Thresholds from December's first calls (2026-11-22, own voiceprint): December 0.45-0.78, others 0.08-0.25.
+ * Thresholds from December's first calls (2026-11-22, own voiceprint): December 0.40-0.78 listening, others 0.08-0.25;
+ * 0.45 blocked December (19:46: seven stretches 0.26 or less on the 1 s check), so 0.35 and a second, whole-stretch check.
  */
 object Stranger {
-    const val YOU = 0.45f
+    const val YOU = 0.35f
     private const val RATE = 16_000
-    private const val CHECK_FRAMES = 10            // 1 s of speech before the check
+    private const val CHECK_FRAMES = 10            // 1 s of speech before the first check
+    private const val RECHECK_FRAMES = 25          // "not you" at 1 s: the whole stretch is checked again at 2.5 s
     private const val END_FRAMES = 4               // 400 ms of quiet ends a stretch
     private const val MAX_HOLD_FRAMES = 40         // never hold more than 4 s
     private const val SHORT_GRACE_MS = 8_000L
@@ -40,6 +42,7 @@ object Stranger {
     @Volatile private var checking = false
     private var waiting = false
     private var segment = 0
+    private var checks = 0                              // checks run on this stretch (2 = final)
     @Volatile private var lastYouAt = 0L
     @Volatile private var lastOtherAt = 0L
     private var noise = 300.0
@@ -67,7 +70,7 @@ object Stranger {
 
     private fun reset() {
         synchronized(held) { held.clear() }
-        speechFrames = 0; quiet = 0; active = false; decision = null; checking = false; waiting = false; mochiDuring = false; segment++
+        speechFrames = 0; quiet = 0; active = false; decision = null; checking = false; waiting = false; mochiDuring = false; checks = 0; segment++
     }
 
     /**
@@ -83,6 +86,8 @@ object Stranger {
         // a stretch ended while its check was still running: its held audio waits for the answer, with what came since
         if (waiting) {
             synchronized(held) { held.add(frame) }
+            // the first check said "not you": the whole stretch gets a second, final look before it's dropped
+            if (decision == null && !checking) startCheck(c)
             val d = decision ?: return if (synchronized(held) { held.size } > MAX_HOLD_FRAMES) { giveUp(); emptyList() } else emptyList()
             waiting = false
             decision = null
@@ -91,7 +96,7 @@ object Stranger {
         if (!speech && !active) noise = noise * 0.95 + rms * 0.05
         if (!active) {
             if (!speech) return emptyList()
-            active = true; speechFrames = 0; quiet = 0; decision = null; checking = false; mochiDuring = false
+            active = true; speechFrames = 0; quiet = 0; decision = null; checking = false; mochiDuring = false; checks = 0
         }
         if (mochiTalking) mochiDuring = true
         if (speech) { speechFrames++; quiet = 0 } else quiet++
@@ -108,9 +113,9 @@ object Stranger {
             }
             null -> {
                 synchronized(held) { held.add(frame) }
-                if (!checking && speechFrames >= CHECK_FRAMES) startCheck(c)
+                if (!checking && ((checks == 0 && speechFrames >= CHECK_FRAMES) || (checks == 1 && speechFrames >= RECHECK_FRAMES))) startCheck(c)
                 when {
-                    ended && checking -> { active = false; waiting = true; emptyList() }
+                    ended && (checking || checks > 0) -> { active = false; waiting = true; emptyList() }
                     ended -> {
                         active = false
                         // too short to check: December's if December just spoke ("yes", "go on")
@@ -130,17 +135,21 @@ object Stranger {
 
     private fun startCheck(c: Context) {
         checking = true
+        checks++
+        val final = checks >= 2
         val audio = synchronized(held) { held.toList() }
         val mine = segment
         val echo = mochiDuring
         VoiceId.check(c, audio) { score ->
             if (mine != segment) return@check
             val you = score != null && score >= YOU
-            last = if (you) "you" else if (score == null) "" else "someone else"
-            if (you) lastYouAt = System.currentTimeMillis()
-            // Mochi's own voice picked up by the mic is "not December" too, but it isn't a person at the table
-            else if (score != null && !echo) lastOtherAt = System.currentTimeMillis()
-            decision = you
+            if (you || final) {
+                last = if (you) "you" else if (score == null) "" else "someone else"
+                if (you) lastYouAt = System.currentTimeMillis()
+                // Mochi's own voice picked up by the mic is "not December" too, but it isn't a person at the table
+                else if (score != null && !echo) lastOtherAt = System.currentTimeMillis()
+                decision = you
+            }
             checking = false
         }
     }
