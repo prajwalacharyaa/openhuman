@@ -65,6 +65,7 @@ import org.json.JSONObject
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.foundation.selection.toggleable
 
 /**
  * The call screen: an incoming call from Mochi (Answer / Decline), then the live call itself, with Mochi listening,
@@ -185,6 +186,7 @@ class CallActivity : ComponentActivity(), Call.Listener {
         // whether Mochi is talking (the Hold on button), looked at often so it shows the moment a reply starts
         var talking by remember { mutableStateOf(false) }
         WhileVisible { while (true) { talking = Call.talking(); delay(300) } }
+        var strangerTaps by remember { mutableStateOf(0L) }
         // follow the newest words: also while a reply grows inside its line (same count, longer text), to the very
         // end of the list (the question card on top shifts the indexes) and to the end of a long reply, not its top.
         // Not while December has scrolled up to read something earlier.
@@ -229,9 +231,26 @@ class CallActivity : ComponentActivity(), Call.Listener {
                         }, style = Type.small, color = c.muted, maxLines = 2, overflow = TextOverflow.Ellipsis,
                         // TalkBack says it when it changes: connecting, reconnecting, ended
                         modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite })
-                    // who the voice check thinks is talking (listen-only while the threshold is set from real calls)
-                    if (Call.active && !incoming && VoiceId.enabled(this@CallActivity) && VoiceId.lastLabel.isNotEmpty())
-                        Text("Hearing: ${VoiceId.lastLabel} (testing)", style = Type.small, color = c.muted, maxLines = 1)
+                    // stranger mode: a tap turns it on or off (also by voice: "stranger mode" / "turn off stranger mode")
+                    if (Call.active && !incoming && VoiceId.enabled(this@CallActivity)) {
+                        // read with the 1 s tick (and the tap), so the state and "hearing" stay current
+                        @Suppress("UNUSED_VARIABLE") val tick = now + strangerTaps
+                        val strangerOn = Stranger.on
+                        Text(if (strangerOn) "Stranger mode on" + (if (Stranger.last.isNotEmpty()) " · hearing: ${Stranger.last}" else "") +
+                                (if (Stranger.tableOn) " · others nearby" else "") else "Stranger mode off",
+                            style = Type.small.copy(fontWeight = if (strangerOn) Type.strong else null),
+                            color = if (strangerOn) c.blueInk else c.muted, maxLines = 2,
+                            modifier = Modifier.clip(RoundedCornerShape(8.dp))
+                                .toggleable(value = strangerOn, role = Role.Switch) { want ->
+                                    val said = Stranger.set(this@CallActivity, want)
+                                    strangerTaps++
+                                    if (said.startsWith("can't")) android.widget.Toast.makeText(this@CallActivity,
+                                        said.removePrefix("can't: ").replaceFirstChar { it.uppercase() }, android.widget.Toast.LENGTH_LONG).show()
+                                }
+                                .heightIn(min = 44.dp).padding(vertical = Space.xs))
+                        if (!strangerOn && VoiceId.lastLabel.isNotEmpty())
+                            Text("Hearing: ${VoiceId.lastLabel} (testing)", style = Type.small, color = c.muted, maxLines = 1)
+                    }
                     // this call's tokens: Claude's exact (from the server's feed), Gemini's estimated from the audio
                     if (Call.active && !incoming) Text("Claude ${Doing.fmt(Doing.claudeSince(Call.startedAtMs).total)}" +
                         " · Gemini ≈${Doing.fmt(Call.geminiTokens)} tokens", style = Type.small, color = c.muted, maxLines = 1)

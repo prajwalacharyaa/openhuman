@@ -335,6 +335,7 @@ object Call {
         frozen = false
         Unfreeze.stop()
         VoiceId.callEnded(app)
+        Stranger.callEnded()
         ws?.let { runCatching { it.send("""{"type":"stop"}"""); it.close(1000, "hang up") } }
         ws = null
         val am = app.getSystemService(AudioManager::class.java)
@@ -477,6 +478,8 @@ object Call {
             val earlier = synchronized(callThreads) { callThreads.filter { it != threadId }.takeLast(8) }
             if (earlier.isNotEmpty()) start.put("earlier_threads", org.json.JSONArray(earlier))
             webSocket.send(start.toString())
+            // a reconnect in stranger mode at a table: the new session must know too
+            if (Stranger.on && Stranger.tableOn) webSocket.send("""{"type":"table","on":true}""")
         }
 
         override fun onMessage(webSocket: WebSocket, text: String) {
@@ -689,6 +692,17 @@ object Call {
                 if (n == FRAME_BYTES) {
                     if (muted || frozen) {
                         quiet()
+                    } else if (Stranger.on) {
+                        // stranger mode: only December's voice goes on (the held second first); others get silence
+                        quietSent = 0
+                        val out = Stranger.frame(app, buf.copyOf(), talking()) { near ->
+                            socket.send("""{"type":"table","on":$near}""")
+                        }
+                        if (out.isEmpty()) {
+                            socket.send(silence.toByteString()); sentBytes += silence.size
+                        } else for (f in out) {
+                            socket.send(f.toByteString()); sentBytes += f.size
+                        }
                     } else {
                         quietSent = 0
                         socket.send(buf.toByteString())

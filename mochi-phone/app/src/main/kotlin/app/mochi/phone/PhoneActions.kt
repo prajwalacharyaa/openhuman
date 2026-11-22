@@ -64,6 +64,14 @@ object PhoneActions {
             // "stop after 30 minutes" / "read slower": the call's sleep timer and playback speed
             "call.sleep" -> if (!Call.active) fail("no call is on")
                 else ok(Call.sleep(args.optInt("minutes"), args.optString("what", "set")))
+            // "stranger mode" / "turn off stranger mode": only December's voice reaches Mochi (Stranger.kt)
+            "call.stranger" -> when {
+                !Call.active -> fail("no call is on")
+                args.optString("what") == "status" -> ok(if (Stranger.on) "stranger mode is on" +
+                    (if (Stranger.tableOn) ", other voices nearby: Mochi answers only what names it or follows its last words" else "")
+                    else "stranger mode is off")
+                else -> Stranger.set(c, args.optBoolean("on")).let { if (it.startsWith("can't")) fail(it) else ok(it) }
+            }
             "call.speed" -> if (!Call.active) fail("no call is on") else ok(Call.setSpeed(args.optDouble("speed", 1.0).toFloat()))
             // the book being read, on screen, highlighted as the voice reads
             // "wake me at 6" / "timer 10 minutes": the phone's own Clock app rings, even with the server off

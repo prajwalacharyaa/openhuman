@@ -171,7 +171,7 @@ object VoiceId {
 
     // ---- listen-only scoring during a call ----
 
-    private val worker = Executors.newSingleThreadExecutor { r -> Thread(r, "mochi-voice-id").apply { priority = Thread.MIN_PRIORITY } }
+    private val worker = Executors.newSingleThreadExecutor { r -> Thread(r, "mochi-voice-id") }
     private val pending = JSONArray()
     @Volatile var lastLabel = ""        // shown on the call screen: "you", "someone else" or "" (not sure / off)
     @Volatile var lastScore = 0f
@@ -184,7 +184,8 @@ object VoiceId {
 
     /** One 100 ms frame of the mic (16 kHz PCM16, little-endian), only while December isn't muted or frozen. */
     fun onFrame(c: Context, frame: ByteArray, mochiTalking: Boolean) {
-        if (!enabled(c)) return
+        // in stranger mode its own checks are the scores (one model run per stretch, not two)
+        if (!enabled(c) || Stranger.on) return
         val rms = rms(frame)
         val speech = rms > max(noise * 2.5, 250.0)
         if (!speech) noise = noise * 0.95 + rms * 0.05
@@ -228,6 +229,23 @@ object VoiceId {
         }
         if (pending.length() >= 30) flush(c)
     }
+
+    /** Stranger mode: [frames] (16 kHz PCM16) against December's own voiceprint, off the audio thread; [done] gets
+     *  the score, or null when it can't tell (too short, no voiceprint, the model failed). */
+    fun check(c: Context, frames: List<ByteArray>, done: (Float?) -> Unit) = worker.execute {
+        val bytes = java.io.ByteArrayOutputStream().apply { frames.forEach { write(it) } }.toByteArray()
+        val pcm = ShortArray(bytes.size / 2) { ((bytes[2 * it + 1].toInt() shl 8) or (bytes[2 * it].toInt() and 0xff)).toShort() }
+        val own = prints(c)["own"]
+        val score = if (own == null) null else runCatching { embed(c, pcm)?.let { cosine(it, own) } }.getOrNull()
+        done(score)
+        if (score != null) synchronized(pending) {
+            pending.put(JSONObject().put("at", System.currentTimeMillis() / 1000).put("score", score.toDouble())
+                .put("print", "own-stranger").put("secs", pcm.size / RATE.toDouble()).put("mochi_talking", Call.talking()))
+        }
+    }
+
+    /** Loads the model ahead of the first check (stranger mode turned on). */
+    fun preload(c: Context) = worker.execute { runCatching { session(c) } }
 
     /** Sends the scores so far to the server (at the end of a call, and every few dozen). */
     fun flush(c: Context) = worker.execute {
