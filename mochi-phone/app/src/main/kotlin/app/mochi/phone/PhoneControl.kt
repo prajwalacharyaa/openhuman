@@ -58,6 +58,7 @@ class PhoneControl : AccessibilityService() {
         fun act(c: Context, args: JSONObject): JSONObject {
             val op = args.optString("op")
             if (op == "app") return openApp(c, args.optString("name"))
+            if (op == "search") return search(c, args.optString("app"), args.optString("query"))
             blocked(c)?.let { return fail(it) }
             val s = running ?: return fail("phone control isn't connected")
             return when (op) {
@@ -66,7 +67,8 @@ class PhoneControl : AccessibilityService() {
                 "recents" -> global(s, GLOBAL_ACTION_RECENTS, "recent apps shown")
                 "notifications" -> global(s, GLOBAL_ACTION_NOTIFICATIONS, "notifications pulled down")
                 "swipe", "scroll" -> swipe(s, op, args.optString("dir").lowercase())
-                "tap" -> tap(s, args.optString("label"), args.optBoolean("yes"))
+                "tap" -> if (args.optString("label").trim().lowercase() in setOf("first", "the first", "first one", "first video"))
+                    tapFirst(s) else tap(s, args.optString("label"), args.optBoolean("yes"))
                 "type" -> type(s, args.optString("text"))
                 else -> fail("unknown step: home, back, recents, notifications, swipe, scroll, app, tap, type")
             }
@@ -129,6 +131,40 @@ class PhoneControl : AccessibilityService() {
             if (n != null && n.performAction(AccessibilityNodeInfo.ACTION_CLICK)) return ok("tapped \"${label(hit).take(40)}\"")
             val r = Rect().also { hit.getBoundsInScreen(it) }
             return gesture(s, Path().apply { moveTo(r.exactCenterX(), r.exactCenterY()) }, 60L, "tapped \"${label(hit).take(40)}\"")
+        }
+
+        /**
+         * "Open the first video": the first big item in the list on screen (a video, a reel, a post), found by its size
+         * and place, not by reading it: the topmost tappable thing at least 60% as wide as the screen and 12% as tall,
+         * below the app's top bar.
+         */
+        private fun tapFirst(s: PhoneControl): JSONObject {
+            val m = s.resources.displayMetrics
+            val r = Rect()
+            val hit = nodes(s).filter { it.isClickable && it.isVisibleToUser }.mapNotNull { n ->
+                n.getBoundsInScreen(r)
+                if (r.top > m.heightPixels * 0.1 && r.width() >= m.widthPixels * 0.6 && r.height() >= m.heightPixels * 0.12)
+                    n to Rect(r) else null
+            }.minByOrNull { it.second.top } ?: return fail("no list of videos or posts on the screen now")
+            if (hit.first.performAction(AccessibilityNodeInfo.ACTION_CLICK)) return ok("opened the first one")
+            return gesture(s, Path().apply { moveTo(hit.second.exactCenterX(), hit.second.exactCenterY()) }, 60L, "opened the first one")
+        }
+
+        /** "Search YouTube for lofi music": the app's own search results, straight from a link (no typing needed). */
+        fun search(c: Context, app: String, query: String): JSONObject {
+            if (query.isBlank()) return fail("search for what?")
+            val q = Uri.encode(query.trim())
+            val intent = when (app.lowercase().trim()) {
+                "youtube", "yt" -> Intent(Intent.ACTION_VIEW, Uri.parse("https://www.youtube.com/results?search_query=$q"))
+                    .setPackage("com.google.android.youtube")
+                "google", "web", "" -> Intent(Intent.ACTION_VIEW, Uri.parse("https://www.google.com/search?q=$q"))
+                "playstore", "play store", "play" -> Intent(Intent.ACTION_VIEW, Uri.parse("market://search?q=$q"))
+                "maps" -> Intent(Intent.ACTION_VIEW, Uri.parse("geo:0,0?q=$q"))
+                "spotify" -> Intent(Intent.ACTION_VIEW, Uri.parse("spotify:search:$q"))
+                else -> return fail("search in: youtube, google, playstore, maps or spotify (in other apps: tap \"Search\", then type)")
+            }.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            intent.`package`?.let { p -> if (runCatching { c.packageManager.getPackageInfo(p, 0) }.isFailure) intent.setPackage(null) }
+            return if (startOrNotice(c, intent, "Search $app")) ok("searching $app for \"$query\"") else ok("tap the notification to see the results")
         }
 
         /** Type into the box in focus (or the first one on the screen). Never presses send. */

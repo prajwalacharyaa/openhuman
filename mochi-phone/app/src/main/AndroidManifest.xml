@@ -38,6 +38,7 @@
         <package android:name="com.whatsapp" />
         <package android:name="org.telegram.messenger" />
         <package android:name="com.facebook.orca" />
+        <package android:name="com.google.android.youtube" />
     </queries>
     <!-- Phone abilities, each asked for only when December turns it on (Phone abilities screen) -->
     <uses-permission android:name="android.permission.READ_CONTACTS" />
