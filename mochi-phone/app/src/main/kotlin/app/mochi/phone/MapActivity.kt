@@ -291,7 +291,7 @@ private fun MapScreen(repo: String, onBack: () -> Unit) {
                     item { Section("All ${m.areas.size} areas") }
                     items(m.areas) { a ->
                         Row(Modifier.padding(horizontal = Space.l).fillMaxWidth().clip(RoundedCornerShape(18.dp)).background(c.card)
-                            .clickable { go(Spot.InArea(a.id)) }.padding(Space.l), verticalAlignment = Alignment.CenterVertically,
+                            .clickable(role = Role.Button) { go(Spot.InArea(a.id)) }.padding(Space.l), verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(Space.m)) {
                             Box(Modifier.size(12.dp).clip(RoundedCornerShape(6.dp)).background(areaColor(c, a.id)))
                             Column(Modifier.weight(1f)) {
@@ -339,7 +339,7 @@ private fun MapScreen(repo: String, onBack: () -> Unit) {
                                     style = Type.small, color = c.muted)
                                 m.areas.firstOrNull { it.id == p.area }?.let { a ->
                                     Text("Area: ${a.name} ›", style = Type.small, color = c.blueInk,
-                                        modifier = Modifier.clip(RoundedCornerShape(8.dp)).clickable { go(Spot.InArea(a.id)) }
+                                        modifier = Modifier.clip(RoundedCornerShape(8.dp)).clickable(role = Role.Button) { go(Spot.InArea(a.id)) }
                                             .padding(vertical = Space.xs))
                                 }
                             }
@@ -376,7 +376,7 @@ private fun PartRow(m: ProjectMap, id: String, rel: String?, dot: Color? = null,
     val c = LocalMochi.current
     val p = m.parts[id]
     Row(Modifier.padding(horizontal = Space.l).fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(c.card)
-        .clickable(onClick = onClick).padding(horizontal = Space.l, vertical = Space.m),
+        .clickable(role = Role.Button, onClick = onClick).padding(horizontal = Space.l, vertical = Space.m),
         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Space.m)) {
         Box(Modifier.size(10.dp).clip(RoundedCornerShape(5.dp)).background(dot ?: areaColor(c, p?.area ?: 0)))
         Column(Modifier.weight(1f)) {

@@ -229,6 +229,11 @@
             android:name=".DeclineReceiver"
             android:exported="false" />
 
+        <!-- "Reply" on a notice from Mochi or an agent (ReplyReceiver) -->
+        <receiver
+            android:name=".ReplyReceiver"
+            android:exported="false" />
+
         <receiver
             android:name=".BootReceiver"
             android:exported="true">

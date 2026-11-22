@@ -14,6 +14,9 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -194,10 +197,18 @@ fun ChatScreen(initialThread: String?, newChat: Boolean, initialText: String?, s
 
     fun reload() {
         val id = thread ?: return
-        io(scope, { Mochi.messages(ctx, id) }, { status = "Can't reach Mochi. Is Tailscale on?" }) { all ->
+        io(scope, { Mochi.messages(ctx, id) }, {
+            // offline: the messages saved the last time this chat was open, marked so
+            if (messages.isEmpty()) {
+                val saved = Mochi.cachedMessages(ctx, id)
+                messages.addAll((0 until saved.length()).mapNotNull { saved.optJSONObject(it) }.filter(::visible))
+            }
+            status = if (messages.isEmpty()) "Can't reach Mochi. Is Tailscale on?"
+                else "Offline: showing messages saved on this phone. Is Tailscale on?"
+        }) { all ->
             val shown = (0 until all.length()).mapNotNull { all.optJSONObject(it) }.filter(::visible)
             messages.clear(); messages.addAll(shown)
-            if (status.startsWith("Can't reach")) status = ""
+            if (status.startsWith("Can't reach") || status.startsWith("Offline")) status = ""
             val last = shown.lastOrNull()
             if (busy && live?.connected != true && last != null && last.optString("sender") != "user") busy = false
         }
@@ -342,6 +353,20 @@ fun ChatScreen(initialThread: String?, newChat: Boolean, initialText: String?, s
         }
     }
 
+    val dictate = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { r ->
+        r.data?.getStringArrayListExtra(android.speech.RecognizerIntent.EXTRA_RESULTS)?.firstOrNull()?.let { said ->
+            input = if (input.isBlank()) said else "$input $said"
+        }
+    }
+    // TalkBack hears when a reply starts and when it's in (the text itself streams in silently)
+    val view = androidx.compose.ui.platform.LocalView.current
+    var wasBusy by remember { mutableStateOf(false) }
+    LaunchedEffect(busy) {
+        if (busy) view.announceForAccessibility("Mochi is replying")
+        else if (wasBusy) view.announceForAccessibility("Mochi replied")
+        wasBusy = busy
+    }
+
     Column(Modifier.fillMaxSize().background(c.bg).systemBarsPadding().imePadding()) {
         // header: back, title, Mochi (thinks while working, talks while writing)
         Row(Modifier.fillMaxWidth().padding(horizontal = Space.l, vertical = Space.s),
@@ -419,8 +444,8 @@ fun ChatScreen(initialThread: String?, newChat: Boolean, initialText: String?, s
                         Text(q.text.ifBlank { "(attachment)" }, style = Type.small, color = c.ink, maxLines = 2, overflow = TextOverflow.Ellipsis,
                             modifier = Modifier.weight(1f))
                         Text("Send now", style = Type.small.copy(fontWeight = Type.strong), color = c.blueInk,
-                            modifier = Modifier.clip(RoundedCornerShape(12.dp)).clickable { sendNow(q) }.padding(horizontal = Space.s, vertical = Space.xs))
-                        RoundButton(Icons2.Close, "Remove from the queue", c.card, c.ink, 32.dp) { queue.remove(q) }
+                            modifier = Modifier.clip(RoundedCornerShape(12.dp)).clickable(role = Role.Button) { sendNow(q) }.padding(horizontal = Space.s, vertical = Space.xs))
+                        RoundButton(Icons2.Close, "Remove from the queue", c.card, c.ink, 44.dp) { queue.remove(q) }
                     }
                 }
             }
@@ -441,7 +466,18 @@ fun ChatScreen(initialThread: String?, newChat: Boolean, initialText: String?, s
                         })
                     }
                 }
-                Field(input, { input = it }, "Message " + (agent?.let { Agents.display(it, listOfNotNull(agentInfo)) } ?: "Mochi"), Modifier.weight(1f))
+                Field(input, { input = it }, "Message " + (agent?.let { Agents.display(it, listOfNotNull(agentInfo)) } ?: "Mochi"), Modifier.weight(1f)) {
+                    // voice typing with the phone's own speech-to-text (English or Nepali: Settings > Chat)
+                    if (input.isBlank()) RoundButton(Icons2.Mic, "Speak a message", c.field, c.ink, 40.dp) {
+                        val lang = Mochi.dictationLanguage(ctx)
+                        runCatching {
+                            dictate.launch(Intent(android.speech.RecognizerIntent.ACTION_RECOGNIZE_SPEECH)
+                                .putExtra(android.speech.RecognizerIntent.EXTRA_LANGUAGE_MODEL, android.speech.RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+                                .putExtra(android.speech.RecognizerIntent.EXTRA_LANGUAGE, lang)
+                                .putExtra(android.speech.RecognizerIntent.EXTRA_PROMPT, if (lang.startsWith("ne")) "बोल्नुहोस्" else "Speak your message"))
+                        }.onFailure { status = "This phone has no speech-to-text app (Google's voice typing does it)." }
+                    }
+                }
                 if (busy) {
                     StopButton {
                         paused = queue.isNotEmpty()   // stopping means stop: what is queued waits for December
@@ -473,6 +509,7 @@ fun ChatScreen(initialThread: String?, newChat: Boolean, initialText: String?, s
     }
 }
 
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 private fun Bubble(m: JSONObject) {
     val c = LocalMochi.current
@@ -482,10 +519,29 @@ private fun Bubble(m: JSONObject) {
     val attached = ChatActivity.ATTACHMENT.findAll(raw).count()
     val text = raw.replace(ChatActivity.ATTACHMENT, "").trim()
     val note = if (user) c.onUserBubble.copy(alpha = 0.7f) else c.muted
+    val ctx = LocalContext.current
+    val clipboard = androidx.compose.ui.platform.LocalClipboardManager.current
+    val haptic = androidx.compose.ui.platform.LocalHapticFeedback.current
+    var menu by remember { mutableStateOf(false) }
+    var selecting by remember { mutableStateOf(false) }
+    // long-press: copy, share or select part of it (2026-11-22: nothing in a chat could be copied)
+    if (selecting) androidx.compose.material3.AlertDialog(onDismissRequest = { selecting = false },
+        confirmButton = { androidx.compose.material3.TextButton({ selecting = false }) { Text("Done") } },
+        title = { Text("Select text", style = Type.title) },
+        text = {
+            androidx.compose.foundation.text.selection.SelectionContainer {
+                Text(text, style = Type.body, color = c.ink,
+                    modifier = Modifier.heightIn(max = 480.dp).verticalScroll(androidx.compose.foundation.rememberScrollState()))
+            }
+        })
     Row(Modifier.fillMaxWidth(), horizontalArrangement = if (user) Arrangement.End else Arrangement.Start) {
+      Box {
         Column(Modifier.widthIn(max = 320.dp)
             .clip(RoundedCornerShape(topStart = 22.dp, topEnd = 22.dp, bottomStart = if (user) 22.dp else 6.dp,
                 bottomEnd = if (user) 6.dp else 22.dp))
+            .combinedClickable(enabled = text.isNotEmpty(), onClickLabel = null, onLongClickLabel = "Copy, share or select",
+                onLongClick = { haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress); menu = true },
+                onClick = {})
             .background(if (user) c.userBubble else c.card).padding(horizontal = Space.l, vertical = Space.m),
             verticalArrangement = Arrangement.spacedBy(Space.xs)) {
             if (voice) Text("On a call", style = Type.small, color = note)
@@ -494,6 +550,20 @@ private fun Bubble(m: JSONObject) {
                 if (user) Text(text, style = Type.body, color = c.onUserBubble) else MarkdownText(text, c.ink)
             }
         }
+        DropdownMenu(menu, { menu = false }) {
+            DropdownMenuItem({ Text("Copy") }, {
+                menu = false
+                clipboard.setText(androidx.compose.ui.text.AnnotatedString(text))
+                android.widget.Toast.makeText(ctx, "Copied", android.widget.Toast.LENGTH_SHORT).show()
+            })
+            DropdownMenuItem({ Text("Share") }, {
+                menu = false
+                ctx.startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).setType("text/plain")
+                    .putExtra(Intent.EXTRA_TEXT, text), null))
+            })
+            DropdownMenuItem({ Text("Select text") }, { menu = false; selecting = true })
+        }
+      }
     }
 }
 
@@ -524,7 +594,7 @@ private fun ModeChips(mode: String, onPick: (String) -> Unit) {
     Row(horizontalArrangement = Arrangement.spacedBy(Space.s)) {
         for ((key, label) in listOf("quick" to "Quick", "normal" to "Normal", "deep" to "Deep")) {
             val on = mode == key
-            Box(Modifier.height(36.dp).clip(RoundedCornerShape(18.dp)).background(if (on) c.ink else c.field)
+            Box(Modifier.heightIn(min = 36.dp).clip(RoundedCornerShape(18.dp)).background(if (on) c.ink else c.field)
                 .clickable(role = Role.RadioButton) { onPick(key) }
                 .semantics { selected = on; contentDescription = "$label mode" }
                 .padding(horizontal = 14.dp), contentAlignment = Alignment.Center) {

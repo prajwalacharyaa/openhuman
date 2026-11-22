@@ -62,6 +62,9 @@ import app.mochi.phone.ui.LineIcon
 import app.mochi.phone.ui.WhileVisible
 import kotlinx.coroutines.delay
 import org.json.JSONObject
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.liveRegion
 
 /**
  * The call screen: an incoming call from Mochi (Answer / Decline), then the live call itself, with Mochi listening,
@@ -223,7 +226,9 @@ class CallActivity : ComponentActivity(), Call.Listener {
                             Call.silent && !incoming -> "$status · silent: Mochi answers in text"
                             mood == Mood.Sleepy && !Call.frozen && !incoming -> "Listening (quiet for a while)"
                             else -> status
-                        }, style = Type.small, color = c.muted, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                        }, style = Type.small, color = c.muted, maxLines = 2, overflow = TextOverflow.Ellipsis,
+                        // TalkBack says it when it changes: connecting, reconnecting, ended
+                        modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite })
                     // this call's tokens: Claude's exact (from the server's feed), Gemini's estimated from the audio
                     if (Call.active && !incoming) Text("Claude ${Doing.fmt(Doing.claudeSince(Call.startedAtMs).total)}" +
                         " · Gemini ≈${Doing.fmt(Call.geminiTokens)} tokens", style = Type.small, color = c.muted, maxLines = 1)
@@ -272,7 +277,7 @@ class CallActivity : ComponentActivity(), Call.Listener {
                 // crashed the call screen (phone-v67, NullPointerException in a layout pass, 4 times on 2026-11-14)
                 if (!incoming) {
                     val shown = talking
-                    Box(Modifier.padding(bottom = Space.m).fillMaxWidth().height(56.dp).alpha(if (shown) 1f else 0f)
+                    Box(Modifier.padding(bottom = Space.m).fillMaxWidth().heightIn(min = 56.dp).alpha(if (shown) 1f else 0f)
                         .clip(RoundedCornerShape(28.dp)).background(c.ink)
                         .clickable(enabled = shown, role = Role.Button) { Call.holdOn() }
                         .semantics { contentDescription = "Hold on: stop Mochi's answer" }, contentAlignment = Alignment.Center) {

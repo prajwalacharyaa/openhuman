@@ -63,6 +63,7 @@ import app.mochi.phone.ui.LocalMochi
 import app.mochi.phone.ui.MarkdownText
 import app.mochi.phone.ui.MochiTheme
 import app.mochi.phone.ui.Pill
+import app.mochi.phone.ui.Refreshable
 import app.mochi.phone.ui.RoundButton
 import app.mochi.phone.ui.Space
 import app.mochi.phone.ui.Type
@@ -75,6 +76,7 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONArray
 import org.json.JSONObject
 import java.util.concurrent.ConcurrentHashMap
+import androidx.compose.foundation.layout.heightIn
 
 /**
  * The room (the Roast Room on the server, mochi-room): December's business decisions argued out by an advisory
@@ -278,9 +280,10 @@ private fun ListPane(onOpen: (String) -> Unit, onAsk: () -> Unit) {
     var data by remember { mutableStateOf<JSONObject?>(null) }
     var error by remember { mutableStateOf("") }
 
+    fun load() = io(scope, { Room.get(ctx, "/sessions") }, { error = Room.friendly(it) }) { data = it; error = "" }
     WhileVisible {
         while (true) {
-            io(scope, { Room.get(ctx, "/sessions") }, { error = Room.friendly(it) }) { data = it; error = "" }
+            load()
             // follow a meeting closely while one is on; otherwise a slow check is enough
             val busy = data?.optJSONObject("status")?.let { it.optJSONObject("running") != null || it.optInt("waiting") > 0 } ?: true
             delay(if (busy) 15_000 else 60_000)
@@ -290,6 +293,7 @@ private fun ListPane(onOpen: (String) -> Unit, onAsk: () -> Unit) {
     val running = data?.optJSONObject("status")?.optJSONObject("running")
     val waiting = data?.optJSONObject("status")?.optInt("waiting") ?: 0
 
+    Refreshable({ load() }, Modifier.fillMaxSize()) {
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(horizontal = Space.l, vertical = Space.s),
         verticalArrangement = Arrangement.spacedBy(Space.m)) {
         item {
@@ -297,7 +301,7 @@ private fun ListPane(onOpen: (String) -> Unit, onAsk: () -> Unit) {
                 "Buffett and others. You get a scored verdict, the dissent and next steps.", style = Type.small, color = c.muted)
         }
         item {
-            Box(Modifier.fillMaxWidth().height(56.dp).clip(RoundedCornerShape(28.dp)).background(c.ink)
+            Box(Modifier.fillMaxWidth().heightIn(min = 56.dp).clip(RoundedCornerShape(28.dp)).background(c.ink)
                 .clickable(role = Role.Button, onClick = onAsk), contentAlignment = Alignment.Center) {
                 Text("Put a decision to the room", style = Type.title, color = c.bg)
             }
@@ -334,6 +338,7 @@ private fun ListPane(onOpen: (String) -> Unit, onAsk: () -> Unit) {
                 }
             }
         }
+    }
     }
 }
 
@@ -502,7 +507,7 @@ private fun MeetingPane(id: String, say: (String) -> Unit) {
             item {
                 Row(horizontalArrangement = Arrangement.spacedBy(Space.s)) {
                     rounds.forEachIndexed { i, r ->
-                        Pill("Round ${r.optInt("n")}", i == shown, Modifier.weight(1f), height = 36.dp) { round = i }
+                        Pill("Round ${r.optInt("n")}", i == shown, Modifier.weight(1f), height = 36.dp, tab = true) { round = i }
                     }
                 }
             }
@@ -608,7 +613,7 @@ private fun AskPane(onSent: (String) -> Unit) {
             item { ModePicker(full) { full = it } }
             item {
                 val ready = (answers.value["decision"] ?: "").isNotBlank()
-                Box(Modifier.fillMaxWidth().height(52.dp).clip(RoundedCornerShape(26.dp)).background(if (ready) c.ink else c.field)
+                Box(Modifier.fillMaxWidth().heightIn(min = 52.dp).clip(RoundedCornerShape(26.dp)).background(if (ready) c.ink else c.field)
                     .clickable(role = Role.Button, enabled = ready) { review = Room.brief(answers.value); error = "" },
                     contentAlignment = Alignment.Center) {
                     Text("Review", style = Type.title, color = if (ready) c.bg else c.muted)

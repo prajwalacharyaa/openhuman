@@ -36,6 +36,7 @@ import androidx.compose.ui.graphics.vector.path
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -43,6 +44,12 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.getValue
 
 /** Line icons drawn like the design (2 px stroke, round ends), so no icon library is needed. */
 object Icons2 {
@@ -160,12 +167,15 @@ fun StopButton(onClick: () -> Unit) {
 
 /** A pill-shaped button: [filled] = ink on the theme's ground, else outlined. */
 @Composable
-fun Pill(text: String, filled: Boolean, modifier: Modifier = Modifier, height: Dp = 44.dp, onClick: () -> Unit) {
+fun Pill(text: String, filled: Boolean, modifier: Modifier = Modifier, height: Dp = 44.dp, tab: Boolean = false,
+         onClick: () -> Unit) {
     val c = LocalMochi.current
     val shape = RoundedCornerShape(height / 2)
-    Box(modifier.height(height).clip(shape)
+    // heightIn, not height: very large text grows the pill instead of being clipped; a [tab] says whether it's selected
+    Box(modifier.heightIn(min = height).clip(shape)
         .then(if (filled) Modifier.background(c.ink) else Modifier.border(1.dp, c.line, shape))
-        .clickable(role = Role.Button, onClick = onClick).padding(horizontal = Space.l),
+        .then(if (tab) Modifier.selectable(selected = filled, role = Role.Tab, onClick = onClick)
+            else Modifier.clickable(role = Role.Button, onClick = onClick)).padding(horizontal = Space.l),
         contentAlignment = Alignment.Center) {
         Text(text, style = Type.body.copy(fontWeight = if (filled) Type.strong else null), color = if (filled) c.bg else c.ink)
     }
@@ -174,7 +184,7 @@ fun Pill(text: String, filled: Boolean, modifier: Modifier = Modifier, height: D
 /** A colour-coded tile on the home screen. */
 @Composable
 fun Tile(bg: Color, modifier: Modifier = Modifier, onClick: () -> Unit, content: @Composable () -> Unit) {
-    Column(modifier.clip(RoundedCornerShape(24.dp)).background(bg).clickable(onClick = onClick).padding(Space.l),
+    Column(modifier.clip(RoundedCornerShape(24.dp)).background(bg).clickable(role = Role.Button, onClick = onClick).padding(Space.l),
         verticalArrangement = Arrangement.spacedBy(Space.s)) { content() }
 }
 
@@ -201,7 +211,7 @@ fun Field(value: String, onChange: (String) -> Unit, placeholder: String, modifi
 fun Label(text: String) {
     val c = LocalMochi.current
     Text(text, style = Type.small.copy(fontWeight = Type.strong), color = c.muted,
-        modifier = Modifier.padding(top = Space.s, bottom = Space.xs))
+        modifier = Modifier.padding(top = Space.s, bottom = Space.xs).semantics { heading() })
 }
 
 /**
@@ -220,4 +230,17 @@ fun <T> io(scope: CoroutineScope, work: () -> T, failed: (Throwable) -> Unit = {
         val r = withContext(Dispatchers.IO) { runCatching(work) }
         r.onSuccess(done).onFailure(failed)
     }
+}
+
+/**
+ * Pull down to refresh: [onRefresh] starts the reload (it runs off the main thread by itself, with [io]); the
+ * spinner shows for a moment so the pull is seen. Screens still refresh on their own timer too.
+ */
+@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
+@Composable
+fun Refreshable(onRefresh: () -> Unit, modifier: Modifier = Modifier, content: @Composable androidx.compose.foundation.layout.BoxScope.() -> Unit) {
+    var refreshing by remember { mutableStateOf(false) }
+    LaunchedEffect(refreshing) { if (refreshing) { kotlinx.coroutines.delay(900); refreshing = false } }
+    androidx.compose.material3.pulltorefresh.PullToRefreshBox(isRefreshing = refreshing,
+        onRefresh = { refreshing = true; onRefresh() }, modifier = modifier, content = content)
 }

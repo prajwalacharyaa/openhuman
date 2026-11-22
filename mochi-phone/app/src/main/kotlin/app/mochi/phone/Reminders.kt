@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -40,6 +41,7 @@ import app.mochi.phone.ui.LineIcon
 import app.mochi.phone.ui.LocalMochi
 import app.mochi.phone.ui.Mascot
 import app.mochi.phone.ui.Pill
+import app.mochi.phone.ui.Refreshable
 import app.mochi.phone.ui.RoundButton
 import app.mochi.phone.ui.Space
 import app.mochi.phone.ui.Type
@@ -139,7 +141,8 @@ internal fun RemindersScreen(onBack: () -> Unit) {
             adding = !adding
         }
     }) {
-        LazyColumn(contentPadding = PaddingValues(Space.l), verticalArrangement = Arrangement.spacedBy(Space.s)) {
+        Refreshable({ load() }, Modifier.fillMaxSize()) {
+        LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(Space.l), verticalArrangement = Arrangement.spacedBy(Space.s)) {
             if (adding) item { NewReminder { text, at, daily, call ->
                 io(scope, { Reminders.add(ctx, text, at, daily, call) }, { error = Room.friendly(it) }) { adding = false; load() }
             } }
@@ -170,6 +173,7 @@ internal fun RemindersScreen(onBack: () -> Unit) {
             }
             item { Spacer(Modifier.height(Space.xl)) }
         }
+        }
     }
 }
 
@@ -192,7 +196,7 @@ private fun NewReminder(save: (String, ZonedDateTime, Boolean, Boolean) -> Unit)
         Field(text, { text = it }, "Remind me to…", Modifier.fillMaxWidth())
         Label("When")
         FlowRow(horizontalArrangement = Arrangement.spacedBy(Space.s), verticalArrangement = Arrangement.spacedBy(Space.s)) {
-            for ((label, t) in quick) Pill(label, at == t, height = 40.dp) { at = t }
+            for ((label, t) in quick) Pill(label, at == t, height = 40.dp, tab = true) { at = t }
         }
         Row(horizontalArrangement = Arrangement.spacedBy(Space.s), verticalAlignment = Alignment.CenterVertically) {
             Pill(at.format(DateTimeFormatter.ofPattern("EEE d MMM")), false, height = 40.dp) {

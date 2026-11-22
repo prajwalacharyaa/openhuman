@@ -28,6 +28,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.toggleable
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.ui.unit.dp
 import app.mochi.phone.ui.LocalMochi
 import app.mochi.phone.ui.Space
@@ -53,7 +58,8 @@ object Appearance {
 private fun Section(title: String, content: @Composable ColumnScope.() -> Unit) {
     val c = LocalMochi.current
     Column(verticalArrangement = Arrangement.spacedBy(Space.s)) {
-        Text(title, style = Type.small.copy(fontWeight = Type.strong), color = c.muted, modifier = Modifier.padding(start = Space.s))
+        Text(title, style = Type.small.copy(fontWeight = Type.strong), color = c.muted,
+            modifier = Modifier.padding(start = Space.s).semantics { heading() })
         Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(24.dp)).background(c.card).padding(20.dp),
             verticalArrangement = Arrangement.spacedBy(Space.m), content = content)
     }
@@ -63,12 +69,15 @@ private fun Section(title: String, content: @Composable ColumnScope.() -> Unit) 
 @Composable
 private fun SwitchRow(title: String, detail: String, on: Boolean, enabled: Boolean = true, onChange: (Boolean) -> Unit) {
     val c = LocalMochi.current
-    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+    // the whole row is the switch: a tap on the words works, and TalkBack reads it as one "switch, on/off"
+    Row(Modifier.fillMaxWidth().heightIn(min = 48.dp).clip(RoundedCornerShape(12.dp))
+        .toggleable(value = on, enabled = enabled, role = Role.Switch, onValueChange = onChange),
+        verticalAlignment = Alignment.CenterVertically) {
         Column(Modifier.weight(1f).padding(end = Space.m), verticalArrangement = Arrangement.spacedBy(Space.xs)) {
             Text(title, style = Type.body, color = c.ink)
             Text(detail, style = Type.small, color = c.muted)
         }
-        Switch(on, onChange, enabled = enabled, colors = SwitchDefaults.colors(checkedTrackColor = c.ink, checkedThumbColor = c.bg))
+        Switch(on, null, enabled = enabled, colors = SwitchDefaults.colors(checkedTrackColor = c.ink, checkedThumbColor = c.bg))
     }
 }
 
@@ -113,6 +122,22 @@ fun SettingsScreen(onBack: () -> Unit) {
                 Text("Takes effect on the next call.", style = Type.small, color = c.muted)
             }
 
+            Section("Chat") {
+                var lang by remember { mutableStateOf(Mochi.dictationLanguage(ctx)) }
+                Text("Voice typing language", style = Type.body, color = c.ink)
+                Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(22.dp)).background(c.field).padding(4.dp)) {
+                    listOf("en-US" to "English", "ne-NP" to "नेपाली (Nepali)").forEach { (key, label) ->
+                        val on = lang == key
+                        Text(label, style = Type.body.copy(fontWeight = if (on) Type.strong else null), color = if (on) c.bg else c.ink,
+                            modifier = Modifier.weight(1f).clip(RoundedCornerShape(18.dp)).background(if (on) c.ink else c.field)
+                                .selectable(selected = on, role = Role.RadioButton) { lang = key; Mochi.setDictationLanguage(ctx, key) }
+                                .padding(vertical = Space.m), textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+                    }
+                }
+                Text("The mic in a chat's message box types what you say. Long-press a message to copy, share or select it.",
+                    style = Type.small, color = c.muted)
+            }
+
             if (Mochi.configured(ctx)) Section("Claude accounts") { ClaudeAccounts() }
 
             if (Mochi.configured(ctx)) Section("Trading (Samir)") { TradingSettings() }
@@ -125,7 +150,7 @@ fun SettingsScreen(onBack: () -> Unit) {
                         val on = mode == key
                         Text(label, style = Type.body.copy(fontWeight = if (on) Type.strong else null), color = if (on) c.bg else c.ink,
                             modifier = Modifier.weight(1f).clip(RoundedCornerShape(18.dp)).background(if (on) c.ink else c.field)
-                                .clickable(role = Role.RadioButton) { mode = key; Appearance.set(ctx, key) }
+                                .selectable(selected = on, role = Role.RadioButton) { mode = key; Appearance.set(ctx, key) }
                                 .padding(vertical = Space.m), textAlign = androidx.compose.ui.text.style.TextAlign.Center)
                     }
                 }

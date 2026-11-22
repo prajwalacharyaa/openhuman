@@ -52,6 +52,7 @@ import javax.crypto.Cipher
 import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
+import androidx.compose.ui.semantics.Role
 
 /**
  * The server's encrypted vault, unlocked from this phone (mochi-unlock on the server, tailnet :8452).
@@ -275,13 +276,13 @@ fun UnlockCard() {
                         if (confirm == "DELETE EVERYTHING") countdown = 5
                     }
                     Text("Cancel", style = Type.small, color = c.muted,
-                        modifier = Modifier.clip(RoundedCornerShape(8.dp)).clickable { wipeTyping = false; confirm = "" }.padding(vertical = Space.s))
+                        modifier = Modifier.clip(RoundedCornerShape(8.dp)).clickable(role = Role.Button) { wipeTyping = false; confirm = "" }.padding(vertical = Space.s))
                 }
                 else -> Text("Emergency wipe…", style = Type.small, color = c.danger,
-                    modifier = Modifier.clip(RoundedCornerShape(8.dp)).clickable { wipeTyping = true; note = "" }.padding(vertical = Space.s))
+                    modifier = Modifier.clip(RoundedCornerShape(8.dp)).clickable(role = Role.Button) { wipeTyping = true; note = "" }.padding(vertical = Space.s))
             }
             Text("Remove from this phone", style = Type.small, color = c.muted,
-                modifier = Modifier.clip(RoundedCornerShape(8.dp)).clickable { VaultUnlock.forget(ctx); enrolled = false; note = "Removed from this phone. On the server: sudo mochi-vault remove-key" }
+                modifier = Modifier.clip(RoundedCornerShape(8.dp)).clickable(role = Role.Button) { VaultUnlock.forget(ctx); enrolled = false; note = "Removed from this phone. On the server: sudo mochi-vault remove-key" }
                     .padding(vertical = Space.s))
         }
         if (note.isNotEmpty()) Text(note, style = Type.small, color = c.muted)

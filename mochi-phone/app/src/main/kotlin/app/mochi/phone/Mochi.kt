@@ -240,9 +240,36 @@ object Mochi {
     }
 
     /** The conversation's messages, oldest first. */
-    fun messages(c: Context, threadId: String): JSONArray =
-        data(rpc(c, "openhuman.threads_messages_list", JSONObject().put("thread_id", threadId)))
+    fun messages(c: Context, threadId: String): JSONArray {
+        val got = data(rpc(c, "openhuman.threads_messages_list", JSONObject().put("thread_id", threadId)))
             .optJSONArray("messages") ?: JSONArray()
+        runCatching { saveMessages(c, threadId, got) }
+        return got
+    }
+
+    // ---- offline: the last chats and their newest messages stay on the phone (app-private storage) ----
+    private fun offlineDir(c: Context) = java.io.File(c.filesDir, "offline").apply { mkdirs() }
+    private fun safe(id: String) = id.replace(Regex("[^A-Za-z0-9_-]"), "_").take(80)
+
+    private fun saveMessages(c: Context, threadId: String, all: JSONArray) {
+        val kept = JSONArray()
+        for (i in maxOf(0, all.length() - 60) until all.length()) kept.put(all.get(i))
+        java.io.File(offlineDir(c), "m-${safe(threadId)}.json").writeText(kept.toString())
+        // only the 15 most recently opened chats are kept
+        offlineDir(c).listFiles { f -> f.name.startsWith("m-") }?.sortedByDescending { it.lastModified() }
+            ?.drop(15)?.forEach { it.delete() }
+    }
+
+    /** The newest messages of [threadId] as last seen, or empty. */
+    fun cachedMessages(c: Context, threadId: String): JSONArray = runCatching {
+        JSONArray(java.io.File(offlineDir(c), "m-${safe(threadId)}.json").readText())
+    }.getOrDefault(JSONArray())
+
+    /** The chat list as last seen, or empty. */
+    fun cachedThreads(c: Context): List<JSONObject> = runCatching {
+        val arr = JSONArray(java.io.File(offlineDir(c), "threads.json").readText())
+        (0 until arr.length()).map { arr.getJSONObject(it) }
+    }.getOrDefault(emptyList())
 
     /**
      * Send a typed message, exactly like the desktop chat: Claude answers it in the thread. `followup`: wait for
@@ -285,6 +312,7 @@ object Mochi {
         return (0 until arr.length()).map { arr.getJSONObject(it) }
             .filter { it.isNull("parentThreadId") || it.optString("parentThreadId").isEmpty() }
             .sortedByDescending { it.optString("lastMessageAt") }
+            .also { list -> runCatching { java.io.File(offlineDir(c), "threads.json").writeText(JSONArray(list.take(100)).toString()) } }
     }
 
     fun deleteThread(c: Context, threadId: String) {
@@ -367,6 +395,10 @@ object Mochi {
     fun setLongAnswers(c: Context, on: Boolean) = prefs(c).edit().putBoolean("long_answers", on).apply()
 
     /** Empties the Inbox and returns what it held, for Undo ([restoreInbox]). */
+    /** Voice typing in chats: "en-US" or "ne-NP" (Settings > Chat). */
+    fun dictationLanguage(c: Context) = prefs(c).getString("dictation_lang", "en-US") ?: "en-US"
+    fun setDictationLanguage(c: Context, lang: String) = prefs(c).edit().putString("dictation_lang", lang).apply()
+
     fun clearInbox(c: Context): String {
         val old = prefs(c).getString("inbox", "[]") ?: "[]"
         prefs(c).edit().putString("inbox", "[]").apply()

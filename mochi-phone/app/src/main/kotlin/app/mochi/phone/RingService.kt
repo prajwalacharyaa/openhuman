@@ -186,15 +186,21 @@ class RingService : Service() {
             MochiWidget.update(c, force = true) // the red count
             val open = landing(c, notice, 7 + notices % 50)
             val body = notice.optString("body")
+            val title = notice.optString("title")
+            val id = Mochi.NOTIFY_NOTICE_BASE + notices++ % 50
+            // answerable from the notification: an agent's notice goes to that agent's chat, any other to Mochi's
+            val team = Agents.cached(c)
+            val agent = team.firstOrNull { title.startsWith(it.display + " ") || title.startsWith(it.display + ":") }?.name
             val n = Notification.Builder(c, Mochi.CHANNEL_NOTICES)
                 .setSmallIcon(R.drawable.ic_stat_mochi)
-                .setContentTitle(notice.optString("title"))
+                .setContentTitle(title)
                 .setContentText(body)
                 .setStyle(Notification.BigTextStyle().bigText(body))
                 .setContentIntent(open)
                 .setAutoCancel(true)
+                .apply { if (Mochi.configured(c)) addAction(ReplyReceiver.action(c, id, title, body, agent)) }
                 .build()
-            c.getSystemService(NotificationManager::class.java).notify(Mochi.NOTIFY_NOTICE_BASE + notices++ % 50, n)
+            c.getSystemService(NotificationManager::class.java).notify(id, n)
         }
 
         /**
