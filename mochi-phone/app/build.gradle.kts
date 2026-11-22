@@ -55,6 +55,12 @@ android {
     buildFeatures {
         compose = true
     }
+    // compressed inside the APK (2026-11-22): the voice check's runtime is 17.6 MB stored raw by default; compressed
+    // the download goes from ~22 MB to ~9 MB (the phone unpacks it once at install)
+    packaging {
+        jniLibs { useLegacyPackaging = true }
+        dex { useLegacyPackaging = true }
+    }
 }
 
 dependencies {
