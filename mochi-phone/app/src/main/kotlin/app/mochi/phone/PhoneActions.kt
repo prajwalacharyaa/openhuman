@@ -76,6 +76,15 @@ object PhoneActions {
                     else "stranger mode is off")
                 else -> Stranger.set(c, args.optBoolean("on")).let { if (it.startsWith("can't")) fail(it) else ok(it) }
             }
+            // "text only mode" (2026-11-22: it was handed on and nothing happened): Mochi's words only as text on the
+            // call screen, the same as the sound button's "Text only"; "turn off text only mode" brings the voice back
+            "call.silent" -> if (!Call.active) fail("no call is on") else {
+                val on = args.optBoolean("on", true)
+                Call.silent = on
+                if (!on) Call.setSpeaker(Call.speaker)
+                android.os.Handler(android.os.Looper.getMainLooper()).post { Call.listener?.onStatus(Call.status) }
+                ok(if (on) "text only: Mochi's answers show as text on the call screen, no voice" else "voice back on")
+            }
             "call.speed" -> if (!Call.active) fail("no call is on") else ok(Call.setSpeed(args.optDouble("speed", 1.0).toFloat()))
             // the book being read, on screen, highlighted as the voice reads
             // "wake me at 6" / "timer 10 minutes": the phone's own Clock app rings, even with the server off
