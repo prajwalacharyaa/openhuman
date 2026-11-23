@@ -295,6 +295,9 @@ pub async fn handle_live_voice_ws(socket: WebSocket, config: Arc<Config>) {
 
     // why the call ended, for the log (calls that "just ended" are diagnosed from this)
     let mut ended_because = String::from("unknown");
+    // the phone's line: pinged over this connection and timed, so a slow or lossy path shows in the log
+    let mut line = super::link::Line::default();
+    let mut last_ping = std::time::Instant::now();
     loop {
         tokio::select! {
             incoming = stream.next() => {
@@ -346,6 +349,12 @@ pub async fn handle_live_voice_ws(socket: WebSocket, config: Arc<Config>) {
                             Ok(())
                         }
                     },
+                    Message::Pong(_) => {
+                        if let Some(slow) = line.pong(std::time::Instant::now()) {
+                            tracing::warn!(session_id, "{LOG_PREFIX} {slow}");
+                        }
+                        Ok(())
+                    }
                     _ => Ok(()),
                 };
                 if result.is_err() {
@@ -412,6 +421,13 @@ pub async fn handle_live_voice_ws(socket: WebSocket, config: Arc<Config>) {
             }
             _ = note_tick.tick() => {
                 let now = std::time::Instant::now();
+                if now.duration_since(last_ping) >= super::link::EVERY {
+                    last_ping = now;
+                    if let Some(missed) = line.ping(now) {
+                        tracing::warn!(session_id, "{LOG_PREFIX} {missed}");
+                    }
+                    let _ = sink.send(Message::Ping(Default::default())).await;
+                }
                 if !dry_run && embedder_warmed.map_or(true, |at| now.duration_since(at) > super::embedder::WARM_EVERY) {
                     embedder_warmed = Some(now);
                     tokio::spawn(super::embedder::warm());
@@ -617,6 +633,9 @@ pub async fn handle_live_voice_ws(socket: WebSocket, config: Arc<Config>) {
         }
     }
     tracing::info!(session_id, provider = %provider, reason = %ended_because, "{LOG_PREFIX} session ended");
+    if let Some(summary) = line.summary() {
+        tracing::info!(session_id, "{LOG_PREFIX} {summary}");
+    }
     // a guest had the phone only for this call; a dropped session reconnects, so only hanging up ends it
     if !dry_run && hung_up(&ended_because) {
         crate::agent::tinyagents::middleware::guest_end();

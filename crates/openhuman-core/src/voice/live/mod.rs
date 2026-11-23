@@ -21,6 +21,7 @@ mod embedder;
 mod error;
 #[cfg(feature = "http-server")]
 mod handoff;
+mod link;
 pub mod ops;
 mod persist;
 mod providers;

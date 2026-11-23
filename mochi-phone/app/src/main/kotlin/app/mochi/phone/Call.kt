@@ -5,6 +5,10 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.media.AudioAttributes
+import android.net.ConnectivityManager
+import android.net.Network
+import android.net.NetworkCapabilities
+import android.net.NetworkRequest
 import android.media.AudioDeviceInfo
 import android.media.AudioFormat
 import android.media.AudioManager
@@ -169,6 +173,52 @@ object Call {
     @Volatile var switching = false
         private set
 
+    /**
+     * The call's connection (2026-11-23). OkHttp only notices a dead line when a ping goes unanswered: with the shared
+     * client's 20 s pings that was up to 40 s of silence before reconnecting. Pings every 8 s here, and [lineWatch]
+     * reconnects as soon as the microphone's sound piles up unsent (it streams 32 KB a second, so a line that
+     * stopped moving shows within seconds), sooner still right after the phone changes network.
+     */
+    private val voiceHttp by lazy { Mochi.http.newBuilder().pingInterval(8, TimeUnit.SECONDS).build() }
+    /** Sound waiting to go out past this: the line has stopped moving. */
+    private const val STALLED_BYTES = 4 * 32_000L
+    /** Right after a network change: a smaller pile is enough. */
+    private const val STALLED_AFTER_SWITCH_BYTES = 32_000L
+    private const val LINE_WATCH_MS = 1_000L
+    @Volatile private var networkChangedAt = 0L
+
+    private val lineWatch = object : Runnable {
+        override fun run() {
+            if (!active) return
+            val socket = ws
+            val waiting = socket?.queueSize() ?: 0L
+            val justSwitched = System.currentTimeMillis() - networkChangedAt in 2_000L..15_000L
+            if (socket != null && answered && !reconnecting && !switching &&
+                waiting > (if (justSwitched) STALLED_AFTER_SWITCH_BYTES else STALLED_BYTES)) {
+                Crashes.note(app, "call: the line stopped moving (${waiting / 1000} KB unsent" +
+                    (if (justSwitched) ", after a network change" else "") + "): reconnecting now")
+                reconnect(if (justSwitched) "the network changed" else "the connection stalled", socket)
+            }
+            main.postDelayed(this, LINE_WATCH_MS)
+        }
+    }
+
+    /** Wi-Fi or mobile data coming or going under Tailscale: [lineWatch] looks harder for the next seconds. */
+    private val networks = object : ConnectivityManager.NetworkCallback() {
+        override fun onAvailable(network: Network) { networkChangedAt = System.currentTimeMillis() }
+        override fun onLost(network: Network) { networkChangedAt = System.currentTimeMillis() }
+    }
+
+    private fun watchNetworks(on: Boolean) {
+        val cm = app.getSystemService(ConnectivityManager::class.java) ?: return
+        runCatching {
+            if (on) cm.registerNetworkCallback(NetworkRequest.Builder()
+                .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+                .addCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VPN).build(), networks)
+            else cm.unregisterNetworkCallback(networks)
+        }
+    }
+
     private fun voiceRequest(): Request =
         Request.Builder().url(Mochi.voiceUrl(app) + "?token=" + URLEncoder.encode(Mochi.token(app), "UTF-8")).build()
 
@@ -204,6 +254,9 @@ object Call {
         closing = false
         speed = app.getSharedPreferences("mochi-call", Context.MODE_PRIVATE).getFloat("speed", 1f)
         main.postDelayed(watch, WATCH_MS)
+        main.postDelayed(lineWatch, LINE_WATCH_MS)
+        networkChangedAt = 0L
+        watchNetworks(true)
         main.post { said.clear() }
         callThreads.clear()
         agent = withAgent?.takeIf { agentThread != null && mochiCall == null }
@@ -218,7 +271,7 @@ object Call {
         am.mode = AudioManager.MODE_IN_COMMUNICATION
         setSpeaker(true)
         status("Connecting…")
-        ws = Mochi.http.newWebSocket(request, Socket())
+        ws = voiceHttp.newWebSocket(request, Socket())
         main.post { MochiWidget.update(app, force = true) }
     }
 
@@ -243,10 +296,10 @@ object Call {
                 if (!active) return@synchronized
                 val old = ws
                 playback.clear()
-                ws = Mochi.http.newWebSocket(voiceRequest(), Socket())
+                ws = voiceHttp.newWebSocket(voiceRequest(), Socket())
                 old?.let { runCatching { it.cancel() } }
             }
-        }, 1_500L * reconnects)
+        }, if (reconnects == 1) 300L else 1_500L * (reconnects - 1))
     }
 
     // ---- sleep timer, night check, speed ------------------------------------------------------------------------
@@ -328,6 +381,8 @@ object Call {
     fun end(why: String = "You hung up") {
         if (!active) return
         main.removeCallbacks(watch)
+        main.removeCallbacks(lineWatch)
+        watchNetworks(false)
         sleepAt = 0L
         if (endReason.isEmpty()) endReason = why
         active = false
@@ -402,7 +457,7 @@ object Call {
                 agent = target
                 threadId = thread
                 playback.clear()
-                ws = Mochi.http.newWebSocket(voiceRequest(), Socket())
+                ws = voiceHttp.newWebSocket(voiceRequest(), Socket())
                 old?.let { runCatching { it.send("""{"type":"stop"}"""); it.close(1000, "passed the phone") } }
             }
             main.post { said.add(Said("system", "Now talking with $name", true)); MochiWidget.update(app, force = true) }

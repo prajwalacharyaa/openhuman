@@ -169,3 +169,13 @@ fn a_call_with_an_agent_speaks_as_the_agent() {
     assert!(agent_voice(ws.path(), "nobody").is_none());
     assert!(agent_voice(ws.path(), "../sy").is_none());
 }
+
+#[test]
+fn a_failed_resume_starts_fresh_and_still_asks_for_handles() {
+    let mut live = LiveConfig::new();
+    live.provider_options = serde_json::json!({ "resumption_handle": "h1", "other": 1 });
+    let fresh = without_resume_handle(live);
+    assert!(fresh.provider_options.get("resumption_handle").is_none());
+    assert_eq!(fresh.provider_options["other"], 1);
+    assert!(fresh.provider_options["setup"]["sessionResumption"].is_object());
+}

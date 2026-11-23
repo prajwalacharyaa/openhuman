@@ -18,6 +18,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use tinyagents_harness::context::RunConfig;
+use tinyagents_live::tinyliveagents::LiveConfig;
 use tinyagents_live::{LiveAgent, LiveAgentOptions, LiveAgentSession, TaskScope};
 
 use super::error::LiveVoiceError;
@@ -470,13 +471,17 @@ pub(crate) async fn start(
         message_id: format!("voice-live-{session_id}"),
         history_key: None,
     };
-    let mut context = OpenHumanRunContext::new();
-    context.origin = Some(origin.clone());
-    context.thread_id = Some(thread_id.clone());
-    context.workspace = host.live_workspace_descriptor();
-    let run_config =
-        RunConfig::new(format!("voice-live-{session_id}")).with_max_tool_calls(LIVE_MAX_TOOL_CALLS);
-    let ctx = context.into_tinyagents(run_config);
+    // built again for the fresh try when resuming fails (a run context is used up by one start)
+    let make_ctx = || {
+        let mut context = OpenHumanRunContext::new();
+        context.origin = Some(origin.clone());
+        context.thread_id = Some(thread_id.clone());
+        context.workspace = host.live_workspace_descriptor();
+        let run_config = RunConfig::new(format!("voice-live-{session_id}"))
+            .with_max_tool_calls(LIVE_MAX_TOOL_CALLS);
+        context.into_tinyagents(run_config)
+    };
+    let ctx = make_ctx();
 
     let approval = ApprovalChatContext {
         thread_id: thread_id.clone(),
@@ -499,19 +504,41 @@ pub(crate) async fn start(
         ))
     });
     let agent = LiveAgent::new(Arc::new(harness), Arc::new(())).with_task_scope(scope);
-    let session = agent
-        .start(
-            prepared.provider.as_ref(),
-            prepared.config,
-            ctx,
-            LiveAgentOptions::default(),
-        )
-        .await?;
+    let fresh = resumed.then(|| without_resume_handle(prepared.config.clone()));
+    let session = match agent
+        .start(prepared.provider.as_ref(), prepared.config, ctx, LiveAgentOptions::default())
+        .await
+    {
+        Ok(session) => session,
+        // Google refusing the handle (gone, or from a session it closed with "Requested entity was not found": 12
+        // of 14 resumes 2026-11-20..22) cost the call a round trip to the phone and its reconnect pause, several
+        // seconds of silence each time. Start fresh here at once instead; the call keeps its recent messages.
+        Err(error) => match fresh {
+            Some(fresh) => {
+                tracing::info!(session_id, %error, "[voice-live] resuming failed: starting fresh at once");
+                agent
+                    .start(prepared.provider.as_ref(), fresh, make_ctx(), LiveAgentOptions::default())
+                    .await?
+            }
+            None => return Err(error.into()),
+        },
+    };
     Ok(StartedLiveSession {
         session,
         provider,
         thread_id,
     })
+}
+
+/// The same setup without the resumption handle, still asking Google for new handles.
+fn without_resume_handle(mut live: LiveConfig) -> LiveConfig {
+    if let Some(options) = live.provider_options.as_object_mut() {
+        options.remove("resumption_handle");
+        if let Some(setup) = options.entry("setup").or_insert_with(|| serde_json::json!({})).as_object_mut() {
+            setup.entry("sessionResumption").or_insert_with(|| serde_json::json!({}));
+        }
+    }
+    live
 }
 
 #[cfg(test)]
