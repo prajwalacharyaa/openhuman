@@ -495,8 +495,9 @@ pub(crate) async fn start(
     // the tool worker — a spawned task — must be scoped explicitly. Baselined
     // in `agent-runtime-boundary-baseline.json` with the other entry points
     // until the gate reads the origin from the run context.
+    let scope_origin = origin.clone(); // `origin` itself stays for the fresh try's run context
     let scope: TaskScope = Arc::new(move |task| {
-        let origin = origin.clone();
+        let origin = scope_origin.clone();
         let approval = approval.clone();
         Box::pin(with_origin(
             origin,
