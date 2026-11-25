@@ -88,6 +88,15 @@ object PhoneActions {
                 ok(if (on) "text only: Mochi's answers show as text on the call screen, no voice" else "voice back on")
             }
             "call.speed" -> if (!Call.active) fail("no call is on") else ok(Call.setSpeed(args.optDouble("speed", 1.0).toFloat()))
+            // "make the volume 60%" (2026-11-25: refused three times on a call): media, and the call's voice during one
+            "volume.set" -> runCatching {
+                val am = c.getSystemService(android.media.AudioManager::class.java)
+                val pct = args.optInt("percent", 50).coerceIn(0, 100)
+                val streams = listOf(android.media.AudioManager.STREAM_MUSIC) +
+                    if (Call.active) listOf(android.media.AudioManager.STREAM_VOICE_CALL) else emptyList()
+                for (s in streams) am.setStreamVolume(s, Math.round(am.getStreamMaxVolume(s) * pct / 100f), 0)
+                ok("volume at $pct%" + if (Call.active) " (media and this call)" else "")
+            }.getOrElse { fail("the phone refused: ${it.message}") }
             // the book being read, on screen, highlighted as the voice reads
             // "wake me at 6" / "timer 10 minutes": the phone's own Clock app rings, even with the server off
             "alarm.set" -> clock(c, Intent(android.provider.AlarmClock.ACTION_SET_ALARM)
