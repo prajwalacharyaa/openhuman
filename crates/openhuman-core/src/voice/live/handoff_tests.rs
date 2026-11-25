@@ -148,6 +148,8 @@ fn knows_fresh_questions() {
     assert!(asks_fresh("What's the NEPSE index today?"));
     assert!(!asks_fresh("Can you look into previous conversation for yesterday's news?"));
     assert!(!asks_fresh("Can you tell me today's date in Nepali?"));
+    assert!(!asks_fresh("आज के छ त हालखबर?"));
+    assert!(asks_fresh("आजको खबर के छ?"));
     assert!(announces_lookup("Checking…"));
     assert!(!announces_lookup("Today is Kartik 17, 2083."));
 }

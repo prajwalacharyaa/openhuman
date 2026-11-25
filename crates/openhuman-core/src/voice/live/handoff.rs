@@ -572,7 +572,8 @@ const MEMORY_SAID: &[&str] = &["checked the memory", "checked your memory", "che
     "in your memory", "in my memory", "memory shows"];
 /// Whether December's words ask for something current.
 pub(crate) fn asks_fresh(text: &str) -> bool {
-    let text = text.to_lowercase();
+    // "हालखबर" is "how are you", not news (2026-11-25: "आज के छ त हालखबर?" got a lookup nudge)
+    let text = text.to_lowercase().replace("हालखबर", "").replace("हाल खबर", "");
     FRESH_WORDS.iter().any(|w| text.contains(w)) && !PAST_WORDS.iter().any(|w| text.contains(w)) && is_request(&text)
 }
 
