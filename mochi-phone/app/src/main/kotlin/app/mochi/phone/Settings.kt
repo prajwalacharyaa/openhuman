@@ -117,6 +117,7 @@ fun SettingsScreen(onBack: () -> Unit) {
         "trading" -> SettingsPage("Trading (Samir)", back) { Section("Samir") { TradingSettings() } }
         "server" -> SettingsPage("Server connection", back) { Section("Server") { SetupCard(framed = false) {} } }
         "about" -> SettingsPage("About", back) { AboutPage() }
+        "laptop" -> SettingsPage("Share with a laptop", back) { LaptopPage() }
         else -> Screen("Settings", onBack) {
             val configured = Mochi.configured(ctx)
             val voice = when {
@@ -143,6 +144,8 @@ fun SettingsScreen(onBack: () -> Unit) {
                     NavRow("Fingerprint & vault", if (AppLock.enabled(ctx)) "Fingerprint lock on" else "Fingerprint lock off") { page = "security" }
                     if (configured) NavRow("Claude accounts", "Which Claude account Mochi uses") { page = "claude" }
                     if (configured) NavRow("Trading (Samir)", "Paper or live, auto-buy, MeroShare") { page = "trading" }
+                    if (configured) NavRow("Share with a laptop", if (Bridge.state.running)
+                        "On: ${Bridge.modeName(Bridge.state.mode)}" else "Another laptop on your hotspot; Mochi's browser lock") { page = "laptop" }
                     NavRow("Server connection", if (configured) "Connected to ${Mochi.host(ctx)}" else "Not set up") { page = "server" }
                 }
                 Section("About") { NavRow("About Mochi", "Version and how it connects") { page = "about" } }
@@ -156,6 +159,73 @@ private fun SettingsPage(title: String, onBack: () -> Unit, content: @Composable
     Screen(title, onBack) {
         Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = Space.xl)
             .padding(bottom = Space.xxl), verticalArrangement = Arrangement.spacedBy(Space.xl), content = content)
+    }
+}
+
+/** "Share with a laptop": one mode picked before sharing starts (December's rule: never both editors), the address
+ *  and code while it runs; and Mochi's browser on the laptop: its kept logins and the lock. */
+@Composable
+private fun LaptopPage() {
+    val ctx = LocalContext.current
+    val c = LocalMochi.current
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
+    val s = Bridge.state
+    var mode by remember { mutableStateOf("chat") }
+    var note by remember { mutableStateOf("") }
+    var busy by remember { mutableStateOf(false) }
+    Section("Share with a laptop") {
+        if (!s.running) {
+            Text("A laptop on this phone's hotspot opens Mochi's chat in its browser, without Tailscale. Pick what " +
+                "it may do before you start; to change it, stop and start again (a new code).", style = Type.small, color = c.muted)
+            Bridge.MODES.forEach { (id, name) ->
+                val detail = when (id) {
+                    "chat" -> "Chat with Mochi, drop files in, download what Mochi makes."
+                    "local" -> "Also edit a folder on that laptop; Mochi works on a copy and you OK each change back."
+                    else -> "Also edit Mochi's project clones on the server (no commits unless you ask)."
+                }
+                Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).selectable(mode == id, role = Role.RadioButton) { mode = id }
+                    .padding(vertical = Space.xs), verticalAlignment = Alignment.CenterVertically) {
+                    androidx.compose.material3.RadioButton(mode == id, null)
+                    Column(Modifier.padding(start = Space.s)) {
+                        Text(name, style = Type.body, color = c.ink); Text(detail, style = Type.small, color = c.muted)
+                    }
+                }
+            }
+            Pill(if (busy) "Starting…" else "Start sharing", true, Modifier.fillMaxWidth()) {
+                if (busy) return@Pill
+                busy = true; note = ""
+                io(scope, { Bridge.start(ctx, mode) }, { busy = false; note = it.message ?: "failed" }) { why -> busy = false; note = why ?: "" }
+            }
+            if (s.note.isNotBlank()) Text(s.note, style = Type.small, color = c.muted)
+        } else {
+            Text("On: ${Bridge.modeName(s.mode)}", style = Type.title, color = c.ink)
+            Text("On the laptop (connected to this hotspot), open in Chrome or Edge:", style = Type.small, color = c.muted)
+            Text(s.url, style = Type.title, color = c.ink)
+            Text("The browser warns about the certificate the first time: choose Advanced, then continue. Then type this code:",
+                style = Type.small, color = c.muted)
+            Text(s.code.chunked(3).joinToString(" "), style = Type.display, color = c.ink)
+            Text("Stops by itself after an hour or when the hotspot goes off.", style = Type.small, color = c.muted)
+            Pill("Stop sharing", false, Modifier.fillMaxWidth()) { Bridge.stop(ctx, "Stopped.") }
+        }
+        if (note.isNotBlank()) Text(note, style = Type.small, color = c.muted)
+    }
+    Section("Mochi's browser on your laptop") {
+        var sites by remember { mutableStateOf("…") }
+        androidx.compose.runtime.LaunchedEffect(Unit) {
+            io(scope, { Bridge.browserSites(ctx) }, { sites = "Couldn't check: ${it.message}" }) { got ->
+                val list = got.optJSONArray("sites")
+                val names = (0 until (list?.length() ?: 0)).map { list!!.getJSONObject(it).optString("site") }
+                sites = if (got.optBoolean("locked") || names.isEmpty()) "No logins kept." else "Logins kept for: " + names.joinToString(", ")
+            }
+        }
+        Text(sites, style = Type.small, color = c.muted)
+        Pill("Lock the browser", false, Modifier.fillMaxWidth()) {
+            io(scope, { Bridge.post(ctx, "/browse/lock", org.json.JSONObject()) }, { sites = "Couldn't lock: ${it.message}" }) {
+                sites = "Locked: every kept login is unreadable now, and the browser is closed."
+            }
+        }
+        Text("Kept logins are encrypted on the laptop with a key that only this server holds. Lock deletes the key, " +
+            "from anywhere.", style = Type.small, color = c.muted)
     }
 }
 

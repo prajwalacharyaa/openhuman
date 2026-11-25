@@ -33,6 +33,7 @@ object Mochi {
     const val NOTIFY_RING = 2
     const val NOTIFY_ONGOING = 3
     const val NOTIFY_APPROVALS = 5
+    const val NOTIFY_BRIDGE = 6
     private const val FRESH_AFTER_MS = 30 * 60_000L
     const val NOTIFY_NOTICE_BASE = 100
     private const val CLIENT_ID = "mochi-phone"
