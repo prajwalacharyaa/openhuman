@@ -150,6 +150,11 @@ object Call {
      *  the phone, see [Unfreeze]) or the Unfreeze button. */
     @Volatile var frozen = false
         private set(v) { if (field != v) { field = v; notice() } }
+    /** Frozen by itself after [REST_MS] of nobody talking (Settings: "Rest when nobody talks"), not by December:
+     *  "Mochi" alone wakes it, and so does Mochi starting to speak (an answer it was waiting for). */
+    @Volatile var resting = false
+        private set
+    private var restedAt = 0L
 
     /** The call notification's Mute button follows the mute wherever it changed (call screen, widget, "freeze"). */
     private fun notice() {
@@ -242,6 +247,7 @@ object Call {
         silent = false
         quiet = false
         frozen = false
+        resting = false
         call = mochiCall
         startedAt = java.time.Instant.now()
         startedAtMs = System.currentTimeMillis()
@@ -305,6 +311,9 @@ object Call {
     // ---- sleep timer, night check, speed ------------------------------------------------------------------------
 
     private const val WATCH_MS = 15_000L
+    /** Nobody talking this long: the call rests (checked every [WATCH_MS], so 45 to 60 s). */
+    private const val REST_MS = 45_000L
+    private const val REST_END_MS = 30 * 60_000L
     /** The night check: from this hour to [NIGHT_END], after [NIGHT_QUIET_MS] of December saying nothing. */
     private const val NIGHT_START = 21
     private const val NIGHT_END = 6
@@ -323,6 +332,10 @@ object Call {
                 closing -> {}
                 sleepAt in 1..now -> goodnight("the sleep timer December set is up")
                 nightAskedAt > 0 && now - nightAskedAt > NIGHT_ANSWER_MS -> goodnight("December didn't answer, so they're asleep")
+                // resting half an hour: December left or fell asleep, so the phone stops listening and hangs up
+                resting && now - restedAt > REST_END_MS -> end("Nobody talked for half an hour")
+                !frozen && !muted && !Stranger.on && answered && now - maxOf(lastSpoke, talkingAt) > REST_MS &&
+                    playback.isEmpty() && Mochi.restWhenQuiet(app) -> rest()
                 night && nightAskedAt == 0L && now - userSpokeAt > NIGHT_QUIET_MS && !frozen -> {
                     nightAskedAt = now
                     note("(Server note, not December speaking: it's late and December hasn't said anything for 20 " +
@@ -388,6 +401,7 @@ object Call {
         active = false
         Doing.addGeminiToday(app, geminiTokens)
         frozen = false
+        resting = false
         Unfreeze.stop()
         VoiceId.callEnded(app)
         Stranger.callEnded()
@@ -469,6 +483,7 @@ object Call {
     @Synchronized
     fun unfreeze(byVoice: Boolean = false) {
         if (!frozen) return
+        if (resting) return wake()
         Unfreeze.stop()
         frozen = false
         quiet = false
@@ -486,7 +501,7 @@ object Call {
     @Synchronized
     fun relay(call: JSONObject): Boolean {
         val socket = ws ?: return false
-        if (frozen || !answered) return false
+        if ((frozen && !resting) || !answered) return false
         val question = call.optString("question")
         val text = if (call.optBoolean("reminder")) {
             "(Server note, not December speaking: a reminder is due. At a pause, give it in a few words: $question)"
@@ -507,6 +522,7 @@ object Call {
 
     private fun freeze(socket: WebSocket) {
         if (!active || ws !== socket) return // the call ended before the freeze ran: no listener left on the mic
+        resting = false
         frozen = true
         quiet = true
         socket.send("""{"type":"interrupt"}""")
@@ -515,6 +531,30 @@ object Call {
         val why = Unfreeze.start(app) { unfreeze(byVoice = true) }
         status(if (why == null) "Frozen: Mochi hears nothing. Say \"Mochi, unfreeze\" or tap Unfreeze."
                else "Frozen: Mochi hears nothing. Tap Unfreeze to continue ($why).")
+    }
+
+    /** Nobody has talked for a while: stop sending the mic (nothing goes to Gemini) and listen on the phone. */
+    private fun rest() {
+        if (ws == null || frozen) return
+        resting = true
+        restedAt = System.currentTimeMillis()
+        frozen = true
+        val why = Unfreeze.start(app, nameAlone = true) { words -> wake(words) }
+        status(if (why == null) "Resting. Say \"Mochi\" when you want me." else "Resting. Tap Unfreeze to continue ($why).")
+    }
+
+    /** Back from resting: by "Mochi" ([words] = what December said, passed on so it's answered), a tap, or Mochi
+     *  starting to speak. */
+    @Synchronized
+    fun wake(words: String = "") {
+        if (!resting) return
+        resting = false
+        Unfreeze.stop()
+        frozen = false
+        lastSpoke = System.currentTimeMillis()
+        status("Listening")
+        if (words.isNotBlank()) note("(Server note, not December speaking: the call was resting after a silence, and " +
+            "December just said: \"$words\". Answer that; if it was only your name, say one word to show you're listening.)")
     }
 
     fun setSpeaker(on: Boolean) {
@@ -596,7 +636,7 @@ object Call {
                     val role = f.optString("role")
                     val line = f.optString("text")
                     val final = f.optBoolean("final")
-                    if (frozen) return // a late line from before the freeze
+                    if (frozen && !(resting && role != "user")) return // a late line from before the freeze
                     if (role == "user" && final && isFreeze(line)) {
                         freeze(webSocket)
                     } else if (role == "user" && final) {
@@ -641,6 +681,7 @@ object Call {
 
         override fun onMessage(webSocket: WebSocket, bytes: ByteString) {
             if (webSocket === ws) heardBytes += bytes.size
+            if (webSocket === ws && resting) main.post { wake() } // an answer Mochi was waiting for: listen again
             if (webSocket === ws && !quiet && !cutTurn) {
                 talkingAt = System.currentTimeMillis()
                 playback.offer(bytes.toByteArray())

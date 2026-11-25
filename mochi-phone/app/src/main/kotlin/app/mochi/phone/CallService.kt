@@ -16,6 +16,37 @@ import org.json.JSONObject
 class CallService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
+    /** The headset's button during a call: a press wakes a resting call, otherwise hangs up (like a phone call). */
+    private var buttons: android.media.session.MediaSession? = null
+
+    private fun listenToHeadset() {
+        if (buttons != null) return
+        buttons = android.media.session.MediaSession(this, "mochi-call").apply {
+            setCallback(object : android.media.session.MediaSession.Callback() {
+                override fun onMediaButtonEvent(i: Intent): Boolean {
+                    @Suppress("DEPRECATION")
+                    val e = i.getParcelableExtra<android.view.KeyEvent>(Intent.EXTRA_KEY_EVENT) ?: return false
+                    if (e.keyCode != android.view.KeyEvent.KEYCODE_HEADSETHOOK &&
+                        e.keyCode != android.view.KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE) return false
+                    if (e.action == android.view.KeyEvent.ACTION_UP && e.repeatCount == 0 && Call.active) {
+                        if (Call.resting) Call.wake() else Call.end("Hung up with the headset button")
+                    }
+                    return true
+                }
+            })
+            setPlaybackState(android.media.session.PlaybackState.Builder()
+                .setActions(android.media.session.PlaybackState.ACTION_PLAY_PAUSE)
+                .setState(android.media.session.PlaybackState.STATE_PLAYING, 0, 1f).build())
+            isActive = true
+        }
+    }
+
+    override fun onDestroy() {
+        buttons?.release()
+        buttons = null
+        super.onDestroy()
+    }
+
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
             ACTION_HANG_UP -> {
@@ -35,6 +66,7 @@ class CallService : Service() {
         }
         Mochi.createChannels(this)
         startForeground(Mochi.NOTIFY_ONGOING, notice(this), ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE)
+        listenToHeadset()
         Call.start(this, intent?.getStringExtra(CallActivity.EXTRA_CALL)?.let(::JSONObject),
             intent?.getStringExtra(CallActivity.EXTRA_AGENT), intent?.getStringExtra(CallActivity.EXTRA_THREAD))
         return START_NOT_STICKY

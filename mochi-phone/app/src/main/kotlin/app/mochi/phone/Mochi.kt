@@ -44,6 +44,10 @@ object Mochi {
         .pingInterval(20, TimeUnit.SECONDS) // keeps the voice WebSocket alive through Tailscale
         .build()
 
+    /** The ring connection (RingService): mochi-ring pings every 4 minutes, so silence past 5 = dropped. Fewer
+     *  pings let the phone's radio sleep (battery, 2026-11-25). */
+    val events: OkHttpClient by lazy { http.newBuilder().readTimeout(300, TimeUnit.SECONDS).build() }
+
     /** For quick requests (chat, approvals, RAM): give up after 20 s instead of piling up while offline. */
     private val quick: OkHttpClient = http.newBuilder().readTimeout(20, TimeUnit.SECONDS)
         .connectTimeout(10, TimeUnit.SECONDS).build()
@@ -393,6 +397,9 @@ object Mochi {
     /** On calls, long answers are read in full (on) or the short part first with an offer of the rest (off). */
     fun longAnswers(c: Context) = prefs(c).getBoolean("long_answers", false)
     fun setLongAnswers(c: Context, on: Boolean) = prefs(c).edit().putBoolean("long_answers", on).apply()
+    /** Calls go quiet by themselves after a silence; "Mochi" wakes them (Settings > Calls & voice). */
+    fun restWhenQuiet(c: Context) = prefs(c).getBoolean("rest_when_quiet", true)
+    fun setRestWhenQuiet(c: Context, on: Boolean) = prefs(c).edit().putBoolean("rest_when_quiet", on).apply()
 
     /** Empties the Inbox and returns what it held, for Undo ([restoreInbox]). */
     /** Voice typing in chats: "en-US" or "ne-NP" (Settings > Chat). */

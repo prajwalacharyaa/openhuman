@@ -26,6 +26,17 @@ class RingService : Service() {
     @Volatile private var current: okhttp3.Call? = null // the open /events request, to cancel it
     private val main = Handler(Looper.getMainLooper())
 
+    /** With pings only every 4 minutes, a connection left on the old network (Wi-Fi to mobile data) could sit dead
+     *  for 5 minutes and miss a ring: a new network drops it at once, and [listen] reconnects in 2 s. */
+    private var network: android.net.Network? = null
+    private val networks = object : android.net.ConnectivityManager.NetworkCallback() {
+        override fun onAvailable(n: android.net.Network) {
+            val before = network
+            network = n
+            if (before != null && before != n) current?.cancel()
+        }
+    }
+
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -52,6 +63,9 @@ class RingService : Service() {
         if (intent?.action == ACTION_RECONNECT) current?.cancel() // new server or token: reconnect with them
         if (!running) {
             running = true
+            runCatching {
+                getSystemService(android.net.ConnectivityManager::class.java).registerDefaultNetworkCallback(networks)
+            }
             worker = Thread(::listen, "mochi-ring").also { it.start() }
         }
         return START_STICKY
@@ -59,6 +73,7 @@ class RingService : Service() {
 
     override fun onDestroy() {
         running = false
+        runCatching { getSystemService(android.net.ConnectivityManager::class.java).unregisterNetworkCallback(networks) }
         current?.cancel()
         worker?.interrupt()
         connected = false
@@ -69,9 +84,10 @@ class RingService : Service() {
         var backoff = 2_000L
         while (running) {
             try {
-                val req = Request.Builder().url("${Mochi.ringUrl(this)}/events")
+                // see Mochi.events; Mochi's steps only while the app is on screen (each one woke the phone)
+                val req = Request.Builder().url("${Mochi.ringUrl(this)}/events?ping=240" + if (onScreen) "" else "&steps=0")
                     .header("Authorization", "Bearer ${Mochi.token(this)}").build()
-                val call = Mochi.http.newCall(req).also { current = it }
+                val call = Mochi.events.newCall(req).also { current = it }
                 call.execute().use { r ->
                     if (!r.isSuccessful) throw IllegalStateException("HTTP ${r.code}")
                     connected = true
@@ -139,6 +155,29 @@ class RingService : Service() {
         }
 
         /** After the server or token changed: drop the connection and reconnect with the new ones. */
+        /** The app is on screen: the ring connection carries Mochi's steps live (What Mochi is doing, the widget).
+         *  Off screen they are left out: while Mochi works they came about once a second, each waking the phone
+         *  (battery, 2026-11-25); the screens fetch what they missed when opened. */
+        @Volatile var onScreen = false
+            private set
+        val onScreenWatcher = object : android.app.Application.ActivityLifecycleCallbacks {
+            private var started = 0
+            override fun onActivityStarted(a: android.app.Activity) { started++; if (started == 1) screen(a, true) }
+            override fun onActivityStopped(a: android.app.Activity) {
+                started = (started - 1).coerceAtLeast(0); if (started == 0) screen(a, false)
+            }
+            override fun onActivityCreated(a: android.app.Activity, b: android.os.Bundle?) {}
+            override fun onActivityResumed(a: android.app.Activity) {}
+            override fun onActivityPaused(a: android.app.Activity) {}
+            override fun onActivitySaveInstanceState(a: android.app.Activity, b: android.os.Bundle) {}
+            override fun onActivityDestroyed(a: android.app.Activity) {}
+        }
+        private fun screen(c: Context, on: Boolean) {
+            if (onScreen == on) return
+            onScreen = on
+            reconnect(c.applicationContext)
+        }
+
         fun reconnect(c: Context) {
             if (!Mochi.configured(c)) return
             runCatching { c.startForegroundService(Intent(c, RingService::class.java).setAction(ACTION_RECONNECT)) }

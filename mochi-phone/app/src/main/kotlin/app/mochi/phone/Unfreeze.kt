@@ -27,8 +27,11 @@ object Unfreeze {
 
     private var app: Context? = null
     private var recognizer: SpeechRecognizer? = null
-    private var onBack: (() -> Unit)? = null
+    private var onBack: ((String) -> Unit)? = null
     private var listening = false
+    /** Resting (the call went quiet by itself, nobody asked for silence): "Mochi" alone wakes it. */
+    private var nameAlone = false
+    private var heard = ""
     private val NAME = Regex("m[ou]{1,2}c{1,2}h?(i|ii|ee|ie|y|o)s?|मोची|मोचि|मुची")
     private val UNFREEZE = Regex("\\b(un|on|an|en)\\s?fr(ee|ie|i|e)+[sz]e?\\b|अनफ्रीज")
 
@@ -38,8 +41,9 @@ object Unfreeze {
 
     /** Starts listening. Null when saying "Mochi, unfreeze" works, else why only a tap does. */
     @Synchronized
-    fun start(c: Context, back: () -> Unit): String? {
+    fun start(c: Context, nameAlone: Boolean = false, back: (String) -> Unit): String? {
         stop()
+        this.nameAlone = nameAlone
         if (!SpeechRecognizer.isOnDeviceRecognitionAvailable(c)) return "this phone has no on-device speech recognition"
         app = c.applicationContext
         onBack = back
@@ -66,7 +70,8 @@ object Unfreeze {
         val r = SpeechRecognizer.createOnDeviceSpeechRecognizer(c)
         recognizer = r
         r.setRecognitionListener(object : RecognitionListener {
-            override fun onPartialResults(results: Bundle) { if (says(results)) back(r) }
+            // resting: wait for the whole sentence ("Mochi, what's the time?"), so it can be passed on
+            override fun onPartialResults(results: Bundle) { if (!nameAlone && says(results)) back(r) }
             override fun onResults(results: Bundle) { if (says(results)) back(r) else done(r) }
             override fun onError(error: Int) = done(r)
             override fun onReadyForSpeech(params: Bundle?) {}
@@ -84,11 +89,13 @@ object Unfreeze {
     }
 
     private fun says(results: Bundle): Boolean =
-        results.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION).orEmpty().any { heard ->
-            val text = heard.lowercase().replace("'", "")
+        results.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION).orEmpty().any { said ->
+            val text = said.lowercase().replace("'", "")
             val words = text.split(Regex("\\W+"))
-            UNFREEZE.containsMatchIn(text) || (android.os.SystemClock.elapsedRealtime() - startedAt > SETTLE_MS &&
-                words.any { NAME.matches(it) } && words.any { it in BACK })
+            val named = words.any { NAME.matches(it) }
+            (UNFREEZE.containsMatchIn(text) || (nameAlone && named) ||
+                (android.os.SystemClock.elapsedRealtime() - startedAt > SETTLE_MS && named && words.any { it in BACK }))
+                .also { if (it) heard = said }
         }
 
     /** Not an unfreeze: listen again while still frozen. */
@@ -108,7 +115,8 @@ object Unfreeze {
         listening = false
         needsMic = false
         val then = onBack
+        val words = heard
         done(r)
-        then?.invoke()
+        then?.invoke(words)
     }
 }

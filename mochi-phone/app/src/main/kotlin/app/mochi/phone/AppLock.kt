@@ -90,6 +90,7 @@ class MochiApp : Application() {
         super.onCreate()
         Crashes.install(this)
         registerActivityLifecycleCallbacks(AppLock.watcher)
+        registerActivityLifecycleCallbacks(RingService.onScreenWatcher)
         // the screen going off is the phone locking: Mochi locks with it (only while the app is running; a
         // restarted app starts locked anyway)
         registerReceiver(object : android.content.BroadcastReceiver() {

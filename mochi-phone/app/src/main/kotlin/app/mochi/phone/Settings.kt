@@ -173,6 +173,14 @@ private fun CallsPage() {
         }
         Text("Takes effect on the next call.", style = Type.small, color = c.muted)
     }
+    Section("Quiet") {
+        var rest by remember { mutableStateOf(Mochi.restWhenQuiet(ctx)) }
+        SwitchRow("Rest when nobody talks",
+            "After 45 seconds of silence the call rests: nothing is sent and Mochi waits. Say \"Mochi\" (or " +
+                "\"Mochi, …\" with your question) to wake it; an answer Mochi was waiting for wakes it too.", rest) { want ->
+            Mochi.setRestWhenQuiet(ctx, want); rest = want
+        }
+    }
     Section("Voice recognition") { VoiceRecognition() }
 }
 
