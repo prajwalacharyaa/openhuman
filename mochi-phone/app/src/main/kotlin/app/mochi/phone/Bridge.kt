@@ -65,7 +65,10 @@ object Bridge {
     /** The phone's own address on its hotspot (not on the Wi-Fi or mobile network it uses itself), or null. */
     fun hotspotAddress(c: Context): InetAddress? {
         val cm = c.getSystemService(android.net.ConnectivityManager::class.java)
-        val own = cm.activeNetwork?.let { cm.getLinkProperties(it) }?.linkAddresses?.map { it.address }.orEmpty()
+        // every network the phone itself uses (Wi-Fi, mobile data, and Tailscale, which is often the "active" one):
+        // its hotspot isn't among them (2026-11-25: with Tailscale active, only the active network was excluded)
+        @Suppress("DEPRECATION")
+        val own = cm.allNetworks.flatMap { n -> cm.getLinkProperties(n)?.linkAddresses?.map { it.address }.orEmpty() }.toSet()
         val found = NetworkInterface.getNetworkInterfaces()?.toList().orEmpty()
             .filter { runCatching { it.isUp && !it.isLoopback && !it.isVirtual }.getOrDefault(false) }
             .flatMap { i -> i.inetAddresses.toList().filterIsInstance<Inet4Address>().map { i.name to it } }
