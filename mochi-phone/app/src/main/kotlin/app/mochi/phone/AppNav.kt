@@ -17,7 +17,8 @@ object AppNav {
     /** Screen names the server may send, with what each is (mochi-phone screen lists these). */
     val SCREENS = linkedMapOf(
         "home" to "Home", "chats" to "all chats", "chat" to "the latest chat (arg new: a new chat)",
-        "memory" to "Memory", "inbox" to "Inbox", "reminders" to "Reminders", "maps" to "project maps", "settings" to "Settings",
+        "memory" to "Memory", "inbox" to "Inbox", "reminders" to "Reminders", "maps" to "project maps",
+        "settings" to "Settings (arg: a page: laptop, calls, chat, security, claude, trading, server, about)",
         "doing" to "what Mochi is doing", "agents" to "the agents (arg: an agent's name)",
         "trading" to "Portfolio & market (arg: a tab, or a stock symbol)", "abilities" to "Phone abilities", "books" to "Books (December's library)",
         "room" to "the room (arg: a meeting's id: that meeting)",
@@ -28,8 +29,13 @@ object AppNav {
         val s = screen.trim().lowercase().let { if (it == "research" || it == "portfolio") "trading" else it }
         val a = arg.trim()
         val intent = when (s) {
-            "home", "chats", "memory", "inbox", "reminders", "maps", "settings" ->
+            "home", "chats", "memory", "inbox", "reminders", "maps", "settings" -> {
+                if (s == "settings" && a.isNotEmpty()) {
+                    SettingsNav.PAGES[a.lowercase().split(" ").last()]?.let(SettingsNav::ask)
+                        ?: return fail("no settings page called $a; pages: ${SettingsNav.PAGES.keys.joinToString()}")
+                }
                 Intent(c, MainActivity::class.java).putExtra(MainActivity.EXTRA_TAB, s)
+            }
             "chat" -> Intent(c, ChatActivity::class.java).putExtra(ChatActivity.EXTRA_NEW, a.lowercase() == "new")
             "doing" -> Intent(c, DoingActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT)
             "agents" -> Intent(c, AgentsActivity::class.java).apply {

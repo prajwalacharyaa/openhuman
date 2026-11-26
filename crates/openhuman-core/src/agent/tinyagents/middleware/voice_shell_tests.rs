@@ -120,6 +120,8 @@ fn reading_goes_on_part_after_part_until_the_end() {
     assert_eq!(next_part("mochi-ask --thread t-1 --read", "Read this part aloud... run mochi-ask --read again").as_deref(),
         Some("mochi-ask --read"));
     assert_eq!(next_part("mochi-ask --read", "... stop: it's the end."), None);
+    assert_eq!(next_part("mochi-ask --read --start", "There's no long answer in this chat to read out."), None);
+    assert_eq!(next_part("mochi-ask --read", "mochi-ask: the server didn't answer"), None);
     reading_set("t1", Some("mochi-books read x".into()));
     assert_eq!(reading_next("t1").as_deref(), Some("mochi-books read x"));
     reading_stop("t1");

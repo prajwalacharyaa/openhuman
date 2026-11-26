@@ -216,7 +216,10 @@ pub(crate) fn next_part(command: &str, result: &str) -> Option<String> {
             else { rest.split_whitespace().next()?.to_string() };
         return Some(format!("mochi-books read {book}"));
     }
-    if words.iter().any(|w| *w == "--read") && !result.contains("it's the end") && !result.contains("That was the end") {
+    // only a part with more after it goes on: anything else ("no long answer", an error) ended the reading
+    // (2026-11-26: "There's no long answer…" kept the call asking for the next part, nine times over)
+    if words.iter().any(|w| *w == "--read") && result.contains("run mochi-ask --read again")
+        && !result.contains("it's the end") && !result.contains("That was the end") {
         return Some("mochi-ask --read".to_string());
     }
     None

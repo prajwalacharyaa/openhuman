@@ -105,7 +105,9 @@ private fun NavRow(title: String, state: String, onClick: () -> Unit) {
 @Composable
 fun SettingsScreen(onBack: () -> Unit) {
     val ctx = LocalContext.current
-    var page by remember { mutableStateOf<String?>(null) }
+    var page by remember { mutableStateOf(SettingsNav.take()) }
+    // Mochi opened a page while Settings was already on screen (mochi-phone screen settings laptop)
+    androidx.compose.runtime.LaunchedEffect(SettingsNav.asked.intValue) { SettingsNav.take()?.let { page = it } }
     androidx.activity.compose.BackHandler(enabled = page != null) { page = null }
     val back = { page = null }
     when (page) {
@@ -470,4 +472,17 @@ private fun AboutPage() {
         Text("Mochi $version", style = Type.body, color = c.ink)
         Text("Talks to your server over Tailscale only.", style = Type.small, color = c.muted)
     }
+}
+
+/** A Settings page Mochi asked to open (`mochi-phone screen settings <page>`): 2026-11-26, "open share with laptop"
+ *  could only open Settings, and the rest was handed on to Claude for nothing. */
+object SettingsNav {
+    val PAGES = mapOf("calls" to "calls", "voice" to "calls", "chat" to "chat", "appearance" to "appearance",
+        "security" to "security", "vault" to "security", "fingerprint" to "security", "claude" to "claude",
+        "accounts" to "claude", "trading" to "trading", "server" to "server", "about" to "about",
+        "laptop" to "laptop", "share" to "laptop", "bridge" to "laptop", "hotspot" to "laptop")
+    @Volatile private var pending: String? = null
+    val asked = androidx.compose.runtime.mutableIntStateOf(0)
+    fun ask(page: String) { pending = page; asked.intValue++ }
+    fun take(): String? = pending.also { pending = null }
 }
