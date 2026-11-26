@@ -65,15 +65,25 @@ object Bridge {
     /** The phone's own address on its hotspot (not on the Wi-Fi or mobile network it uses itself), or null. */
     fun hotspotAddress(c: Context): InetAddress? {
         val cm = c.getSystemService(android.net.ConnectivityManager::class.java)
-        // every network the phone itself uses (Wi-Fi, mobile data, and Tailscale, which is often the "active" one):
-        // its hotspot isn't among them (2026-11-25: with Tailscale active, only the active network was excluded)
+        // the networks the phone itself gets the internet from (mobile data, Wi-Fi): their addresses aren't the
+        // hotspot. Only those with internet: Android lists the hotspot itself as a network too (2026-11-26, phone-v102
+        // excluded every network and so found no hotspot at all).
         @Suppress("DEPRECATION")
-        val own = cm.allNetworks.flatMap { n -> cm.getLinkProperties(n)?.linkAddresses?.map { it.address }.orEmpty() }.toSet()
-        val found = NetworkInterface.getNetworkInterfaces()?.toList().orEmpty()
+        val own = cm.allNetworks.filter { n ->
+            cm.getNetworkCapabilities(n)?.let {
+                it.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
+                    !it.hasTransport(android.net.NetworkCapabilities.TRANSPORT_VPN)
+            } ?: false
+        }.flatMap { n -> cm.getLinkProperties(n)?.linkAddresses?.map { it.address }.orEmpty() }.toSet()
+        val all = NetworkInterface.getNetworkInterfaces()?.toList().orEmpty()
             .filter { runCatching { it.isUp && !it.isLoopback && !it.isVirtual }.getOrDefault(false) }
             .flatMap { i -> i.inetAddresses.toList().filterIsInstance<Inet4Address>().map { i.name to it } }
-            .filter { (_, a) -> a.isSiteLocalAddress && a !in own }
-        return (found.firstOrNull { (n, _) -> Regex("^(ap|swlan|softap|wlan|wigig|rndis)").containsMatchIn(n) } ?: found.firstOrNull())?.second
+            .filter { (_, a) -> a.isSiteLocalAddress }
+        val hotspotName = Regex("^(ap|swlan|softap|wlan|wigig|rndis)")
+        val found = all.filter { (_, a) -> a !in own }
+        return (found.firstOrNull { (n, _) -> hotspotName.containsMatchIn(n) } ?: found.firstOrNull()
+            // nothing left after that: a hotspot-type interface anyway, rather than refusing to start
+            ?: all.firstOrNull { (n, _) -> Regex("^(ap|swlan|softap)").containsMatchIn(n) })?.second
     }
 
     /** Start sharing in [mode]. Blocking (network): call off the main thread. Null, or why it couldn't start. */
