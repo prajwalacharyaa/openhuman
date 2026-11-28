@@ -1683,7 +1683,7 @@ mod tests {
         let mut s = String::new();
         jstr("a\"b\\c\nd\u{7f}é😀\x01", &mut s);
         // Python's json.dumps default (ensure_ascii): non-ASCII as \u escapes, astral characters as surrogate pairs
-        assert_eq!(s, r#""a\"b\\c\nd\u007fé😀\u0001""#);
+        assert_eq!(s, r#""a\"b\\c\nd\u007f\u00e9\ud83d\ude00\u0001""#);
         assert_eq!(jobj(&[("a", J::S("x")), ("n", J::I(3))]), r#"{"a": "x", "n": 3}"#);
     }
 
