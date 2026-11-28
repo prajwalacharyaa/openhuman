@@ -509,17 +509,21 @@ object Call {
 
     /** Back from "Mochi, freeze": the mic is sent again and Mochi says it's there. */
     @Synchronized
-    fun unfreeze(byVoice: Boolean = false) {
+    fun unfreeze(byVoice: Boolean = false, words: String = "") {
         if (!frozen) return
-        if (resting) return wake()
+        if (resting) return wake(words)
         Unfreeze.stop()
         frozen = false
         quiet = false
         status("Listening")
-        // how December came back is in the note, so a call review can tell a tap from the phone mishearing
+        // how December came back is in the note, so a call review can tell a tap from the phone mishearing; what
+        // they said with "Mochi" ("Mochi, what's the time?") gets answered instead of a hello
+        val how = if (byVoice) "by voice" else "with the button"
+        val asked = words.trim()
         ws?.send(JSONObject().put("type", "text").put("text",
-            "(December is back after asking you to stay silent, ${if (byVoice) "by voice" else "with the button"}. " +
-                "Say in a few words that you're here.)").toString())
+            if (asked.isEmpty()) "(December is back after asking you to stay silent, $how. Say in a few words that you're here.)"
+            else "(December is back after asking you to stay silent, $how, and said: \"$asked\". Answer that; if it " +
+                "was only your name or \"unfreeze\", say one word to show you're listening.)").toString())
     }
 
     /**
@@ -556,9 +560,9 @@ object Call {
         socket.send("""{"type":"interrupt"}""")
         playback.clear()
         flushPlayback = true
-        val why = Unfreeze.start(app) { unfreeze(byVoice = true) }
-        status(if (why == null) "Frozen: Mochi hears nothing. Say \"Mochi, unfreeze\" or tap Unfreeze."
-               else "Frozen: Mochi hears nothing. Tap Unfreeze to continue ($why).")
+        val why = Unfreeze.start(app, afterFreeze = true) { words -> unfreeze(byVoice = true, words = words) }
+        status(if (why == null) "Frozen: nothing is sent. Say \"Mochi\" when you want me."
+               else "Frozen: nothing is sent. Tap Unfreeze to continue ($why).")
     }
 
     /** Nobody has talked for a while: stop sending the mic (nothing goes to Gemini) and listen on the phone. */
@@ -567,8 +571,8 @@ object Call {
         resting = true
         restedAt = System.currentTimeMillis()
         frozen = true
-        val why = Unfreeze.start(app, nameAlone = true) { words -> wake(words) }
-        status(if (why == null) "Resting. Say \"Mochi\" when you want me." else "Resting. Tap Unfreeze to continue ($why).")
+        val why = Unfreeze.start(app) { words -> wake(words) }
+        status(if (why == null) "Quiet. Say \"Mochi\" when you want me." else "Quiet. Tap Wake to continue ($why).")
     }
 
     /** Back from resting: by "Mochi" ([words] = what December said, passed on so it's answered), a tap, or Mochi

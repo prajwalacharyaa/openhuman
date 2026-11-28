@@ -334,7 +334,9 @@ class CallActivity : ComponentActivity(), Call.Listener {
                                 showControls()
                             }
                             // one tap, no speech recognition needed: Mochi hears nothing until unfrozen
-                            CallButton(Icons2.Snow, if (Call.frozen) "Unfreeze" else "Freeze", if (Call.frozen) "Unfreeze" else "Freeze",
+                            // resting (a silence, nobody asked for it) wakes; a freeze December asked for unfreezes
+                            val freezeLabel = when { Call.resting -> "Wake"; Call.frozen -> "Unfreeze"; else -> "Freeze" }
+                            CallButton(Icons2.Snow, freezeLabel, freezeLabel,
                                 if (Call.frozen) c.blueInk else c.field, if (Call.frozen) c.bg else c.ink) {
                                 // a second tap within a second is the same press (2026-11-22: unfreeze, freeze, unfreeze
                                 // in 2 s, and Mochi said "I'm here" twice)
