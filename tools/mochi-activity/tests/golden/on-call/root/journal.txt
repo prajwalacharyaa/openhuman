@@ -1,0 +1,13 @@
+[2m2026-11-28T03:00:00Z[0m INFO [voice-live] result web_search: before any call
+[voice-live] session started (gemini)
+  INFO openhuman::voice: [voice-live] tool web_search: nepse   hours today  
+[voice-live] result web_search: NEPSE is open 11:00-15:00
+[voice-live] tool memory_recall: december
+[voice-live] tool shell: mochi-phone sms send Ram hello
+[voice-live] result shell: sent to Ram
+[voice-live] tool shell: cd ~/OpenHuman/projects/github/site && git log -1
+[voice-live] result shell: 
+[voice-live] tool ask_claude: plan the week token=abc
+[voice-live] Claude's answer arrived
+[voice-live] tool hang_up_now: bye: really
+unrelated line[voice-live] Claude's answer arrived

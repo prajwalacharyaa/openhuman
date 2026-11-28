@@ -1,0 +1,23 @@
+# mochi-activity: the Rust version of tiny-setup's Python /usr/local/sbin/mochi-activity (same events, a few MB
+# instead of ~10 MB plus an 8 MB journalctl child). Its own little workspace: nothing here touches the engine build.
+# Built by .github/workflows/tiny-tools.yml (tag tools-vN), checked against the Python one by tests/golden.
+[package]
+name = "mochi-activity"
+version = "1.0.0"
+edition = "2021"
+publish = false
+license = "GPL-3.0-only"
+
+[dependencies]
+# preserve_order: a tool's input prints in the transcript's key order, as Python's dicts do
+serde_json = { version = "1", features = ["preserve_order"] }
+regex = { version = "1", default-features = false, features = ["std", "unicode"] }
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
+
+[workspace]

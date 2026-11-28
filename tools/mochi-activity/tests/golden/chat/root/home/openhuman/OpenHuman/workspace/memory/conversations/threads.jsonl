@@ -1,0 +1,4 @@
+{"thread_id": "thread-a", "labels": ["work"]}
+{"thread_id": "thread-c", "labels": ["x", "agent:melissa"]}
+not json but thread-c "labels"
+{"thread_id": "thread-cc", "labels": ["agent:other"]}

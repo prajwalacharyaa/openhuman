@@ -1,0 +1,105 @@
+---
+# Tiny tools: the server's small helpers rewritten in Rust to save RAM (xarvis-core has 2 GB), one at a time.
+# Kept apart from the engine: own crates under tools/, own tag series tools-vN (a tag is never moved: a failed
+# build gets the next number), never the "latest" release (the desktop updater reads releases/latest).
+#   push to tiny (tools/ changed): unit tests + golden tests (the Python reference's output for recorded trees)
+#   tag tools-vN:                  the same, then a release with the binaries, their Cargo.lock and SHA256SUMS
+# tiny-setup's versions.conf pins each binary by its checksum; bootstrap.sh downloads and checks it.
+name: Tiny tools
+
+on:
+  push:
+    branches: [tiny]
+    tags: ["tools-v*"]
+    paths: ["tools/**", ".github/workflows/tiny-tools.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tiny-tools-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Test and build
+    # 24.04's glibc (2.39) is older than the server's (Ubuntu 26.04, 2.43): the binary runs there
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+          sparse-checkout: tools
+      - uses: dtolnay/rust-toolchain@1.96.1
+      - name: libsystemd (mochi-activity reads the journal through it)
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq libsystemd-dev >/dev/null
+      - uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            tools/mochi-activity/target
+          key: tiny-tools-${{ hashFiles('tools/*/Cargo.toml', 'tools/*/Cargo.lock') }}
+          restore-keys: tiny-tools-
+      - name: mochi-activity
+        shell: bash
+        working-directory: tools/mochi-activity
+        run: |
+          set -euo pipefail
+          lock=""; [ -f Cargo.lock ] && lock=--locked
+          cargo test --release $lock 2>&1 | tee ../../test.log
+          cargo build --release $lock 2>&1 | tail -3
+          bin=target/release/mochi-activity
+          fail=0
+          for c in tests/golden/*/; do
+            "$bin" --replay "${c%/}/root" > "$RUNNER_TEMP/out.txt"
+            if diff -u "${c}expected.txt" "$RUNNER_TEMP/out.txt" > "$RUNNER_TEMP/diff.txt"; then
+              echo "golden ${c}: same ($(wc -l < "${c}expected.txt") lines)"
+            else
+              fail=1
+              echo "golden ${c}: DIFFERENT"; head -80 "$RUNNER_TEMP/diff.txt"
+              head -40 "$RUNNER_TEMP/diff.txt" | cut -c1-300 | sed 's/%/%25/g' | awk 'BEGIN{ORS="%0A"} {print}' \
+                | sed "s|^|::error title=golden ${c}::|"; echo
+            fi
+          done
+          [ "$fail" = 0 ]
+          mkdir -p ../../dist
+          cp "$bin" ../../dist/mochi-activity-x86_64-linux
+          cp Cargo.lock ../../dist/mochi-activity.Cargo.lock
+          ls -la ../../dist; ldd "$bin"
+      - name: Report test failures as annotations
+        if: failure()
+        shell: bash
+        run: |
+          [ -f test.log ] || exit 0
+          sed 's/\x1b\[[0-9;]*m//g' test.log | grep -E -A8 '^error(\[E[0-9]+\])?|^warning: unused|panicked at|^test .* FAILED|left:|right:' | head -80 \
+            | cut -c1-300 | sed 's/%/%25/g' | awk 'BEGIN{ORS="%0A"} {print}' | sed 's/^/::error title=cargo::/'; echo
+      - name: Checksums
+        run: cd dist && sha256sum * > SHA256SUMS && cat SHA256SUMS
+      - uses: actions/upload-artifact@v7
+        with:
+          name: tiny-tools
+          path: dist/*
+          if-no-files-found: error
+
+  release:
+    name: Publish GitHub release
+    if: github.ref_type == 'tag'
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v7
+        with:
+          name: tiny-tools
+      - name: Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ github.ref_name }}" --repo "${{ github.repository }}" --target "${{ github.sha }}" --latest=false \
+            --title "Tiny tools ${{ github.ref_name }}" \
+            --notes "Server helpers in Rust (tools/ in branch tiny): mochi-activity. Linux x86_64, needs libsystemd. Check against SHA256SUMS." \
+            mochi-activity-x86_64-linux mochi-activity.Cargo.lock SHA256SUMS
