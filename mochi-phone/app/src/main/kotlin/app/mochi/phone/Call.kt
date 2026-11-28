@@ -191,15 +191,37 @@ object Call {
     private const val STALLED_AFTER_SWITCH_BYTES = 32_000L
     private const val LINE_WATCH_MS = 1_000L
     @Volatile private var networkChangedAt = 0L
+    /** A slow line still moves; only one where nothing went out for this long has stopped (2026-11-28: on mobile
+     *  data the upload was a little under the mic's 32 KB a second, the pile grew, and every ~12 s the call
+     *  reconnected, cutting the audio each time, round and round). */
+    private const val STOPPED_MS = 4_000L
+    private const val STOPPED_AFTER_SWITCH_MS = 1_500L
+    /** Sound waiting past this (2 s) is skipped instead of queued: a slow line stays about 2 s behind, not more. */
+    private const val BACKLOG_MAX = 2 * 32_000L
+    /** At most one reconnect for a stopped line a minute: it never goes round and round. */
+    private const val STALL_RECONNECT_EVERY_MS = 60_000L
+    @Volatile private var lastOut = 0L
+    @Volatile private var movedAt = 0L
+    @Volatile private var stallReconnectAt = 0L
+    @Volatile var skippedBytes = 0L
 
     private val lineWatch = object : Runnable {
         override fun run() {
             if (!active) return
             val socket = ws
             val waiting = socket?.queueSize() ?: 0L
-            val justSwitched = System.currentTimeMillis() - networkChangedAt in 2_000L..15_000L
+            val now = System.currentTimeMillis()
+            val justSwitched = now - networkChangedAt in 2_000L..15_000L
+            // what has actually gone out: everything handed to the socket minus what still waits
+            val out = sentBytes - waiting
+            if (out != lastOut || waiting == 0L) movedAt = now
+            lastOut = out
+            val stoppedFor = now - movedAt
             if (socket != null && answered && !reconnecting && !switching &&
-                waiting > (if (justSwitched) STALLED_AFTER_SWITCH_BYTES else STALLED_BYTES)) {
+                now - stallReconnectAt > STALL_RECONNECT_EVERY_MS &&
+                waiting > (if (justSwitched) STALLED_AFTER_SWITCH_BYTES else STALLED_BYTES) &&
+                stoppedFor > (if (justSwitched) STOPPED_AFTER_SWITCH_MS else STOPPED_MS)) {
+                stallReconnectAt = now
                 Crashes.note(app, "call: the line stopped moving (${waiting / 1000} KB unsent" +
                     (if (justSwitched) ", after a network change" else "") + "): reconnecting now")
                 reconnect(if (justSwitched) "the network changed" else "the connection stalled", socket)
@@ -262,6 +284,10 @@ object Call {
         main.postDelayed(watch, WATCH_MS)
         main.postDelayed(lineWatch, LINE_WATCH_MS)
         networkChangedAt = 0L
+        movedAt = System.currentTimeMillis()
+        lastOut = 0L
+        stallReconnectAt = 0L
+        skippedBytes = 0L
         watchNetworks(true)
         main.post { said.clear() }
         callThreads.clear()
@@ -400,6 +426,8 @@ object Call {
         if (endReason.isEmpty()) endReason = why
         active = false
         Doing.addGeminiToday(app, geminiTokens)
+        // a slow line's skipped sound, for the call review (the server can't see what never left the phone)
+        if (skippedBytes > 0) Crashes.note(app, "call: slow line, skipped ${skippedBytes / 32_000} s of microphone sound")
         frozen = false
         resting = false
         Unfreeze.stop()
@@ -852,6 +880,10 @@ object Call {
                         } else for (f in out) {
                             socket.send(f.toByteString()); sentBytes += f.size
                         }
+                    } else if (socket.queueSize() > BACKLOG_MAX) {
+                        // a slow line: skip this frame rather than fall further behind (see BACKLOG_MAX)
+                        quietSent = 0
+                        skippedBytes += buf.size
                     } else {
                         quietSent = 0
                         socket.send(buf.toByteString())
